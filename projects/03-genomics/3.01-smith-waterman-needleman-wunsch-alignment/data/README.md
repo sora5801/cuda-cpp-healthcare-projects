@@ -1,37 +1,45 @@
-# Data — 3.1 Smith-Waterman / Needleman-Wunsch Alignment
+# Data — 3.01 Smith-Waterman / Needleman-Wunsch Alignment
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/sequences_sample.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
-| License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Origin | **Synthetic** (`scripts/make_synthetic.py`, seed 11) |
+| License | Public domain (CC0) — synthetic |
+| Contents | Two DNA sequences (line 1 = query, line 2 = target) |
+| Design | The target embeds a **mutated copy** of a motif from the query, so there is a clear high-scoring local alignment to find. |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+### File format
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+```
+<query sequence on line 1>      # A/C/G/T, length M
+<target sequence on line 2>     # A/C/G/T, length N
+```
+
+Sequence lengths `M`, `N` are taken from the line lengths (stray whitespace is
+ignored). Only `A/C/G/T` are accepted (`src/reference_cpu.cpp::load_sequences`).
 
 ## Full dataset
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+Real alignments use protein/nucleotide FASTA from public databases:
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+- **UniProtKB/Swiss-Prot** — curated proteins (~570k): <https://www.uniprot.org/downloads>
+- **NCBI nr** — non-redundant protein (100M+): <https://ftp.ncbi.nlm.nih.gov/blast/db/>
+- **NCBI RefSeq** — reference nucleotide/protein: <https://ftp.ncbi.nlm.nih.gov/refseq/>
+- **PDB sequences** — for benchmarking: <https://www.rcsb.org/downloads>
 
-Catalog dataset notes (verbatim):
+`scripts/download_data.ps1` / `.sh` print how to extract two sequences from a
+FASTA file into this format. For a larger synthetic problem:
 
-> UniProtKB/Swiss-Prot — curated protein sequence database, ~570 k entries (https://www.uniprot.org/downloads); NCBI nr (non-redundant protein) — comprehensive protein database, 100 M+ sequences (https://ftp.ncbi.nlm.nih.gov/blast/db/); PDB sequences — structural protein sequences for benchmarking alignments (https://www.rcsb.org/downloads); NCBI RefSeq — reference nucleotide and protein sequences (https://ftp.ncbi.nlm.nih.gov/refseq/).
+```
+python scripts/make_synthetic.py --motif 400 --mut 0.2
+```
 
-## Provenance & field meanings
+> This teaching project uses a **DNA** alphabet and **linear** gap scoring.
+> Protein alignment adds a substitution matrix (BLOSUM/PAM) and affine gaps —
+> see THEORY.md "Where this sits in the real world".
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+## Provenance & honesty
+
+The sample is **synthetic** and labeled as such. The alignment is a software
+test, not a biological finding.

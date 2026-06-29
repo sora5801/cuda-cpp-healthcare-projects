@@ -1,33 +1,28 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  How to get REAL sequences (Windows)
 # ---------------------------------------------------------------------------
-# Project 3.1 -- Smith-Waterman / Needleman-Wunsch Alignment   (template skeleton)
+# Project 3.01 : Smith-Waterman / Needleman-Wunsch Alignment
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
-#
-# Usage:  ./scripts/download_data.ps1
+# This project aligns two sequences. "Real data" is just two FASTA records from
+# a public database. This script prints how to obtain them and defers to
+# make_synthetic.py for an offline stand-in (CLAUDE.md section 8). It downloads
+# nothing and needs no credentials.
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DataDir = Join-Path $ProjectRoot "data"
 
-Write-Host "[download_data] Project 3.1 -- Smith-Waterman / Needleman-Wunsch Alignment"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
+Write-Host "[download_data] Project 3.01 -- Smith-Waterman / Needleman-Wunsch Alignment"
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    UniProtKB/Swiss-Prot — curated protein sequence database, ~570 k entries (https://www.uniprot.org/downloads); NCBI nr (non-redundant protein) — comprehensive protein database, 100 M+ sequences (https://ftp.ncbi.nlm.nih.gov/blast/db/); PDB sequences — structural protein sequences for benchmarking alignments (https://www.rcsb.org/downloads); NCBI RefSeq — reference nucleotide and protein sequences (https://ftp.ncbi.nlm.nih.gov/refseq/)."
+Write-Host "Pick two sequences from a public FASTA database, e.g.:"
+Write-Host "  UniProt/Swiss-Prot : https://www.uniprot.org/downloads"
+Write-Host "  NCBI RefSeq        : https://ftp.ncbi.nlm.nih.gov/refseq/"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Then write them as two lines (this project uses a DNA A/C/G/T alphabet):"
+Write-Host "  line 1 = query sequence"
+Write-Host "  line 2 = target sequence"
+Write-Host "Save as data/sample/sequences_sample.txt (strip FASTA '>' headers/newlines)."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Offline stand-in (no download, reproducible):"
+Write-Host "  python scripts/make_synthetic.py --motif 400 --mut 0.2"
+Write-Host ""
+Write-Host "Target data dir: $ProjectRoot\data"

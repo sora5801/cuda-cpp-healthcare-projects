@@ -1,108 +1,123 @@
-# 3.1 — Smith-Waterman / Needleman-Wunsch Alignment
+# 3.01 — Smith-Waterman / Needleman-Wunsch Alignment
 
 ![difficulty](https://img.shields.io/badge/difficulty-Beginner-blue) ![maturity](https://img.shields.io/badge/maturity-Established-informational) ![domain](https://img.shields.io/badge/domain-Genomics%2C%20Sequencing%20%26%20Bioinformatics-lightgrey)
 
-> **🟢 Beginner · Established** — Domain 3: Genomics, Sequencing & Bioinformatics · Catalog ID `3.1`
+> **🟢 Beginner · Established** — Domain 3: Genomics, Sequencing & Bioinformatics · Catalog ID `3.01`
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Find the **best local alignment** between two DNA sequences with the
+**Smith-Waterman** algorithm: fill a dynamic-programming score matrix, then read
+off the highest-scoring path. The recurrence looks hopelessly serial — each cell
+needs its top, left, and diagonal neighbours — yet the GPU extracts massive
+parallelism by computing whole **anti-diagonals** at once. This project is the
+deliberate *contrast* to the "independent jobs" pattern in `1.12`: same goal
+(use every thread), completely different technique (a dependency wavefront).
 
 ## What this computes & why the GPU helps
 
-Smith-Waterman (SW) computes the optimal local alignment between two sequences via a dynamic-programming (DP) score matrix filled cell-by-cell; at protein-database scale this means quadratic work per query against millions of targets. GPUs collapse this into anti-diagonal wavefront parallelism: all cells on the same anti-diagonal are independent and can be computed simultaneously across thousands of CUDA threads, eliminating the serial dependency that cripples CPUs. CUDASW++4.0 (2024) achieves up to 5.71 TCUPS on an H100 by exploiting Hopper's DPX integer-DP instructions, hardware-native to the architecture, alongside tile-based matrix partitioning and sequence-database chunking for maximal occupancy. The specific bottleneck parallelised is the per-cell recurrence max(H[i-1,j-1]+s, H[i,j-1]-g, H[i-1,j]-g) across the anti-diagonal frontier.
+Smith-Waterman computes the optimal local alignment via a quadratic DP score
+matrix. At database scale (one query vs. millions of targets) that is enormous,
+but the per-cell recurrence
+`H[i][j] = max(0, H[i-1][j-1]+s, H[i-1][j]+gap, H[i][j-1]+gap)`
+has a special structure: all cells on the same **anti-diagonal** (`i+j` constant)
+are independent. GPUs collapse the serial dependency into **anti-diagonal
+wavefront parallelism** — thousands of threads advance the frontier together.
+Production tools (CUDASW++4.0) reach multiple TCUPS on data-center GPUs using
+this idea plus hardware DP instructions and database batching.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck** is filling the `O(M·N)` matrix; we parallelize each
+anti-diagonal across threads (one cell per thread), sweeping `M+N-1` diagonals.
 
 ## The algorithm in brief
 
-Smith-Waterman anti-diagonal DP wavefront; Needleman-Wunsch global DP; striped SIMD inter-sequence parallelism; affine gap scoring; DPX hardware DP instructions (Hopper); sequence-database tiling and batched kernel launch.
+- **DP recurrence** (local, linear gap): `H[i][j] = max(0, diag+s, up+gap, left+gap)`.
+- **Wavefront:** process anti-diagonals `d = i+j` in order; cells of one diagonal
+  are independent.
+- **Score** = the maximum cell; **traceback** from there to the first 0 recovers
+  the aligned substrings.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+See [THEORY.md](THEORY.md) for the full derivation (incl. how Needleman-Wunsch global
+alignment differs).
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145) + **CUDA 13.3** ([docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
 
-1. Open `build/smith-waterman-needleman-wunsch-alignment.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
+1. Open `build/smith-waterman-needleman-wunsch-alignment.sln`.
+2. Select **`Release|x64`** → **Build Solution** →
    `build/x64/Release/smith-waterman-needleman-wunsch-alignment.exe`.
 
-Command-line alternative (Developer PowerShell):
-
-```powershell
-msbuild build\smith-waterman-needleman-wunsch-alignment.sln /p:Configuration=Release /p:Platform=x64
-```
+CLI: `msbuild build\smith-waterman-needleman-wunsch-alignment.sln /p:Configuration=Release /p:Platform=x64`
 
 ## Run the demo
 
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.ps1
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+Builds if needed, aligns the committed sequences, prints the score + alignment,
+and verifies the GPU matrix equals the CPU matrix.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: UniProtKB/Swiss-Prot — curated protein sequence database, ~570 k entries (https://www.uniprot.org/downloads); NCBI nr (non-redundant protein) — comprehensive protein database, 100 M+ sequences (https://ftp.ncbi.nlm.nih.gov/blast/db/); PDB sequences — structural protein sequences for benchmarking alignments (https://www.rcsb.org/downloads); NCBI RefSeq — reference nucleotide and protein sequences (https://ftp.ncbi.nlm.nih.gov/refseq/).
+- **Sample (committed):** `data/sample/sequences_sample.txt` — two **synthetic**
+  DNA sequences sharing a mutated motif (a clear local alignment).
+- **Full data:** two FASTA records from UniProt/NCBI — see
+  `scripts/download_data.ps1` and [data/README.md](data/README.md).
+- Larger synthetic problem: `python scripts/make_synthetic.py --motif 400 --mut 0.2`.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+`demo/expected_output.txt` holds the deterministic stdout (score, endpoint,
+percent identity, aligned columns). The GPU wavefront (`src/kernels.cu`) and the
+serial CPU DP (`src/reference_cpu.cpp`) fill the **same integer matrix**, so they
+agree exactly (`matrix mismatches = 0`).
 
 ## Code tour
 
-Read in this order:
-
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — load, run CPU + GPU, compare matrices, traceback, print.
+2. [`src/reference_cpu.h`](src/reference_cpu.h) — scoring constants, `SeqPair`, the DP & traceback prototypes + the wavefront idea.
+3. [`src/kernels.cuh`](src/kernels.cuh) — the per-diagonal kernel interface + the anti-diagonal diagram.
+4. [`src/kernels.cu`](src/kernels.cu) — the wavefront kernel + the host diagonal sweep.
+5. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial DP + traceback.
 
 ## Prior art & further reading
 
-CUDASW4 (https://github.com/asbschmidt/CUDASW4) — CUDASW++4.0, H100/A100/L40S optimised, DPX, up to 5.71 TCUPS; GenomeWorks / ClaraGenomics SDK (https://github.com/NVIDIA-Genomics-Research/GenomeWorks) — NVIDIA CUDA pairwise alignment primitives for both protein and nucleotide; WFA-GPU (verify URL: github.com/quim0/WFA-GPU) — wavefront alignment algorithm on GPU, gap-affine, ultra-fast for long DNA; Parasail (https://github.com/jeffdaily/parasail) — SIMD/CUDA pairwise alignment library used as reference.
+- **CUDASW++4.0** (<https://github.com/asbschmidt/CUDASW4>) — state-of-the-art GPU SW (DPX, database tiling).
+- **NVIDIA GenomeWorks** (<https://github.com/NVIDIA-Genomics-Research/GenomeWorks>) — CUDA pairwise-alignment primitives.
+- **WFA-GPU** (<https://github.com/quim0/WFA-GPU>) — wavefront *alignment* algorithm (gap-affine) on GPU.
+- **Parasail** (<https://github.com/jeffdaily/parasail>) — SIMD reference library; good for cross-checking scores.
 
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
+Study these for the production approach; reimplement didactically (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-cuBLAS (score accumulation); thrust (sort, scan); CUB (warp-level reduction); custom anti-diagonal kernels with shared memory tiling; inter-sequence batching (one CUDA block per query–target pair or striped across warps); DPX integer instructions on Hopper SM90. --
+Anti-diagonal **wavefront** (extracting parallelism from a dependency structure) ·
+one kernel launch per diagonal · integer DP (exact, deterministic) · serial
+host-side traceback. Contrast with the embarrassingly-parallel `1.12`.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Needleman-Wunsch.** Switch to global alignment: initialize row/col 0 to
+   `i*GAP` / `j*GAP`, drop the `max(0, …)`, and read the score from `H[M][N]`.
+2. **Affine gaps.** Add separate gap-open/gap-extend penalties (the Gotoh
+   recurrence with three matrices H/E/F). How does the kernel change?
+3. **Single-launch wavefront.** Replace the `M+N-1` launches with ONE kernel that
+   loops over diagonals using a cooperative-groups grid barrier. Measure the win.
+4. **Batched alignment.** Align one query against 10,000 targets, one CUDA block
+   per pair. This is the genuinely GPU-favorable workload — compare its timing.
+5. **Shared-memory tiling.** Cache the active diagonals in shared memory to cut
+   global-memory traffic (the production optimization).
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **DNA + linear gaps only.** Real protein alignment uses a substitution matrix
+  (BLOSUM/PAM) and affine gaps; described in THEORY.
+- **Per-diagonal launches** make the GPU *slower* than the CPU on a single small
+  pair (launch overhead). This is an honest teaching artifact — see THEORY.
+- Traceback is serial on the host (the GPU teaching point is the parallel fill).
+- The full `(M+1)·(N+1)` matrix is materialized; score-only variants need just
+  two diagonals of memory.

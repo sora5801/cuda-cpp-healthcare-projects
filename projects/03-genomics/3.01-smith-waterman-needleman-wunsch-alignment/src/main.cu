@@ -1,122 +1,94 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load sequences, align, verify, report
 // ---------------------------------------------------------------------------
-// Project 3.1 -- Smith-Waterman / Needleman-Wunsch Alignment   (template skeleton)
+// Project 3.01 : Smith-Waterman / Needleman-Wunsch Alignment
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// The repo's 5-step shape:
+//   1. Load the two sequences (data/sample).
+//   2. CPU reference fills the DP matrix (reference_cpu.cpp).
+//   3. GPU fills the SAME matrix via the anti-diagonal wavefront (kernels.cu).
+//   4. VERIFY: every cell of the GPU matrix equals the CPU matrix.
+//   5. REPORT: deterministic score + alignment to stdout; timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// We traceback ONCE on the host (from the GPU matrix) to display the alignment;
+// the GPU teaching point is the parallel matrix FILL, not the serial traceback.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then kernels.cuh -> kernels.cu, then reference_cpu.*.
 // ===========================================================================
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // sw_gpu, SeqPair, scoring constants
+#include "reference_cpu.h"    // load_sequences, sw_cpu, traceback, Alignment
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "3.1";
 static const char* PROJECT_NAME = "Smith-Waterman / Needleman-Wunsch Alignment";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+static constexpr int PREVIEW_COLS = 60;   // how many alignment columns to print
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/sequences_sample.txt";
+    SeqPair sp;
+    try {
+        sp = load_sequences(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<int> H_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    sw_cpu(sp, H_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU wavefront (timed) -----------------------------------------
+    std::vector<int> H_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    sw_gpu(sp, H_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (the matrices must be identical, exact integers) -------
+    int max_abs_diff = 0, mismatches = 0;
+    for (std::size_t k = 0; k < H_cpu.size(); ++k) {
+        const int d = H_cpu[k] - H_gpu[k];
+        const int ad = d < 0 ? -d : d;
+        if (ad) { ++mismatches; if (ad > max_abs_diff) max_abs_diff = ad; }
+    }
+    const bool pass = (mismatches == 0);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    const Alignment a = traceback(sp, H_gpu);
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("Smith-Waterman local alignment: query (M=%d) vs target (N=%d), "
+                "DNA, match=+%d mismatch=%d gap=%d\n", sp.m, sp.n, MATCH, MISMATCH, GAP);
+    std::printf("best local score = %d  at cell (i,j)=(%d,%d)\n", a.score, a.end_i, a.end_j);
+    if (a.length > 0) {
+        const double pct = 100.0 * a.identities / a.length;
+        std::printf("aligned length = %d, identities = %d/%d (%.1f%%)\n",
+                    a.length, a.identities, a.length, pct);
+        const int show = a.length < PREVIEW_COLS ? a.length : PREVIEW_COLS;
+        std::printf("alignment (first %d columns):\n", show);
+        std::printf("  Q: %s\n", a.q_line.substr(0, show).c_str());
+        std::printf("     %s\n", a.m_line.substr(0, show).c_str());
+        std::printf("  T: %s\n", a.t_line.substr(0, show).c_str());
+    } else {
+        std::printf("aligned length = 0 (no positive-scoring local alignment)\n");
+    }
+    std::printf("RESULT: %s (GPU matrix matches CPU exactly)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (M=%d, N=%d, %zu DP cells)\n",
+                 path.c_str(), sp.m, sp.n, H_cpu.size());
+    std::fprintf(stderr, "[timing] CPU fill: %.3f ms   GPU wavefront: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact -- a single small alignment issues many tiny "
+                         "diagonal launches; the GPU wins on large matrices / batched pairs.\n");
+    std::fprintf(stderr, "[verify] matrix mismatches = %d, max_abs_diff = %d\n",
+                 mismatches, max_abs_diff);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

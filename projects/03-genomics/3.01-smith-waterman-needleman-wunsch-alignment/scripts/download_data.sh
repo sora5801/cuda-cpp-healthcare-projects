@@ -1,33 +1,24 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  How to get REAL sequences (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 3.1 -- Smith-Waterman / Needleman-Wunsch Alignment   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# Project 3.01 : Smith-Waterman / Needleman-Wunsch Alignment
+# Prints how to obtain two FASTA sequences; downloads nothing. See section 8.
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
-echo "[download_data] Project 3.1 -- Smith-Waterman / Needleman-Wunsch Alignment"
-echo "[download_data] Target data dir: $DATA_DIR"
+echo "[download_data] Project 3.01 -- Smith-Waterman / Needleman-Wunsch Alignment"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    UniProtKB/Swiss-Prot — curated protein sequence database, ~570 k entries (https://www.uniprot.org/downloads); NCBI nr (non-redundant protein) — comprehensive protein database, 100 M+ sequences (https://ftp.ncbi.nlm.nih.gov/blast/db/); PDB sequences — structural protein sequences for benchmarking alignments (https://www.rcsb.org/downloads); NCBI RefSeq — reference nucleotide and protein sequences (https://ftp.ncbi.nlm.nih.gov/refseq/)."
+echo "Pick two sequences from a public FASTA database, e.g.:"
+echo "  UniProt/Swiss-Prot : https://www.uniprot.org/downloads"
+echo "  NCBI RefSeq        : https://ftp.ncbi.nlm.nih.gov/refseq/"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Write them as two lines (this project uses a DNA A/C/G/T alphabet):"
+echo "  line 1 = query sequence ; line 2 = target sequence"
+echo "Save as data/sample/sequences_sample.txt (strip FASTA '>' headers/newlines)."
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Offline stand-in (no download, reproducible):"
+echo "  python scripts/make_synthetic.py --motif 400 --mut 0.2"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

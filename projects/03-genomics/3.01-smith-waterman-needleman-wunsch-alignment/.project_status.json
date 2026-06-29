@@ -2,8 +2,8 @@
   "id": "3.1",
   "id_padded": "3.01",
   "project": "Smith-Waterman / Needleman-Wunsch Alignment",
-  "status": "todo",
-  "owner": "",
-  "branch": "",
+  "status": "done",
+  "owner": "lead",
+  "branch": "main",
   "skeleton": true
 }

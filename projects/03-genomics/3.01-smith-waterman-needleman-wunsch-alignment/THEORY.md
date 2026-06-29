@@ -1,86 +1,124 @@
-# THEORY — 3.1 Smith-Waterman / Needleman-Wunsch Alignment
+# THEORY — 3.01 Smith-Waterman / Needleman-Wunsch Alignment
 
-> The deep didactic explanation (the "why"). Written for a sharp student who
-> knows C++ but is new to CUDA and new to this domain. Diagrams in Mermaid/ASCII
-> are welcome. See [README.md](README.md) for the quick tour and build steps.
->
-> _Educational only — not for clinical use._
-
-<!-- =======================================================================
-     The block below is the verbatim catalog deep-dive for this project,
-     stamped in by scaffold.py as raw material. Use it to write the sections
-     that follow, then DELETE it (or fold it into "The science"). Every
-     TODO(theory) below must be completed before the project is "done".
-     ======================================================================= -->
-
-<details>
-<summary>Catalog deep-dive (raw source material — fold into the sections below, then remove)</summary>
-
-### 3.1 Smith-Waterman / Needleman-Wunsch Alignment 🟢 · Established
-- **Deep dive:** Smith-Waterman (SW) computes the optimal local alignment between two sequences via a dynamic-programming (DP) score matrix filled cell-by-cell; at protein-database scale this means quadratic work per query against millions of targets. GPUs collapse this into anti-diagonal wavefront parallelism: all cells on the same anti-diagonal are independent and can be computed simultaneously across thousands of CUDA threads, eliminating the serial dependency that cripples CPUs. CUDASW++4.0 (2024) achieves up to 5.71 TCUPS on an H100 by exploiting Hopper's DPX integer-DP instructions, hardware-native to the architecture, alongside tile-based matrix partitioning and sequence-database chunking for maximal occupancy. The specific bottleneck parallelised is the per-cell recurrence max(H[i-1,j-1]+s, H[i,j-1]-g, H[i-1,j]-g) across the anti-diagonal frontier.
-- **Key algorithms:** Smith-Waterman anti-diagonal DP wavefront; Needleman-Wunsch global DP; striped SIMD inter-sequence parallelism; affine gap scoring; DPX hardware DP instructions (Hopper); sequence-database tiling and batched kernel launch.
-- **Datasets:** UniProtKB/Swiss-Prot — curated protein sequence database, ~570 k entries (https://www.uniprot.org/downloads); NCBI nr (non-redundant protein) — comprehensive protein database, 100 M+ sequences (https://ftp.ncbi.nlm.nih.gov/blast/db/); PDB sequences — structural protein sequences for benchmarking alignments (https://www.rcsb.org/downloads); NCBI RefSeq — reference nucleotide and protein sequences (https://ftp.ncbi.nlm.nih.gov/refseq/).
-- **Starter repos/tools:** CUDASW4 (https://github.com/asbschmidt/CUDASW4) — CUDASW++4.0, H100/A100/L40S optimised, DPX, up to 5.71 TCUPS; GenomeWorks / ClaraGenomics SDK (https://github.com/NVIDIA-Genomics-Research/GenomeWorks) — NVIDIA CUDA pairwise alignment primitives for both protein and nucleotide; WFA-GPU (verify URL: github.com/quim0/WFA-GPU) — wavefront alignment algorithm on GPU, gap-affine, ultra-fast for long DNA; Parasail (https://github.com/jeffdaily/parasail) — SIMD/CUDA pairwise alignment library used as reference.
-- **CUDA libraries & GPU pattern:** cuBLAS (score accumulation); thrust (sort, scan); CUB (warp-level reduction); custom anti-diagonal kernels with shared memory tiling; inter-sequence batching (one CUDA block per query–target pair or striped across warps); DPX integer instructions on Hopper SM90.
-
-</details>
-
----
+> For a reader who knows C++ but is new to CUDA and to sequence alignment.
+> See [README.md](README.md) for the tour and build. _Educational only._
 
 ## 1. The science
 
-TODO(theory): The biology / medicine / physics being modeled — enough for a
-reader to understand the *problem* before any math. What real-world question
-does computing this answer?
+Biological sequences (DNA, RNA, protein) evolve by substitutions, insertions, and
+deletions. To compare two sequences we **align** them — line them up, allowing
+gaps, to maximize matched residues. Alignment underlies homology search (BLAST),
+genome assembly, variant calling, and phylogenetics. **Global** alignment
+(Needleman-Wunsch) lines up the sequences end to end; **local** alignment
+(Smith-Waterman) finds the single best-matching *sub*-region, which is what you
+want when a short motif sits inside longer, unrelated flanks.
 
 ## 2. The math
 
-TODO(theory): The governing equations / formal problem statement, with **every
-symbol defined** (units, ranges). State inputs, outputs, and the objective.
+Let `q` (length `M`) and `t` (length `N`) be the sequences. Define a substitution
+score `s(a,b)` (here `+2` if `a=b`, `-1` otherwise) and a linear gap penalty
+`g = -2`. The Smith-Waterman score matrix `H ∈ ℤ^{(M+1)×(N+1)}` is
+
+```
+H[i][0] = 0,   H[0][j] = 0
+H[i][j] = max( 0,
+               H[i-1][j-1] + s(q_i, t_j),     # substitution (diagonal)
+               H[i-1][j]   + g,               # deletion: gap in t (up)
+               H[i][j-1]   + g )              # insertion: gap in q (left)
+```
+
+The optimal local score is `max_{i,j} H[i][j]`; the alignment is recovered by
+**traceback** from that cell, following whichever predecessor produced it, until
+a `0` is reached. **Needleman-Wunsch** (global) drops the `max(0, …)`, initializes
+`H[i][0]=i·g`, `H[0][j]=j·g`, and reads the score from `H[M][N]`.
 
 ## 3. The algorithm
 
-TODO(theory): Step-by-step. Include **complexity analysis**: serial cost vs. the
-parallel work/depth. Where is the arithmetic intensity? What is the data-access
-pattern?
+```
+fill H row by row (serial reference), OR diagonal by diagonal (parallel):
+  for each cell (i,j): H[i][j] = recurrence above
+score = max cell ;  alignment = traceback(score cell)
+```
+
+**Complexity.** Filling is `Θ(M·N)` work. Serially it is `M·N` dependent steps.
+The key observation for parallelism: `H[i][j]` depends only on `(i-1,j-1)`,
+`(i-1,j)`, `(i,j-1)` — all with a smaller `i+j`. So if we group cells by
+`d = i+j` (**anti-diagonals**), every cell on diagonal `d` depends only on
+diagonals `d-1` and `d-2`. Cells *within* a diagonal are independent. The
+**critical path** (depth) is `M+N-1` diagonals; the **work** is still `M·N`, now
+spread across the up-to-`min(M,N)` cells of each diagonal.
 
 ## 4. The GPU mapping
 
-TODO(theory): How the algorithm becomes **threads / blocks / grids**.
-- Thread-to-data mapping (which thread owns which element).
-- Launch configuration and the reasoning (block size, grid size).
-- Memory hierarchy used and **why**: global / shared / registers / constant /
-  texture. Where is the bandwidth bottleneck? What is the occupancy story?
-- Which CUDA library (cuBLAS / cuFFT / cuRAND / cuSOLVER / Thrust) does what,
-  and what it would take to write that step by hand (no black boxes — §6.1.6).
+We sweep `d = 2 … M+N`. For each `d` we launch `sw_diagonal_kernel` with one
+thread per cell on that diagonal:
 
 ```
-TODO(theory): an ASCII or Mermaid diagram of the grid/block decomposition.
+  thread k  ->  i = i_lo + k,   j = d - i
+  valid rows:   i in [ max(1, d-N) .. min(M, d-1) ]   (so 1 <= j <= N)
 ```
+
+```
+   d=2  d=3  d=4  d=5 ...           each launch fills one frontier; it READS
+    \    \    \    \                only cells written by earlier launches
+   H[1,1]                           (diagonals d-1, d-2) -> no intra-launch
+        H[1,2] H[2,1]               hazard, no atomics, no __syncthreads.
+              H[1,3] H[2,2] H[3,1]
+```
+
+**Memory.** `H` lives in global memory (`(M+1)(N+1)` ints, row stride `N+1`); the
+two sequences are small global arrays read as `q[i-1]`, `t[j-1]`. No shared memory
+is used in this teaching version (Exercise 5 adds tiling). Because each launch
+only reads finalized cells, there are **no race conditions** and no
+synchronization primitives — the *ordering between diagonals* is provided for
+free by launching them in sequence.
+
+**Why integers / determinism.** Scores are integers, so the GPU and CPU compute
+the **identical** matrix bit-for-bit (`matrix mismatches = 0`). There is no
+floating-point and no cross-thread reduction during the fill, so nothing can
+reorder.
+
+**Occupancy & the honest caveat.** Early and late diagonals are short (few
+cells), so they underutilize the GPU; only the middle diagonals are wide. Worse,
+we pay a **kernel-launch cost** `M+N-1` times. For a single modest pair this
+overhead dominates and the GPU is *slower* than the CPU — a genuinely useful
+lesson about when GPUs help. Production fixes: a **single** persistent kernel that
+loops over diagonals with a grid-wide barrier (cooperative groups); **shared-
+memory tiling** of the active band; and, above all, **batching many pairs** (one
+block per query-target pair), which turns alignment back into an embarrassingly
+parallel workload like `1.12`.
 
 ## 5. Numerical considerations
 
-TODO(theory): Precision (FP32 vs FP64) and why. Stability. Race conditions and
-whether atomics are used. **Determinism**: does the parallel reduction reorder
-floating-point sums? If so, say so and quantify the caveat.
+Pure integer arithmetic: no precision or stability concerns, fully deterministic.
+The only subtlety is **traceback tie-breaking**: when several predecessors yield
+the same score there are multiple optimal alignments. We pick a fixed priority
+(diagonal > up > left) and traceback once, on the host, from the GPU matrix — so
+the reported alignment is deterministic and independent of GPU thread scheduling.
 
 ## 6. How we verify correctness
 
-TODO(theory): The CPU reference (`src/reference_cpu.cpp`), the **tolerance** and
-why that value, and the edge cases checked. Explain why agreement between an
-independent serial implementation and the GPU implementation is convincing
-evidence of correctness.
+`main.cu` fills the matrix twice — `sw_cpu` (a plain triple loop) and `sw_gpu`
+(the wavefront) — and compares **every cell**. Equality of two independent
+implementations (one obviously correct, one parallel) is strong evidence the
+kernel is right, and it directly validates the wavefront ordering. The synthetic
+sample embeds a mutated motif so the optimal local alignment is non-trivial
+(it exercises matches, mismatches, and gaps in the traceback).
 
 ## 7. Where this sits in the real world
 
-TODO(theory): How production tools (named in the catalog "Prior art") do this
-differently — what they add (scale, accuracy, features) that this teaching
-version omits. If this is a 🔴 frontier project shipped as a reduced-scope
-teaching version, describe the full approach here.
-
----
+CUDASW++4.0, GenomeWorks, and WFA-GPU add what this teaching version omits:
+**affine gaps** (Gotoh's H/E/F recurrence), **substitution matrices** (BLOSUM/PAM)
+for proteins, **striped/SIMD inter-sequence** parallelism, **DPX** hardware DP
+instructions on Hopper, and **database tiling** so a query streams against
+millions of targets. The **wavefront alignment algorithm (WFA)** reformulates the
+problem to work proportional to the *alignment score* rather than `M·N`, a large
+win for similar long sequences. The core recurrence you see here is unchanged —
+everything else is engineering for scale.
 
 ## References
 
-TODO(theory): Papers, docs, and the starter repos from the catalog, with one
-line each on what to learn from them.
+- Smith & Waterman (1981), *Identification of Common Molecular Subsequences* — the algorithm.
+- Needleman & Wunsch (1970) — global alignment. Gotoh (1982) — affine gaps.
+- Schmidt et al., **CUDASW++4.0** (2024) — modern GPU SW with DPX.
+- NVIDIA CUDA C++ Programming Guide — grid-stride/wavefront patterns, cooperative groups.

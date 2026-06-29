@@ -2,11 +2,11 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 1/301 projects done (0.3%) | todo 300 | in-progress 0 | missing 0
+**Progress:** 2/301 projects done (0.7%) | todo 299 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
-| 🟢 Beginner | 67 | 1 | 0 | 66 |
+| 🟢 Beginner | 67 | 2 | 0 | 65 |
 | 🟡 Intermediate | 206 | 0 | 0 | 206 |
 | 🔴 Advanced | 28 | 0 | 0 | 28 |
 
@@ -90,11 +90,11 @@
 | 2.34 | Biophysical Simulation of Biomolecular Condensates (Active Learning Loop) | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
 | 2.35 | Electron Paramagnetic Resonance (EPR/DEER) Constrained Modeling | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
 
-## 3. Genomics, Sequencing & Bioinformatics  (0/30 done)
+## 3. Genomics, Sequencing & Bioinformatics  (1/30 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
-| 3.01 | Smith-Waterman / Needleman-Wunsch Alignment | 🟢 Beginner | Established | [ ] todo | - | - |
+| 3.01 | Smith-Waterman / Needleman-Wunsch Alignment | 🟢 Beginner | Established | [x] done | lead | main |
 | 3.02 | Short-Read Mapping / Alignment | 🟢 Beginner | Established | [ ] todo | - | - |
 | 3.03 | Variant Calling Acceleration | 🟢 Beginner | Established | [ ] todo | - | - |
 | 3.04 | Nanopore Basecalling | 🟢 Beginner | Established | [ ] todo | - | - |

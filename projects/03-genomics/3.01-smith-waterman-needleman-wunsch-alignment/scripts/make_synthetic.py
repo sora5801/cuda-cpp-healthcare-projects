@@ -1,48 +1,65 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate a synthetic DNA alignment problem
 # ---------------------------------------------------------------------------
-# Project 3.1 -- Smith-Waterman / Needleman-Wunsch Alignment   (template skeleton)
+# Project 3.01 : Smith-Waterman / Needleman-Wunsch Alignment
 #
-# WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+# Builds two DNA sequences that SHARE a mutated motif, so there is a clear,
+# high-scoring LOCAL alignment for Smith-Waterman to find:
+#     query  = randPrefix + motif            + randSuffix
+#     target = randPrefix + mutate(motif)     + randSuffix
+# A fixed RNG seed makes the output reproducible (so expected_output.txt is
+# stable). Real data is FASTA from UniProt/NCBI (see download_data.*).
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
-#
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# OUTPUT: two lines (query, target) of A/C/G/T -- the format the loader expects.
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py                       # default sizes
+#   python scripts/make_synthetic.py --motif 400 --mut 0.2 # harder, longer
 # ===========================================================================
 import argparse
+import random
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "data" / "sample" / "sequences_sample.txt"
+BASES = "ACGT"
+
+
+def rand_seq(rng, k):
+    return "".join(rng.choice(BASES) for _ in range(k))
+
+
+def mutate(rng, seq, rate):
+    out = []
+    for c in seq:
+        if rng.random() < rate:
+            out.append(rng.choice([b for b in BASES if b != c]))  # substitution
+        else:
+            out.append(c)
+    return "".join(out)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
+    ap = argparse.ArgumentParser(description="Generate a synthetic SW alignment problem.")
+    ap.add_argument("--motif", type=int, default=80, help="shared motif length")
+    ap.add_argument("--qflank", type=int, default=20, help="random flank length on the query")
+    ap.add_argument("--tpre", type=int, default=30, help="random prefix length on the target")
+    ap.add_argument("--tsuf", type=int, default=40, help="random suffix length on the target")
+    ap.add_argument("--mut", type=float, default=0.12, help="motif mutation rate in the target")
+    ap.add_argument("--seed", type=int, default=11)
+    ap.add_argument("--out", default=str(OUT))
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    rng = random.Random(args.seed)
+    motif = rand_seq(rng, args.motif)
+    query = rand_seq(rng, args.qflank) + motif + rand_seq(rng, args.qflank)
+    target = rand_seq(rng, args.tpre) + mutate(rng, motif, args.mut) + rand_seq(rng, args.tsuf)
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    Path(args.out).write_text(query + "\n" + target + "\n", encoding="utf-8")
+    print(f"[make_synthetic] wrote {args.out}  (M={len(query)}, N={len(target)}; "
+          f"motif={args.motif}, mut={args.mut}; SYNTHETIC, seed={args.seed})")
 
 
 if __name__ == "__main__":

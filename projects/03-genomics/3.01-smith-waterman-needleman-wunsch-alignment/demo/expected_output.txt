@@ -1,5 +1,9 @@
 3.1 -- Smith-Waterman / Needleman-Wunsch Alignment
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Smith-Waterman local alignment: query (M=120) vs target (N=150), DNA, match=+2 mismatch=-1 gap=-2
+best local score = 143  at cell (i,j)=(115,122)
+aligned length = 115, identities = 88/115 (76.5%)
+alignment (first 60 columns):
+  Q: TATTCAGGACCTAACCTGAGTTTCCTCATGCAATTCAAAACCATGTCCGTAATGTAGGCG
+     |.||  |.|||||.|| .||||.||||||||||.|||.|||||.|.||||.|||||||||
+  T: TGTT--GCACCTAGCC-AAGTTCCCTCATGCAAATCATAACCAGGGCCGTGATGTAGGCG
+RESULT: PASS (GPU matrix matches CPU exactly)
