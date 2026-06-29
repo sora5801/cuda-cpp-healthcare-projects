@@ -129,6 +129,28 @@ A fresh skeleton reports **NOT DONE: scaffold TODOs remain** — that's expected
 | Runtime error about CUDA driver version | Driver older than the toolkit's minor. Within CUDA 13.x this is usually fine (minor-version compatibility); update the driver if a kernel refuses to launch. |
 | Demo `FAIL` but build OK | The program's stdout drifted from `demo/expected_output.txt`. Regenerate expected output, or check you didn't print varying data (timings) to **stdout** (they belong on **stderr**). |
 
+## 7b. Linking a CUDA library (cuFFT, cuSOLVER, cuBLAS, …)
+
+Some projects use a CUDA library (e.g. `8.03` cuFFT, `2.06` cuSOLVER). Add the
+`.lib` to **both** the Debug and Release `<Link>` sections of the `.vcxproj`:
+
+```xml
+<AdditionalDependencies>cufft.lib;cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+<!-- cuSOLVER also needs cuBLAS + cuSPARSE: -->
+<AdditionalDependencies>cusolver.lib;cublas.lib;cusparse.lib;cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+```
+
+and to `CMakeLists.txt` for the optional Linux build:
+
+```cmake
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(<slug> PRIVATE CUDA::cufft)   # or CUDA::cusolver CUDA::cublas CUDA::cusparse
+```
+
+The library headers (`<cufft.h>`, `<cusolverDn.h>`, …) and `.lib` paths come from
+the CUDA build customization automatically — no manual include/lib paths needed.
+See **[docs/PATTERNS.md](PATTERNS.md) §5** for the "no black box" documentation rule.
+
 ## 8. CI note
 
 A GitHub Actions workflow can **compile** changed projects (hosted runners have the toolkit) but **cannot run

@@ -1,5 +1,6 @@
 # Changelog — newest first; each entry links to its push-note in `push-notes/`.
 
+- 2026-06-29 #08 -- [phase1 standards review patterns-cookbook](push-notes/2026-06-29-08-phase1-standards-review-patterns-cookbook.md)
 - 2026-06-29 #07 -- [flagship 2.06 nma-cusolver and phase1 complete](push-notes/2026-06-29-07-flagship-2-06-nma-cusolver-and-phase1-complete.md)
 - 2026-06-29 #06 -- [flagship 14.02 reaction-diffusion](push-notes/2026-06-29-06-flagship-14-02-reaction-diffusion.md)
 - 2026-06-29 #05 -- [flagship 13.02 pbpk](push-notes/2026-06-29-05-flagship-13-02-pbpk.md)

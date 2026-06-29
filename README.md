@@ -120,9 +120,11 @@ cuda-cpp-healthcare-projects/
 
 ## Contributing standards
 
-Read **[CLAUDE.md](CLAUDE.md)** (the contract) and **[docs/COMMENTING_STANDARD.md](docs/COMMENTING_STANDARD.md)**.
-Every project starts from `docs/PROJECT_TEMPLATE/`, must build clean in `Debug|x64` **and** `Release|x64`,
-ship a CPU reference + a demo that matches `expected_output.txt`, and pass `verify_project.py`.
+Read **[CLAUDE.md](CLAUDE.md)** (the contract), **[docs/COMMENTING_STANDARD.md](docs/COMMENTING_STANDARD.md)**
+(how to comment), and **[docs/PATTERNS.md](docs/PATTERNS.md)** (the GPU patterns cookbook — find the closest
+flagship and follow it). Every project starts from `docs/PROJECT_TEMPLATE/`, must build clean in `Debug|x64`
+**and** `Release|x64`, ship a CPU reference + a demo that matches `expected_output.txt`, and pass
+`verify_project.py`. The 14 **flagships** (one per domain, listed above) are the canonical worked examples.
 
 ## License
 
