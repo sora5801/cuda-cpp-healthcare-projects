@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Pointers to the FULL datasets (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 1.19 -- Network / Polypharmacology Modeling   (template skeleton)
+# Project 1.19 -- Network / Polypharmacology Modeling
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The real polypharmacology knowledge
+# graphs (STRING, DrugBank, STITCH, DrugComb) are large and several require
+# account registration or non-redistributable licenses, so this script does NOT
+# auto-download them -- it prints exactly where to get each one. The committed
+# SYNTHETIC sample (data/sample/) is sufficient to run the demo offline, and
+# scripts/make_synthetic.py generates larger synthetic problems on demand.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +21,20 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.19 -- Network / Polypharmacology Modeling"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    STRING PPI network — 11.8B protein interactions (https://string-db.org); DrugBank — FDA-approved drugs and targets (https://go.drugbank.com); STITCH — drug-protein interactions (http://stitch.embl.de); DrugComb — drug combination synergy data (https://drugcomb.fimm.fi)."
+echo "This demo runs on a SYNTHETIC knowledge graph (data/sample/), so no"
+echo "download is required. To experiment with real polypharmacology data,"
+echo "obtain the sources below yourself and respect each license:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  STRING PPI network   https://string-db.org/cgi/download        (CC BY 4.0; protein-protein edges + confidence scores)"
+echo "  DrugBank             https://go.drugbank.com/releases/latest   (requires free academic registration; drugs + targets)"
+echo "  STITCH               http://stitch.embl.de/cgi/download.pl     (drug-protein interactions; check per-use terms)"
+echo "  DrugComb             https://drugcomb.fimm.fi/                  (drug-combination synergy; cite the publication)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Workflow to turn a real edge list into TransE embeddings (see THEORY.md):"
+echo "  1) parse edges into (head, relation, tail) triples with integer entity IDs"
+echo "  2) train TransE/RotatE embeddings with PyTorch Geometric or DGL on a GPU"
+echo "  3) export the query head + relation + all tail embeddings into this"
+echo "     project's text layout (data/README.md) and pass it as argv[1]"
+echo
+echo "For a larger SYNTHETIC problem right now, run:"
+echo "  python scripts/make_synthetic.py --n 100000 --dim 64"

@@ -2,32 +2,38 @@
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+`run_demo.ps1` (Windows) / `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on `data/sample/routes_sample.txt` (24 synthetic candidate
+   retrosynthetic routes + a shared logistic yield model).
+3. **Verify** the GPU per-route scores against the CPU reference and print a
+   clear `PASS`/`FAIL`.
+4. **Report** the **top-5 most synthesizable routes** (highest score first), and
+   time the kernel (CUDA events) vs. the CPU baseline.
 
-The program splits its output deliberately:
+Output is split: the deterministic **top-K + PASS** goes to **stdout** (diffed
+against [`expected_output.txt`](expected_output.txt)); the **timing** and the
+numeric error go to **stderr** (shown, not diffed).
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+## Canonical output
 
-## Expected result
+See [`expected_output.txt`](expected_output.txt) for the exact stdout the demo
+asserts:
 
 ```
 1.20 -- Reaction Yield / Retrosynthesis Scoring
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Scored 24 candidate retrosynthetic routes (<= 6 steps, 4 features each)
+top-5 most synthesizable routes (higher score = better):
+  #1  route[0]  score = 0.949571
+  ...
+RESULT: PASS (GPU matches CPU within tol=1e-06)
 ```
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+`route[0]` is the **planted best route** (short, high-prior, low-condition-penalty,
+fully in-stock), so its #1 ranking is by construction — a sanity check that the
+scoring and ranking work. A green `PASS` means the GPU scores matched the CPU
+reference within `1e-6` (they share the same `route_score()`; the only difference
+is a few-times-`1e-8` single-precision `expf`/FMA rounding — see `THEORY.md`).
+
+> The scores reflect the **synthetic** sample; they carry no chemical meaning.

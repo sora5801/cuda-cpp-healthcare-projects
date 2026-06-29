@@ -1,33 +1,39 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  How to get REAL synthon descriptors (Windows)
 # ---------------------------------------------------------------------------
-# Project 1.18 -- Fragment / Combinatorial Library Enumeration   (template skeleton)
+# Project 1.18 : Fragment / Combinatorial Library Enumeration
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
-#
-# Usage:  ./scripts/download_data.ps1
+# This project's "real data" is not a single file to download but DESCRIPTORS
+# COMPUTED from building-block SMILES with RDKit. Building-block catalogs from
+# Enamine / ChemSpace require registration, so this script does NOT bypass any
+# credentials (CLAUDE.md sec.8): it prints the recipe and defers to
+# scripts/make_synthetic.py for an offline, reproducible stand-in. It downloads
+# nothing by itself and is safe to run repeatedly (idempotent).
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.18 -- Fragment / Combinatorial Library Enumeration"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Enamine building block catalog (https://enamine.net/building-blocks); REAL Space library (https://enamine.net); ChemSpace — commercial building blocks (https://chem-space.com); Sigma-Aldrich building block list (verify URL)."
+Write-Host "Real synthon descriptors are computed from building-block SMILES with RDKit:"
+Write-Host "  1) Obtain a building-block catalog (registration required):"
+Write-Host "       Enamine building blocks : https://enamine.net/building-blocks"
+Write-Host "       Enamine REAL Space      : https://enamine.net"
+Write-Host "       ChemSpace               : https://chem-space.com"
+Write-Host "     Group the blocks by reactive class into 3 reactant slots (e.g. an"
+Write-Host "     Ugi-like amine / aldehyde-or-acid / isocyanide-cap scheme)."
+Write-Host "  2) pip install rdkit"
+Write-Host "  3) For each building block, compute the 5 additive descriptors:"
+Write-Host "       MW    = Descriptors.MolWt(mol)"
+Write-Host "       cLogP = Crippen.MolLogP(mol)"
+Write-Host "       TPSA  = rdMolDescriptors.CalcTPSA(mol)"
+Write-Host "       HBD   = rdMolDescriptors.CalcNumHBD(mol)"
+Write-Host "       HBA   = rdMolDescriptors.CalcNumHBA(mol)"
+Write-Host "  4) Write the catalog text format documented in data/README.md"
+Write-Host "     (N_SLOTS, then per slot 'SLOT k size' + one row per building block)."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Offline stand-in (no download, fully reproducible):"
+Write-Host "  python scripts/make_synthetic.py --per-slot 40    # 40^3 = 64000 products"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Tip: keep N_SLOTS (=3) consistent with src/product_core.h."
+Write-Host "Target data dir: $ProjectRoot\data"

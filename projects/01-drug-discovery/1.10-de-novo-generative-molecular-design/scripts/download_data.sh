@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Point at the FULL datasets (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 1.10 -- De Novo Generative Molecular Design   (template skeleton)
+# Project 1.10 -- De Novo Generative Molecular Design  (reduced-scope teaching).
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs +
+# licensing, and NEVER bypasses credentials/registration. This TEACHING version
+# trains on a tiny synthetic corpus and does not need the large public datasets,
+# so this script only prints where to get them and defers to make_synthetic.py
+# for an offline stand-in.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,19 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.10 -- De Novo Generative Molecular Design"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    ChEMBL — 2M+ bioactive molecules (https://www.ebi.ac.uk/chembl/); ZINC20 — 1.4B purchasable compounds (https://zinc20.docking.org); GuacaMol benchmark — distribution learning and goal-directed generation benchmarks (https://github.com/BenevolentAI/guacamol); MOSES — molecular generation benchmarks (https://github.com/molecularsets/moses)."
+echo "This reduced-scope teaching demo uses a SYNTHETIC corpus and needs NO"
+echo "download. The committed sample (data/sample/smiles_corpus_sample.txt) is"
+echo "sufficient. For a larger synthetic run:"
+echo "    python scripts/make_synthetic.py --n-generate 1048576"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "If you want to train on real public molecule corpora, fetch them yourself"
+echo "and respect each license:"
+echo "  * ChEMBL    (2M+ bioactive molecules)   https://www.ebi.ac.uk/chembl/      [CC-BY-SA 3.0]"
+echo "  * ZINC20    (1.4B purchasable cmpds)     https://zinc20.docking.org          [free, academic use]"
+echo "  * MOSES     (generation benchmark)       https://github.com/molecularsets/moses   [MIT]"
+echo "  * GuacaMol  (distribution + goal bench)  https://github.com/BenevolentAI/guacamol [MIT]"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "When wiring a real corpus, follow the idempotent pattern:"
+echo "  1) skip download if the file already exists with the right checksum"
+echo "  2) print source URL + expected size + SHA256"
+echo "  3) for any credentialed source, print registration instructions ONLY"

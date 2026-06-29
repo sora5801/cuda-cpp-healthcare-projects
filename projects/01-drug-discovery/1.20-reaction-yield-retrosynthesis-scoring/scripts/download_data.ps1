@@ -1,33 +1,37 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  How to get REAL reaction data (Windows)
 # ---------------------------------------------------------------------------
-# Project 1.20 -- Reaction Yield / Retrosynthesis Scoring   (template skeleton)
+# Project 1.20 : Reaction Yield / Retrosynthesis Scoring
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
-#
-# Usage:  ./scripts/download_data.ps1
+# This project's "real data" is not a single file but PER-STEP FEATURES derived
+# from atom-mapped reaction SMILES by a learned (transformer/GNN) yield model,
+# plus candidate routes emitted by a retrosynthesis planner. This script prints
+# the recipe and the source links and defers to make_synthetic.py for an offline
+# stand-in (CLAUDE.md section 8). It requires no credentials and downloads
+# nothing by itself.
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.20 -- Reaction Yield / Retrosynthesis Scoring"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    USPTO-50k — 50k atom-mapped reactions (https://github.com/connorcoley/rexgen_direct); Reaxys/CAS reaction databases (commercial); Open Reaction Database (ORD) — open-access reaction data (https://open-reaction-database.org); USPTO-MIT — 479k reactions (https://github.com/wengong-jin/nips17-rexgen)."
+Write-Host "Real candidate routes + per-step features come from a planning pipeline:"
+Write-Host "  1) Get atom-mapped reactions, e.g.:"
+Write-Host "       USPTO-50k   https://github.com/connorcoley/rexgen_direct"
+Write-Host "       USPTO-MIT   https://github.com/wengong-jin/nips17-rexgen"
+Write-Host "       ORD         https://open-reaction-database.org   (open access)"
+Write-Host "     (Reaxys/CAS are commercial -- license forbids redistribution.)"
+Write-Host "  2) Run a retrosynthesis planner (AiZynthFinder / ASKCOS) on a target"
+Write-Host "     molecule to emit candidate ROUTES (sequences of reaction steps)."
+Write-Host "  3) Featurize each step with a yield model (Molecular Transformer /"
+Write-Host "     Chemformer): template_prior, precedent_count, condition_penalty,"
+Write-Host "     selectivity -- the 4 features this project scores."
+Write-Host "  4) Write the text format in data/README.md (header + shared model +"
+Write-Host "     one block per route), then score the batch with this project."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Offline stand-in (no download, fully reproducible):"
+Write-Host "  python scripts/make_synthetic.py --n 1000000    # a planner-scale batch"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Tip: keep MAX_STEPS (=6) and NUM_FEATURES (=4) consistent with"
+Write-Host "     src/route_score.h, or the loader will reject the file."
+Write-Host "Target data dir: $ProjectRoot\data"

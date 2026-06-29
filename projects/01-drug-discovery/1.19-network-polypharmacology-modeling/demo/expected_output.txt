@@ -1,5 +1,10 @@
 1.19 -- Network / Polypharmacology Modeling
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
+TransE link prediction: 1 query drug vs 64 protein tails (dim=16)
+top-5 predicted targets (protein index : TransE score):
+  #1  protein[6]  score = -0.000000
+  #2  protein[15]  score = -0.002517
+  #3  protein[62]  score = -0.008118
+  #4  protein[30]  score = -4.857530
+  #5  protein[52]  score = -5.265568
+recovery: 3 / 3 ground-truth targets in top-5
 RESULT: PASS (GPU matches CPU within tol=1.0e-05)

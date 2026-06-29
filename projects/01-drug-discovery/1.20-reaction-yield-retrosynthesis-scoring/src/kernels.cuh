@@ -1,52 +1,52 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for batched route scoring
 // ---------------------------------------------------------------------------
-// Project 1.20 -- Reaction Yield / Retrosynthesis Scoring   (template skeleton)
+// Project 1.20 : Reaction Yield / Retrosynthesis Scoring
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   Scoring N candidate retrosynthetic routes is N INDEPENDENT jobs (route r's
+//   score depends only on route r's steps), so we give EACH ROUTE its own GPU
+//   thread -- the canonical "independent jobs" pattern (PATTERNS.md sec.1, shared
+//   with 1.12 Tanimoto and 12.01 spectral search). Two design choices are the
+//   teaching points here:
+//     * the SHARED LOGISTIC MODEL (weights w + bias b) lives in CONSTANT memory:
+//       every thread reads the same few floats and none writes them, so the
+//       constant cache broadcasts them warp-wide in one transaction; and
+//     * the per-route math is the SAME route_score() the CPU calls (route_score.h),
+//       so CPU and GPU agree to ~1e-8 (single-precision expf/FMA rounding aside),
+//       well inside the verification tolerance.
+//   A grid-stride loop lets one modest grid cover a batch of any size (millions
+//   of routes, as a real planner's MCTS would generate).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   This header declares a __global__ kernel, so it is included ONLY by .cu
+//   units. main.cu calls score_routes_gpu().
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: route_score.h, util/cuda_check.cuh, util/timer.cuh,
+// reference_cpu.h. Then read kernels.cu. The GPU-mapping is in ../THEORY.md.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
+#include "reference_cpu.h"   // RouteSet, ROUTE_STRIDE (pure C++, safe in .cu)
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
+// score_kernel: out[r] = route_score(route r). The shared model (w,b) is read
+// from the __constant__ symbols defined in kernels.cu, NOT passed as parameters.
+//   feats : [n * ROUTE_STRIDE] row-major device array of route feature blocks
+//   avail : [n] device array of per-route availability factors
+//   n     : number of candidate routes
+//   out   : [n] device array of route scores (output)
+__global__ void score_kernel(const float* __restrict__ feats,
+                             const float* __restrict__ avail,
+                             int n,
                              float* __restrict__ out);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// score_routes_gpu: uploads the model to constant memory and the route batch to
+// global memory, launches score_kernel, times ONLY the kernel (CUDA events), and
+// returns the per-route scores.
+//   rs        : the loaded batch (routes + shared model)
+//   out       : resized to rs.n; filled with per-route scores
+//   kernel_ms : out-param, GPU-measured kernel time in milliseconds
+void score_routes_gpu(const RouteSet& rs, std::vector<float>& out, float* kernel_ms);

@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.15 -- Protein-Ligand Binding Affinity Scoring (ML)   (template skeleton)
+# Project 1.15 : Protein-Ligand Binding Affinity Scoring (ML)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/protein-ligand-binding-affinity-scoring-ml.sln (CLAUDE.md §5). Both

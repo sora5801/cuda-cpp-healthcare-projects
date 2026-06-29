@@ -6,32 +6,56 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+A **Markov State Model (MSM)** turns a long molecular-dynamics (MD) trajectory —
+a time series of molecular conformations — into a small, interpretable model of
+the molecule's *kinetics*. This project builds a reduced-scope MSM end to end on
+the GPU: it **clusters** MD frames into a handful of "microstates" with k-means,
+**counts** the transitions between microstates at a chosen lag time, **estimates**
+the transition probability matrix, and **extracts** the equilibrium populations
+and the slowest implied timescale (the molecule's slowest conformational
+process). It is a clean, self-checking example of the most important MSM steps,
+built on the GPU pattern *parallel-assign + atomic-integer-reduce*.
 
 ## What this computes & why the GPU helps
 
-Markov State Models (MSMs) discretize MD conformational space into metastable states and estimate transition probabilities from long or many-short trajectories. Building MSMs requires: (1) featurization of millions of MD frames, (2) dimensionality reduction (tICA/PCA), (3) clustering (k-means/mini-batch k-means), and (4) transition matrix estimation. Steps 1–3 are GPU-acceleratable via cuML or custom CUDA kernels. The payoff is extraction of thermodynamics and kinetics (kon, koff, binding pathways) from aggregated μs-ms of GPU MD.
+Markov State Models discretize MD conformational space into metastable states and
+estimate transition probabilities from long or many-short trajectories. Building
+an MSM requires: (1) featurization of (often millions of) MD frames,
+(2) dimensionality reduction (tICA/PCA), (3) clustering into microstates
+(k-means), and (4) transition-matrix estimation. Steps 1–3 are
+GPU-acceleratable. The payoff is extraction of thermodynamics and kinetics
+(populations, slow timescales, binding pathways) from aggregated µs–ms of GPU MD.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** with millions of frames, the two dominant steps are
+both embarrassingly parallel and are exactly what this project runs on the GPU:
+
+- **k-means assignment** — one thread per frame finds its nearest microstate
+  centroid (Euclidean). Independent per frame → a 1-D grid over frames.
+- **transition counting** — one thread per time index `t` scatters the pair
+  `(state(t) → state(t+τ))` into a K×K count matrix via an **integer** atomicAdd.
+
+Both reductions use **integer / fixed-point** accumulation so they are
+*deterministic* and match the CPU reference bit-for-bit (see THEORY §Numerics).
 
 ## The algorithm in brief
 
-Time-lagged independent component analysis (tICA), mini-batch k-means clustering, transition matrix MLE/Bayesian, PCCA+ for state coarse-graining, Chapman-Kolmogorov test, variational approach to Markov processes (VAMP).
+- **Featurize** (here: provided as the input feature matrix; in production: tICA /
+  PCA on internal coordinates).
+- **Cluster** frames into K microstates with Lloyd's **k-means** (farthest-first
+  seeding for determinism).
+- **Count transitions** `C[i][j]` = number of times the trajectory is in
+  microstate `i` at time `t` and microstate `j` at time `t+τ` (lag time τ).
+- **Estimate** the transition matrix `T` by row-normalizing `C` (maximum
+  likelihood): `T[i][j] = C[i][j] / Σ_j C[i][j]`.
+- **Analyze**: the stationary distribution `π` (`πT = π`) gives equilibrium
+  populations; the second eigenvalue `λ₂` gives the slowest implied timescale
+  `t₂ = −τ / ln(λ₂)`.
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+derivation, including PCCA+, the Chapman-Kolmogorov test, and VAMP (the
+production-grade extensions this teaching version omits).
 
 ## Build
 
@@ -49,60 +73,111 @@ Command-line alternative (Developer PowerShell):
 msbuild build\markov-state-models-from-md.sln /p:Configuration=Release /p:Platform=x64
 ```
 
+This project links only the CUDA runtime (`cudart`); it uses **no** extra CUDA
+library, so the kernels (k-means assign, atomic accumulate, transition count) are
+written and explained by hand — nothing is a black box (CLAUDE.md §6.1.6).
+
 ## Run the demo
 
 ```powershell
 ./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.sh           # Linux/macOS (CMake build)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
+The demo builds if needed, runs on `data/sample/trajectory_sample.txt`, prints
+the MSM (populations, transition matrix, slowest timescale), shows the
 GPU-vs-CPU agreement check, and prints a timing line.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
+- **Sample (committed):** `data/sample/trajectory_sample.txt` — a tiny synthetic
+  featurized trajectory (12,000 frames × 3 features) so the demo runs offline.
+- **Full dataset:** `scripts/download_data.ps1` / `.sh` print pointers to real MD
+  sets; `scripts/make_synthetic.py` regenerates / enlarges the synthetic one.
 - **Provenance & license:** see [data/README.md](data/README.md).
 
-Catalog dataset notes: MDCATH — 5 μs MD trajectories for 272 proteins (https://huggingface.co/datasets/compsciencelab/mdcath); Fast-folder benchmark trajectories (chignolin, Trp-cage, Villin — publicly shared by Piana/Shaw); GPCRmd (https://gpcrmd.org); D. E. Shaw millisecond trajectories (accessible via RCSB deposition).
+Catalog dataset notes: mdCATH — 5 µs MD trajectories for 272 proteins
+(<https://huggingface.co/datasets/compsciencelab/mdcath>); Fast-folder benchmark
+trajectories (chignolin, Trp-cage, Villin — Piana/Shaw); GPCRmd
+(<https://gpcrmd.org>); D. E. Shaw millisecond trajectories (via RCSB deposition).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt). The
+program builds the MSM on both the **GPU** (`src/kernels.cu`) and a **CPU
+reference** (`src/reference_cpu.cpp`) and asserts they agree: the microstate
+labels and the integer transition-count matrix match **exactly**, and the
+centroids / transition matrix match to machine precision. The recovered
+transition matrix closely matches the known ground-truth matrix that generated
+the synthetic trajectory (see `data/README.md`) — that is the science check, not
+just a CPU==GPU check.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — loads the trajectory, runs CPU + GPU, verifies, reports.
+2. [`src/msm.h`](src/msm.h) — the shared `__host__ __device__` core: distance,
+   nearest-centroid, and fixed-point quantization (one source of truth for CPU+GPU).
+3. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
+4. [`src/kernels.cu`](src/kernels.cu) — the assign / accumulate / count kernels + the driver.
+5. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial pipeline and the
+   shared host helpers (centroid update, transition matrix, π, timescale).
+6. [`src/util/`](src/util/) — shared `CUDA_CHECK`, CUDA-event timer, I/O helpers.
 
 ## Prior art & further reading
 
-PyEMMA (https://github.com/markovmodel/PyEMMA) — MSM construction with CUDA-accelerated k-means; MSMBuilder (https://github.com/msmbuilder/msmbuilder) — statistical models for biomolecular dynamics; deeptime (https://github.com/deeptime-ml/deeptime) — VAMPnets and modern MSM tools on GPU; cuML (https://github.com/rapidsai/cuml) — GPU-accelerated k-means and PCA via RAPIDS.
+- **PyEMMA** (<https://github.com/markovmodel/PyEMMA>) — the classic MSM toolkit:
+  featurization, tICA, clustering, MSM estimation, Chapman-Kolmogorov tests.
+- **MSMBuilder** (<https://github.com/msmbuilder/msmbuilder>) — statistical models
+  for biomolecular dynamics; study its transition-matrix estimators.
+- **deeptime** (<https://github.com/deeptime-ml/deeptime>) — modern MSM/VAMP and
+  VAMPnets; the variational view that supersedes hand-picked features.
+- **cuML / RAPIDS** (<https://github.com/rapidsai/cuml>) — GPU k-means and PCA; the
+  production way to do the clustering step at scale.
 
 Study these to learn the production approach; **do not copy code wholesale** —
 reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-cuML k-means for GPU clustering; custom CUDA kernels for pairwise RMSD featurization; cuBLAS for tICA covariance matrix; GPU-parallel trajectory loading via RAPIDS cuDF. --
+**Parallel assign + atomic-integer reduction** (see `docs/PATTERNS.md`, the
+"clustering / centroid accumulation" row, exemplified by flagship 11.09): one
+thread per frame for k-means assignment; integer/fixed-point atomicAdd for the
+centroid sums and the K×K transition counts, which makes the reductions
+deterministic and exactly CPU-matching. The spectral analysis (stationary
+distribution, slowest timescale) is a tiny K×K host step shared by both paths.
+Catalog note (for scale-up): cuML k-means and cuBLAS-based tICA covariance are the
+library route for production featurization/clustering.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Lag-time scan (implied-timescale plot).** Re-run with several lag times
+   (`--lag` in `make_synthetic.py`, or load with different τ) and plot `t₂` vs τ.
+   A good MSM shows `t₂` *plateauing* once τ exceeds the fast relaxation — the
+   standard way to choose a lag.
+2. **Chapman-Kolmogorov test.** Check that `T(2τ) ≈ T(τ)²` (Markovianity). Add a
+   kernel that counts transitions at `2τ` and compare to the squared matrix.
+3. **More microstates → PCCA+.** Increase `K` (over-discretize), then coarse-grain
+   back to 3 macrostates by lumping microstates with similar kinetics (PCCA+).
+4. **FP64 vs FP32 features.** Switch the feature storage to `double` and observe
+   that labels/counts are unchanged (the clustering is robust) — a lesson in when
+   precision matters.
+5. **Bigger trajectory.** `python scripts/make_synthetic.py --frames 200000` and
+   watch the GPU's relative edge grow as the launch overhead is amortized.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced-scope teaching version.** Real MSM construction includes featurization
+  and **tICA** (this project takes the features as given), **mini-batch** k-means,
+  **Bayesian / reversible** transition-matrix estimators, **PCCA+** coarse-graining,
+  **Chapman-Kolmogorov** validation, and **VAMP** model selection. THEORY.md
+  describes these; the code implements the core estimator only.
+- **Eigen-analysis is intentionally simple.** π and `λ₂` use power iteration with
+  deflation (exact enough for the small, well-conditioned `T` here); production
+  code uses a general (and reversibility-aware) eigensolver.
+- **The data is synthetic.** The committed trajectory is a hidden-Markov toy with
+  a *known* transition matrix, chosen so the result is interpretable and
+  verifiable. It is not real MD and carries no physical or clinical meaning.
+- **Timing is a teaching artifact, not a benchmark.** On this tiny set the GPU is
+  launch-bound; its advantage appears only with millions of frames.

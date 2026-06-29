@@ -2,15 +2,15 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 31/301 projects done (10.3%) | todo 270 | in-progress 0 | missing 0
+**Progress:** 37/301 projects done (12.3%) | todo 264 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 23 | 0 | 44 |
-| 🟡 Intermediate | 206 | 7 | 0 | 199 |
+| 🟡 Intermediate | 206 | 13 | 0 | 193 |
 | 🔴 Advanced | 28 | 1 | 0 | 27 |
 
-## 1. Drug Discovery & Molecular Design  (18/35 done)
+## 1. Drug Discovery & Molecular Design  (24/35 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -23,17 +23,17 @@
 | 1.07 | Quantum Chemistry / DFT | 🟢 Beginner | Established | [x] done | - | - |
 | 1.08 | Semi-Empirical & Tight-Binding Quantum Methods | 🟢 Beginner | Established | [x] done | - | - |
 | 1.09 | ML Interatomic Potentials (Neural Network Potentials) | 🟢 Beginner | Established | [x] done | worker | - |
-| 1.10 | De Novo Generative Molecular Design | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 1.10 | De Novo Generative Molecular Design | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.11 | QSAR / Property Prediction | 🟢 Beginner | Established | [x] done | - | - |
 | 1.12 | Molecular Fingerprint Similarity Search | 🟢 Beginner | Established | [x] done | lead | main |
 | 1.13 | Pharmacophore & 3D Shape Screening | 🟢 Beginner | Established | [x] done | worker | main |
 | 1.14 | Conformer Ensemble Generation | 🟢 Beginner | Established | [x] done | - | - |
-| 1.15 | Protein-Ligand Binding Affinity Scoring (ML) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 1.15 | Protein-Ligand Binding Affinity Scoring (ML) | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.16 | ADMET / Toxicity Prediction | 🟢 Beginner | Established | [x] done | worker | main |
-| 1.17 | Markov State Models from MD | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 1.18 | Fragment / Combinatorial Library Enumeration | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 1.19 | Network / Polypharmacology Modeling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 1.20 | Reaction Yield / Retrosynthesis Scoring | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 1.17 | Markov State Models from MD | 🟡 Intermediate | Active R&D | [x] done | worker-1.17 | - |
+| 1.18 | Fragment / Combinatorial Library Enumeration | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 1.19 | Network / Polypharmacology Modeling | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 1.20 | Reaction Yield / Retrosynthesis Scoring | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.21 | Polarizable / AMOEBA Force Field MD | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 1.22 | Constant-pH Molecular Dynamics | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 1.23 | QM/MM Molecular Dynamics | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

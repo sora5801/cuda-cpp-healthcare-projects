@@ -1,5 +1,11 @@
 1.15 -- Protein-Ligand Binding Affinity Scoring (ML)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+3D-CNN scorer: 6 complexes, 16^3 grid, 8 in-ch, 8 conv filters
+predicted binding affinity (pKd) per complex:
+  complex  0  atoms= 35  pred_pKd= 8.1093  (synthetic_label= 5.053)
+  complex  1  atoms= 35  pred_pKd= 8.2245  (synthetic_label= 5.094)
+  complex  2  atoms= 33  pred_pKd= 7.9045  (synthetic_label= 5.270)
+  complex  3  atoms= 37  pred_pKd= 8.0446  (synthetic_label= 5.897)
+  complex  4  atoms= 32  pred_pKd= 7.9479  (synthetic_label= 6.080)
+  complex  5  atoms= 33  pred_pKd= 8.0777  (synthetic_label= 6.442)
+rank-1 predicted binder: complex 1  (pred_pKd=8.2245)
+RESULT: PASS (GPU matches CPU within tol=1.0e-06)

@@ -2,7 +2,7 @@
   "id": "1.15",
   "id_padded": "1.15",
   "project": "Protein-Ligand Binding Affinity Scoring (ML)",
-  "status": "todo",
+  "status": "done",
   "owner": "",
   "branch": "",
   "skeleton": true

@@ -1,11 +1,16 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.20 -- Reaction Yield / Retrosynthesis Scoring   (template skeleton)
+# Project 1.20 -- Reaction Yield / Retrosynthesis Scoring
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
-# canonical deliverable is build/reaction-yield-retrosynthesis-scoring.sln (CLAUDE.md §5). Both
-# compile the SAME src/ files, so they stay in lockstep.
+# canonical deliverable is build/reaction-yield-retrosynthesis-scoring.sln
+# (CLAUDE.md §5). Both compile the SAME src/ files, so they stay in lockstep.
+#
+# No extra CUDA library is linked: the kernel is plain arithmetic plus the expf
+# intrinsic, so the default CUDA runtime is all we need (no cuBLAS/cuFFT/etc.).
+# The shared scoring core lives in the header src/route_score.h, pulled in by
+# the include directory below.
 #
 #   cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build/cmake

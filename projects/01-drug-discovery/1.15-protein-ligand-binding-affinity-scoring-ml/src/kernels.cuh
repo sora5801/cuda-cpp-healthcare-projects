@@ -1,52 +1,45 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for batched 3D-CNN affinity scoring
 // ---------------------------------------------------------------------------
-// Project 1.15 -- Protein-Ligand Binding Affinity Scoring (ML)   (template skeleton)
+// Project 1.15 : Protein-Ligand Binding Affinity Scoring (ML)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (the two stacked CUDA patterns this project teaches)
+//   * BATCH over complexes: scoring N docked poses are N INDEPENDENT jobs, so we
+//     give each complex its OWN THREAD BLOCK. This is the real-world "rescore
+//     millions of docking poses" workload -- pure data parallelism across poses.
+//   * STENCIL within a complex: the 3D convolution is the classic per-output-voxel
+//     stencil. Inside a block, the threads cooperate over the GRID^3 voxels of one
+//     complex, using a grid buffer in global memory and a shared-memory reduction
+//     for the global-average pool.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   So the launch is <<<n_complexes, BLOCK>>>: blockIdx.x selects the complex,
+//   threadIdx.x is a worker that owns a stride of voxels. See kernels.cu for the
+//   two device passes (voxelize, then conv+ReLU+pool+dense) and ../THEORY.md
+//   "GPU mapping" for the occupancy / memory reasoning.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   This header is included only by .cu units (it declares __global__ kernels).
+//   The CPU reference uses reference_cpu.h instead. Both pull the shared per-
+//   element math from scoring_core.h so results match (PATTERNS.md sec.2).
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, scoring_core.h.
+// Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // ComplexSet, Atom (pure C++, safe to include in .cu)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// ---------------------------------------------------------------------------
+// score_gpu: the host-callable "score the whole batch on the GPU" function.
+//   It uploads the ragged atom array + offsets, allocates one reusable voxel/
+//   feature grid per resident block, launches the batched scoring kernel, times
+//   ONLY the kernel (CUDA events), and copies the per-complex pKd back.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   cs        : the loaded batch (n complexes, CSR atom layout)
+//   out       : resized to cs.n; filled with predicted pKd per complex (output)
+//   kernel_ms : out-param, GPU-measured kernel time in milliseconds
+//
+//   main.cu calls exactly this; all CUDA bookkeeping is hidden inside.
+// ---------------------------------------------------------------------------
+void score_gpu(const ComplexSet& cs, std::vector<double>& out, float* kernel_ms);

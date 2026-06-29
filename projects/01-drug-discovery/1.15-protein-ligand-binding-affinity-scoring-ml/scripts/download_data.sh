@@ -2,11 +2,12 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 1.15 -- Protein-Ligand Binding Affinity Scoring (ML)   (template skeleton)
+# Project 1.15 : Protein-Ligand Binding Affinity Scoring (ML)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL +
+# registration steps, and NEVER bypasses credentials. PDBbind / CASF require a
+# (free) account and have redistribution terms, so this script prints
+# instructions only and defers to scripts/make_synthetic.py for the offline demo.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,24 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.15 -- Protein-Ligand Binding Affinity Scoring (ML)"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    PDB-bind v2020 — 19,443 protein-ligand complexes with Kd/Ki (http://www.pdbbind.org.cn); CASF-2016 benchmark (http://www.pdbbind.org.cn/casf.php); ChEMBL activity data (https://www.ebi.ac.uk/chembl/); BindingDB — 2.8M measured binding affinities (https://www.bindingdb.org)."
+echo "The committed sample in data/sample/complexes_sample.txt is SYNTHETIC and is"
+echo "enough to build, run, and verify the demo offline. The real benchmarks below"
+echo "require (free) registration and are NOT auto-downloaded:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  PDBbind v2020  -- 19,443 complexes with measured Kd/Ki (training set)"
+echo "                    http://www.pdbbind.org.cn   (register, then download)"
+echo "  CASF-2016      -- scoring/ranking/docking benchmark"
+echo "                    http://www.pdbbind.org.cn/casf.php"
+echo "  ChEMBL         -- bioactivity database"
+echo "                    https://www.ebi.ac.uk/chembl/"
+echo "  BindingDB      -- 2.8M measured binding affinities"
+echo "                    https://www.bindingdb.org"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "To convert a real complex into this project's input format:"
+echo "  1) parse the protein .pdb and ligand .sdf/.mol2 (e.g. with RDKit / Biopython)"
+echo "  2) center a 16 A box on the binding pocket; keep atoms with element in {C,N,O,S}"
+echo "  3) emit one line per complex: '<m> <pKd>' then m lines '<x> <y> <z> <type> <is_ligand>'"
+echo "     (type: 0=C 1=N 2=O 3=S; is_ligand: 0=protein 1=ligand; coords in A in [0,16))"
+echo
+echo "For a larger SYNTHETIC batch to stress the GPU path instead, run:"
+echo "  python scripts/make_synthetic.py --n 100000"

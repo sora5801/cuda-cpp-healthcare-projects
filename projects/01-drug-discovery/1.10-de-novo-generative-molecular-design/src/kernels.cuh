@@ -1,52 +1,63 @@
 // ===========================================================================
 // src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 1.10 -- De Novo Generative Molecular Design   (template skeleton)
+// Project 1.10 : De Novo Generative Molecular Design (reduced-scope teaching).
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   The "what the GPU offers" header. main.cu calls generate_and_score_gpu();
+//   kernels.cu implements both the host wrapper and the device kernel. Included
+//   only by .cu translation units (it declares a __global__ kernel, so the plain
+//   C++ compiler must never see it -- that is why the CPU reference lives in the
+//   separate pure-C++ reference_cpu.h).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+// THE BIG IDEA
+//   Generating N novel molecules is N INDEPENDENT stochastic jobs: molecule i is
+//   sampled from its OWN RNG stream rng_seed(seed, i). So we give each molecule
+//   its own GPU THREAD -- thread (blockIdx.x, threadIdx.x) generates and scores
+//   molecule i = blockIdx.x * blockDim.x + threadIdx.x. This is the per-thread
+//   RNG "Monte-Carlo histories" pattern (PATTERNS.md §1; flagship 5.01), here
+//   producing thousands of candidate molecules per kernel launch -- the same
+//   thing an RL rollout does, only with a Markov model instead of a transformer.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   The transition MODEL is read-only and identical for every thread, so we put
+//   it in CONSTANT memory: its broadcast cache serves the whole warp from one
+//   fetch (same trick as the query fingerprint in flagship 1.12). The kernel
+//   writes only two small per-molecule outputs (score, length), so there are NO
+//   atomics and NO inter-thread communication -- embarrassingly parallel.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: generator.h, util/cuda_check.cuh, util/timer.cuh.
+// Then read kernels.cu. The science / GPU-mapping is in ../THEORY.md.
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
+#include "reference_cpu.h"   // Corpus, MarkovModel (pure C++, safe to include here)
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// One thread == one molecule. The model is read from the __constant__ symbol
+// defined in kernels.cu (NOT a parameter), so it is not in the signature.
+//   n_gen   : number of molecules to generate (guards the ragged last block)
+//   seed    : base RNG seed; this thread uses stream rng_seed(seed, i)
+//   scores  : [n_gen] device array, OUT, integer milli-reward per molecule
+//   lengths : [n_gen] device array, OUT, character length per molecule
+__global__ void generate_kernel(int n_gen, unsigned long long seed,
+                                int* __restrict__ scores,
+                                int* __restrict__ lengths);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// generate_and_score_gpu: do the whole GPU computation.
+//   Uploads the trained model to constant memory, allocates the two device
+//   output arrays, launches generate_kernel with a 1-D grid sized to n_gen,
+//   copies results back, and reports the measured KERNEL time (CUDA events).
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   model     : the trained Markov model (built once on the host)
+//   n_gen     : number of molecules to generate
+//   seed      : base RNG seed (must match the CPU reference for bit-identity)
+//   scores    : host OUT, resized to n_gen
+//   lengths   : host OUT, resized to n_gen
+//   kernel_ms : OUT, milliseconds spent in the kernel itself (not copies)
+void generate_and_score_gpu(const MarkovModel& model, int n_gen, uint64_t seed,
+                            std::vector<int>& scores, std::vector<int>& lengths,
+                            float* kernel_ms);

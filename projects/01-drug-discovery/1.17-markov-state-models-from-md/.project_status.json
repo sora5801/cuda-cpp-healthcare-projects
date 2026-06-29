@@ -2,8 +2,8 @@
   "id": "1.17",
   "id_padded": "1.17",
   "project": "Markov State Models from MD",
-  "status": "todo",
-  "owner": "",
+  "status": "done",
+  "owner": "worker-1.17",
   "branch": "",
-  "skeleton": true
+  "skeleton": false
 }

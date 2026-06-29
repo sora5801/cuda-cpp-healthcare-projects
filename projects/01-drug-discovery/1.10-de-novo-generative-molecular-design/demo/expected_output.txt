@@ -1,5 +1,6 @@
 1.10 -- De Novo Generative Molecular Design
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+trained first-order Markov model on 16 SMILES; generated 4096 molecules
+drug-like hits (score >= 500): 1289 / 4096
+mean reward: 44 milli-units
+best molecule: idx=88  SMILES=CNOCO4#2=2Ncc1CCCCCCcOn4Occ1#c4221  score=1500 milli-units
+RESULT: PASS (GPU matches CPU exactly: 4096/4096 molecules identical)

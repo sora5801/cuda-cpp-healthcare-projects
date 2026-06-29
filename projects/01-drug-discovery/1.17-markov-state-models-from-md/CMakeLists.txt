@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.17 -- Markov State Models from MD   (template skeleton)
+# Project 1.17 : Markov State Models from MD
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/markov-state-models-from-md.sln (CLAUDE.md §5). Both

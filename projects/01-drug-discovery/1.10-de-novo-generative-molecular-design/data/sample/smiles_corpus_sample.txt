@@ -1,0 +1,19 @@
+# SYNTHETIC SMILES training corpus -- project 1.10 (teaching only).
+# Format: header 'n_train n_generate seed', then n_train SMILES lines.
+16 4096 12345
+CCO
+CCCC
+CCN
+CCOC
+CC(C)C
+c1ccccc1
+CCc1ccccc1
+CC(=O)O
+CCOCC
+CN(C)C
+C1CCCCC1
+CCc1ccncc1
+CCC(=O)N
+OCC(O)CO
+CCOc1ccccc1
+CC(C)(C)O

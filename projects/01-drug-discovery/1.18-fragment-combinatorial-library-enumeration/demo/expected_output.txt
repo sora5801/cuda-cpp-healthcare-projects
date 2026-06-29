@@ -1,5 +1,14 @@
 1.18 -- Fragment / Combinatorial Library Enumeration
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+combinatorial library: 6 x 6 x 6 slots = 216 products
+drug-like (Lipinski+Veber) passes: 130 / 216  (60.2%)
+sum of MW over passing products: 47136.000 g/mol
+first 8 passing products (by index):
+  #1  product[0]  = A00 + B00 + C00
+  #2  product[1]  = A01 + B00 + C00
+  #3  product[2]  = A02 + B00 + C00
+  #4  product[3]  = A03 + B00 + C00
+  #5  product[4]  = A04 + B00 + C00
+  #6  product[5]  = A05 + B00 + C00
+  #7  product[6]  = A00 + B01 + C00
+  #8  product[7]  = A01 + B01 + C00
+RESULT: PASS (GPU matches CPU exactly: count, MW-sum, indices)

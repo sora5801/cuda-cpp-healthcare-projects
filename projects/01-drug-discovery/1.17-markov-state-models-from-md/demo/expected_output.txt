@@ -1,5 +1,12 @@
 1.17 -- Markov State Models from MD
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+MSM: 12000 frames x 3 features -> 3 microstates, lag=1, 25 k-means iters
+microstate populations (pi):
+  state 0: n= 4128  pi=0.3432
+  state 1: n= 4654  pi=0.3885
+  state 2: n= 3218  pi=0.2684
+transition matrix T (row=from, col=to):
+   0.9380 0.0504 0.0116
+   0.0385 0.9304 0.0312
+   0.0236 0.0364 0.9400
+slowest implied timescale t2 = 12.29 frames (lambda2 = 0.9219)
+RESULT: PASS (GPU labels+counts+centroids+T match CPU)

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real MD-trajectory pointers (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 1.17 -- Markov State Models from MD   (template skeleton)
+# Project 1.17 : Markov State Models from MD
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, and NEVER bypasses
+# credentials/registration. There is nothing to auto-download here: building an
+# MSM needs a featurized MD trajectory, which you produce from raw MD with a
+# tool like PyEMMA/deeptime. This script prints the pointers and the expected
+# input layout; the committed synthetic sample is enough to run the demo.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,16 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.17 -- Markov State Models from MD"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    MDCATH — 5 μs MD trajectories for 272 proteins (https://huggingface.co/datasets/compsciencelab/mdcath); Fast-folder benchmark trajectories (chignolin, Trp-cage, Villin — publicly shared by Piana/Shaw); GPCRmd (https://gpcrmd.org); D. E. Shaw millisecond trajectories (accessible via RCSB deposition)."
+echo "An MSM is built from a FEATURIZED trajectory. Featurize + tICA-reduce a"
+echo "raw MD run, scale a few leading components to [0,1], and write them into"
+echo "the format in data/README.md ('N D K lag' then N rows of D floats, in time order)."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  mdCATH         : https://huggingface.co/datasets/compsciencelab/mdcath  (5 us MD, 272 proteins)"
+echo "  Fast-folders   : chignolin / Trp-cage / Villin (Piana/Shaw, publicly shared)"
+echo "  GPCRmd         : https://gpcrmd.org                 (curated GPCR MD)"
+echo "  D. E. Shaw     : millisecond trajectories via RCSB deposition"
+echo "  PyEMMA         : https://github.com/markovmodel/PyEMMA   (featurize/tICA/cluster)"
+echo "  deeptime       : https://github.com/deeptime-ml/deeptime (modern MSM/VAMP tools)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Bigger synthetic trajectory (no download):"
+echo "  python scripts/make_synthetic.py --frames 50000"

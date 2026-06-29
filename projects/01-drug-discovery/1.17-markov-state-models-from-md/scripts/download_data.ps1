@@ -1,12 +1,13 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real MD-trajectory pointers (Windows)
 # ---------------------------------------------------------------------------
-# Project 1.17 -- Markov State Models from MD   (template skeleton)
+# Project 1.17 : Markov State Models from MD
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, and NEVER bypasses
+# credentials/registration. There is nothing to auto-download here: building an
+# MSM needs a featurized MD trajectory, which you produce from raw MD with a
+# tool like PyEMMA/deeptime. This script prints the pointers and the expected
+# input layout; the committed synthetic sample is enough to run the demo.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,17 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.17 -- Markov State Models from MD"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    MDCATH — 5 μs MD trajectories for 272 proteins (https://huggingface.co/datasets/compsciencelab/mdcath); Fast-folder benchmark trajectories (chignolin, Trp-cage, Villin — publicly shared by Piana/Shaw); GPCRmd (https://gpcrmd.org); D. E. Shaw millisecond trajectories (accessible via RCSB deposition)."
+Write-Host "An MSM is built from a FEATURIZED trajectory. Featurize + tICA-reduce a"
+Write-Host "raw MD run, scale a few leading components to [0,1], and write them into"
+Write-Host "the format in data/README.md ('N D K lag' then N rows of D floats, in time order)."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  mdCATH         : https://huggingface.co/datasets/compsciencelab/mdcath  (5 us MD, 272 proteins)"
+Write-Host "  Fast-folders   : chignolin / Trp-cage / Villin (Piana/Shaw, publicly shared)"
+Write-Host "  GPCRmd         : https://gpcrmd.org                 (curated GPCR MD)"
+Write-Host "  D. E. Shaw     : millisecond trajectories via RCSB deposition"
+Write-Host "  PyEMMA         : https://github.com/markovmodel/PyEMMA   (featurize/tICA/cluster)"
+Write-Host "  deeptime       : https://github.com/deeptime-ml/deeptime (modern MSM/VAMP tools)"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Bigger synthetic trajectory (no download):"
+Write-Host "  python scripts/make_synthetic.py --frames 50000"

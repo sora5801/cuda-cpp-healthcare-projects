@@ -1,52 +1,52 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for TransE link prediction
 // ---------------------------------------------------------------------------
-// Project 1.19 -- Network / Polypharmacology Modeling   (template skeleton)
+// Project 1.19 : Network / Polypharmacology Modeling
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (pattern: INDEPENDENT JOBS + CONSTANT-MEMORY QUERY, cf. 1.12)
+//   Scoring a query drug against N candidate protein tails is N INDEPENDENT jobs:
+//   tail j's TransE score depends only on the (shared) head h, the (shared)
+//   relation r, and tail j's own embedding. So we give each candidate tail its
+//   OWN GPU THREAD. Two CUDA features make this both fast and a good lesson:
+//     * the head and relation vectors live in CONSTANT memory -- every thread
+//       reads them, none writes them, and they are identical for the whole launch
+//       -> the constant cache broadcasts one address to a whole warp in a single
+//       transaction (vs. re-reading them from global memory per thread); and
+//     * a grid-stride loop lets one modest grid cover an arbitrarily large
+//       candidate set (a real STRING/STITCH graph has tens of thousands of
+//       proteins; a trained KG can have millions of entities).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The per-tail math is the SHARED transe_score() in transe.h, called by both
+//   this kernel and the CPU reference -> the results match exactly. kernels.cu
+//   defines the kernel and the host wrapper.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, transe.h, reference_cpu.h.
+// Then read kernels.cu. The science/GPU-mapping is in ../THEORY.md.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // KnowledgeGraph (pure C++, safe to include in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Maximum embedding dimension we reserve room for in constant memory. The head
+// and relation each occupy `dim` floats; 256 floats = 1 KB each, so both fit
+// comfortably in the 64 KB constant bank with room to spare. A real trained
+// TransE model uses dim ~ 50..200, well under this cap. (If you ever need a
+// larger dim, move head/relation to global memory -- see THEORY "GPU mapping".)
+constexpr int MAX_DIM = 256;
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Device kernel: out[j] = transe_score(head, relation, tail_j). The head and
+// relation are read from __constant__ symbols defined in kernels.cu (not params).
+//   tails : [n * dim] row-major device array of candidate tail embeddings
+//   n     : number of candidate tails
+//   dim   : embedding dimension
+//   out   : [n] device array of plausibility scores (output)
+__global__ void transe_kernel(const float* __restrict__ tails, int n, int dim,
+                              float* __restrict__ out);
+
+// Host wrapper: upload head+relation to constant memory and the tails to global
+// memory, launch the kernel, time it (CUDA events), and return the scores.
+//   kg        : the loaded query (head + relation + n tail embeddings)
+//   out       : resized to kg.n; filled with per-candidate TransE scores
+//   kernel_ms : out-param, GPU-measured kernel time in milliseconds
+void transe_score_gpu(const KnowledgeGraph& kg, std::vector<float>& out, float* kernel_ms);

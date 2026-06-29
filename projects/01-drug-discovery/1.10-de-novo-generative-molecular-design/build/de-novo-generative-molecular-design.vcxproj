@@ -153,6 +153,9 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- Shared host+device core: the generative model, RNG, and scorer that BOTH
+         the CPU reference and the GPU kernel call (so results are bit-identical). -->
+    <ClInclude Include="..\src\generator.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

@@ -1,122 +1,122 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: build an MSM on CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 1.17 -- Markov State Models from MD   (template skeleton)
+// Project 1.17 : Markov State Models from MD
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (every project in this repo follows it):
+//   1. Load the featurized trajectory (data/sample): N frames x D features,
+//      K microstates, lag tau.
+//   2. CPU reference MSM (reference_cpu.cpp): the trusted baseline.
+//   3. GPU MSM (kernels.cu): parallel assign + atomic-integer accumulate/count.
+//   4. VERIFY: labels, centroids, the integer count matrix, and the transition
+//      matrix all match the CPU (integer/fixed-point atomics commute -> exact).
+//   5. REPORT: deterministic MSM summary -> stdout; timing -> stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt; run-varying numbers (timings) go to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then msm.h (distance + fixed-point), reference_cpu.cpp
+//   (the pipeline), kernels.cu (the GPU twin).
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // msm_gpu, Dataset, MsmResult
+#include "reference_cpu.h"    // load_dataset, msm_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "1.17";
 static const char* PROJECT_NAME = "Markov State Models from MD";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Fixed number of Lloyd iterations -> fully deterministic (no convergence test
+// that could differ between CPU and GPU). 25 is ample for the separated basins
+// in the synthetic sample.
+static constexpr int ITERS = 25;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Verification tolerances. Labels and the integer count matrix must match
+// EXACTLY (integer atomics commute). Centroids match to fixed-point precision;
+// the transition matrix and pi are derived from identical integer counts, so a
+// tiny slack only covers double-rounding in the host helpers.
+static constexpr double CENTROID_TOL = 1.0e-4;
+static constexpr double MATRIX_TOL   = 1.0e-12;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/trajectory_sample.txt";
+    Dataset d;
+    try {
+        d = load_dataset(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    const MsmResult cpu = msm_cpu(d, ITERS);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU MSM (kernels timed inside the wrapper) --------------------
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    const MsmResult gpu = msm_gpu(d, ITERS, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (labels, centroids, counts, T) -------------------------
+    int label_mismatch = 0;
+    for (int i = 0; i < d.N; ++i) if (cpu.labels[i] != gpu.labels[i]) ++label_mismatch;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    double cent_diff = 0.0;
+    for (std::size_t i = 0; i < cpu.centroids.size(); ++i)
+        cent_diff = std::fmax(cent_diff, std::fabs((double)cpu.centroids[i] - (double)gpu.centroids[i]));
+
+    long long count_mismatch = 0;   // integer count matrix must be exactly equal
+    for (std::size_t i = 0; i < cpu.counts.size(); ++i)
+        if (cpu.counts[i] != gpu.counts[i]) ++count_mismatch;
+
+    double matrix_diff = 0.0;
+    for (std::size_t i = 0; i < cpu.T.size(); ++i)
+        matrix_diff = std::fmax(matrix_diff, std::fabs(cpu.T[i] - gpu.T[i]));
+
+    const bool pass = (label_mismatch == 0) && (count_mismatch == 0)
+                      && (cent_diff <= CENTROID_TOL) && (matrix_diff <= MATRIX_TOL);
+
+    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) ----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("MSM: %d frames x %d features -> %d microstates, lag=%d, %d k-means iters\n",
+                d.N, d.D, d.K, d.lag, ITERS);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // Microstate equilibrium populations (the stationary distribution pi).
+    std::printf("microstate populations (pi):\n");
+    for (int k = 0; k < d.K; ++k)
+        std::printf("  state %d: n=%5u  pi=%.4f\n", k, gpu.sizes[k], gpu.pi[k]);
 
-    // Exit code feeds the demo's pass/fail gate.
+    // The transition probability matrix T (rows = "from", cols = "to").
+    std::printf("transition matrix T (row=from, col=to):\n");
+    for (int i = 0; i < d.K; ++i) {
+        std::printf("  ");
+        for (int j = 0; j < d.K; ++j) std::printf(" %.4f", gpu.T[(std::size_t)i * d.K + j]);
+        std::printf("\n");
+    }
+
+    // The slowest kinetic process recovered from the second eigenvalue.
+    std::printf("slowest implied timescale t2 = %.2f frames (lambda2 = %.4f)\n",
+                gpu.timescale, gpu.lambda2);
+    std::printf("RESULT: %s (GPU labels+counts+centroids+T match CPU)\n", pass ? "PASS" : "FAIL");
+
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
+    std::fprintf(stderr, "[data]   source: %s  (%d frames, %d features, lag %d)\n",
+                 path.c_str(), d.N, d.D, d.lag);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU loop: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- on this tiny synthetic set the GPU is "
+                         "launch-bound; the edge grows with millions of MD frames.\n");
+    std::fprintf(stderr, "[verify] label mismatches=%d  count mismatches=%lld  "
+                         "max|dCentroid|=%.3e  max|dT|=%.3e\n",
+                 label_mismatch, count_mismatch, cent_diff, matrix_diff);
+    std::fprintf(stderr, "[verify] inertia(cpu/gpu) = %.4f / %.4f\n",
+                 compute_inertia(d, cpu.centroids, cpu.labels),
+                 compute_inertia(d, gpu.centroids, gpu.labels));
+
     return pass ? 0 : 1;
 }
