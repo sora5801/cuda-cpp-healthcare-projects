@@ -1,37 +1,43 @@
-# Data — 4.1 CT Reconstruction — Filtered Backprojection
+# Data — 4.01 CT Reconstruction (Filtered Backprojection)
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/sinogram_sample.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
-| License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Origin | **Synthetic** (`scripts/make_synthetic.py`) — analytic sinogram of a disc phantom |
+| License | Public domain (CC0) — synthetic |
+| Geometry | 120 projection angles over [0, π), 183 detector bins, spacing 0.012 |
+| Reconstruction | 128×128 image over world [-0.75, 0.75]² |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+### File format
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+```
+<n_angles> <n_det> <ds> <img> <world_half>     # header line
+<row 0: n_det projection values>               # projection at angle 0
+<row 1: ...>
+... (n_angles rows)
+```
+
+- Angles are uniform: `theta_k = k·π/n_angles`.
+- Detector bin `j` is at offset `s_j = (j − (n_det−1)/2)·ds`.
+- Each value is a **line integral** (Radon transform) of the phantom along that
+  ray. Because the phantom is a sum of uniform discs, the integral is analytic:
+  chord length `2·sqrt(r²−(s−c)²)` times density, summed over discs.
 
 ## Full dataset
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+Real CT data is a **measured sinogram** (or a standard digital phantom):
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+- **Shepp-Logan phantom** — the canonical CT test object (built into ASTRA/TIGRE).
+- **TCIA** (The Cancer Imaging Archive) — real DICOM CT projection/volume data:
+  <https://www.cancerimagingarchive.net>
+- **Reconstruction toolkits** with example data: RTK, ASTRA, TIGRE (see README "Prior art").
 
-Catalog dataset notes (verbatim):
+`scripts/download_data.ps1` / `.sh` describe how to obtain a phantom/sinogram. For
+a larger synthetic problem: `python scripts/make_synthetic.py --angles 360 --det 367 --img 256`.
 
-> LUNA16/LIDC-IDRI — 888 annotated thoracic CTs from TCIA (https://luna16.grand-challenge.org/); TCIA (The Cancer Imaging Archive) — large multi-collection public CT/MRI archive (https://www.cancerimagingarchive.net/); LoDoPaB-CT — low-dose CT sinogram/reconstruction pairs for benchmarking (https://zenodo.org/record/3384092); 2016 AAPM Low-Dose CT Grand Challenge — paired full-/quarter-dose CT scans (https://www.aapm.org/grandchallenge/lowdosect/).
+## Provenance & honesty
 
-## Provenance & field meanings
-
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+The sample is **synthetic** and labeled as such. Reconstructed values are in
+arbitrary density units (the disc densities of the phantom); this is a software
+demonstration, not a calibrated CT image and not for any clinical use.

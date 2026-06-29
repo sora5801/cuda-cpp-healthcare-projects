@@ -1,52 +1,42 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU backprojection interface
 // ---------------------------------------------------------------------------
-// Project 4.1 -- CT Reconstruction — Filtered Backprojection   (template skeleton)
+// Project 4.01 : CT Reconstruction (Filtered Backprojection)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   Backprojection is a per-PIXEL GATHER: every output pixel is independent, so
+//   we give each pixel its own GPU thread (a 2-D grid over the image). Each
+//   thread loops over all projection angles, finds where its ray hits the
+//   detector (s = x*cos + y*sin), linearly interpolates the filtered projection
+//   there, and accumulates. This is the canonical CT GPU kernel; in production
+//   the interpolation is done by texture hardware essentially for free.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   We pass HOST-precomputed cos/sin so the GPU and CPU use identical trig (so
+//   their results match within tight tolerance). kernels.cu defines the kernel.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // CTProblem (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Device kernel: thread (px,py) reconstructs one image pixel.
+//   filtered : [n_angles*n_det] ramp-filtered sinogram (device)
+//   cosv,sinv: [n_angles] precomputed trig (device)
+//   center   : detector index of s=0  ((n_det-1)/2)
+//   pix      : world units per pixel ; scale = pi/n_angles ; W = world_half
+__global__ void backproject_kernel(const float* __restrict__ filtered,
+                                   const float* __restrict__ cosv,
+                                   const float* __restrict__ sinv,
+                                   int n_angles, int n_det, int N,
+                                   float ds, float center, float W, float pix, float scale,
+                                   float* __restrict__ image);
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Host wrapper: upload filtered sinogram + trig, launch the 2-D grid, copy the
+// reconstructed image back, and report the kernel time.
+//   image     : resized to img*img; filled with the reconstruction
+//   kernel_ms : out-param, GPU kernel time (ms)
+void backproject_gpu(const CTProblem& ct, const std::vector<float>& filtered,
+                     const std::vector<float>& cosv, const std::vector<float>& sinv,
+                     std::vector<float>& image, float* kernel_ms);

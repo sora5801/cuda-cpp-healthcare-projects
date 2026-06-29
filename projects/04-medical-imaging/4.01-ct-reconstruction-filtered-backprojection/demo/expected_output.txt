@@ -1,5 +1,7 @@
-4.1 -- CT Reconstruction — Filtered Backprojection
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+4.1 -- CT Reconstruction (Filtered Backprojection)
+Parallel-beam FBP: 120 projections x 183 detectors -> 128x128 image
+ramp filter: Ram-Lak (spatial)
+center pixel value = 0.9918
+max reconstructed value = 1.8264 at (px,py)=(58,92)
+central row profile (8 samples): -0.0005 1.0058 1.3580 1.0007 0.9989 1.0009 0.9980 0.0058
+RESULT: PASS (GPU matches CPU within tol=1.0e-03)

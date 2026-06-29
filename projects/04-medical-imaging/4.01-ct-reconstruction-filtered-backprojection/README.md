@@ -1,108 +1,117 @@
-# 4.1 — CT Reconstruction — Filtered Backprojection
+# 4.01 — CT Reconstruction (Filtered Backprojection)
 
 ![difficulty](https://img.shields.io/badge/difficulty-Beginner-blue) ![maturity](https://img.shields.io/badge/maturity-Established-informational) ![domain](https://img.shields.io/badge/domain-Medical%20Imaging%20%26%20Image%20Reconstruction-lightgrey)
 
-> **🟢 Beginner · Established** — Domain 4: Medical Imaging & Image Reconstruction · Catalog ID `4.1`
+> **🟢 Beginner · Established** — Domain 4: Medical Imaging & Image Reconstruction · Catalog ID `4.01`
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Reconstruct a cross-sectional image from X-ray **projections** (a sinogram) using
+**Filtered BackProjection (FBP)**: ramp-filter each projection, then "smear" each
+filtered projection back across the image and sum over all angles. Backprojection
+is a **per-pixel gather** — every output pixel independently samples one value
+from each projection — which maps perfectly onto a 2-D GPU thread grid. This is a
+third distinct GPU pattern (after `1.12`'s independent jobs and `3.01`'s
+dependency wavefront), and the first flagship with a clear GPU speed-up.
 
 ## What this computes & why the GPU helps
 
-Computes a 3D volume from a set of 2D X-ray projections by applying a ramp (Ram-Lak) filter in the frequency domain to each sinogram row, then smearing each filtered projection back across the reconstructed volume. The Feldkamp-Davis-Kress (FDK) algorithm extends this to cone-beam geometry used in modern scanners and linac on-board imagers. GPU acceleration is decisive: for a 512³ volume and 1,000 projections, each backprojection step touches ~10⁹ voxel-projection pairs, making serial CPU execution intractable for real-time or high-resolution use. CUDA texture memory provides hardware-interpolated trilinear sampling of projection data at near-zero extra cost, and the entire backprojection kernel saturates GPU memory bandwidth. Achieving sub-second reconstruction at clinical resolutions requires tens of TFLOPS, available only on GPU.
+FBP applies a ramp (Ram-Lak) filter to each sinogram row, then backprojects.
+Backprojection dominates the cost: each of the `img²` pixels reads one
+interpolated sample from each of `n_angles` projections. For clinical
+3-D volumes (the **Feldkamp-Davis-Kress / FDK** cone-beam extension) this is
+~10¹¹ voxel-projection pairs — intractable on a CPU, fast and bandwidth-bound on
+a GPU (texture units even do the interpolation for free). Here we do the clearest
+case: 2-D parallel-beam FBP.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck** is the backprojection gather; we give each output
+pixel its own thread, looping over all projection angles.
 
 ## The algorithm in brief
 
-Feldkamp-Davis-Kress FBP, Ram-Lak / Shepp-Logan ramp filter, Parker short-scan weighting, GPU ray-driven and voxel-driven backprojection, helical cone-beam FDK with Katsevich exact reconstruction.
+- **Ramp filter** (Ram-Lak): convolve each projection with the discrete ramp
+  kernel (production uses an FFT).
+- **Backproject:** `image(x,y) = (π/n_angles)·Σ_k filtered(θ_k, x·cosθ_k + y·sinθ_k)`
+  with linear interpolation in the detector.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+See [THEORY.md](THEORY.md) for the full derivation (and how FDK extends it to cone-beam 3-D).
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145) + **CUDA 13.3** ([docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
 
-1. Open `build/ct-reconstruction-filtered-backprojection.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/ct-reconstruction-filtered-backprojection.exe`.
+1. Open `build/ct-reconstruction-filtered-backprojection.sln`.
+2. **`Release|x64`** → **Build** → `build/x64/Release/ct-reconstruction-filtered-backprojection.exe`.
 
-Command-line alternative (Developer PowerShell):
-
-```powershell
-msbuild build\ct-reconstruction-filtered-backprojection.sln /p:Configuration=Release /p:Platform=x64
-```
+CLI: `msbuild build\ct-reconstruction-filtered-backprojection.sln /p:Configuration=Release /p:Platform=x64`
 
 ## Run the demo
 
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.ps1
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+Reconstructs the committed sinogram, prints image samples, and verifies GPU == CPU.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: LUNA16/LIDC-IDRI — 888 annotated thoracic CTs from TCIA (https://luna16.grand-challenge.org/); TCIA (The Cancer Imaging Archive) — large multi-collection public CT/MRI archive (https://www.cancerimagingarchive.net/); LoDoPaB-CT — low-dose CT sinogram/reconstruction pairs for benchmarking (https://zenodo.org/record/3384092); 2016 AAPM Low-Dose CT Grand Challenge — paired full-/quarter-dose CT scans (https://www.aapm.org/grandchallenge/lowdosect/).
+- **Sample (committed):** `data/sample/sinogram_sample.txt` — an **analytic**
+  sinogram of a disc phantom (deterministic).
+- **Full data:** Shepp-Logan phantom or real DICOM CT (TCIA) — see
+  `scripts/download_data.ps1` and [data/README.md](data/README.md).
+- Larger synthetic: `python scripts/make_synthetic.py --angles 360 --det 367 --img 256`.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+`demo/expected_output.txt` holds the deterministic stdout (center pixel, max,
+central-row profile). The GPU backprojection (`src/kernels.cu`) and CPU reference
+(`src/reference_cpu.cpp`) use **host-precomputed trig**, so they agree to
+`~1e-5` (well within the `1e-3` tolerance). On the sample the center pixel
+reconstructs to ≈ 1.0 — the main disc's density.
 
 ## Code tour
 
-Read in this order:
-
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — load, ramp-filter, CPU + GPU backproject, verify, print.
+2. [`src/reference_cpu.h`](src/reference_cpu.h) — geometry (`CTProblem`), filter & backprojection prototypes.
+3. [`src/kernels.cuh`](src/kernels.cuh) — the per-pixel kernel interface.
+4. [`src/kernels.cu`](src/kernels.cu) — the 2-D backprojection kernel + host wrapper.
+5. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — loader, ramp filter, serial backprojection.
 
 ## Prior art & further reading
 
-RTK (RTKConsortium/RTK, https://github.com/RTKConsortium/RTK) — ITK-based, GPU FDK and iterative, multi-GPU, clinical DICOM-RT support; ASTRA Toolbox (https://astra-toolbox.com/, https://github.com/astra-toolbox/astra-toolbox) — MATLAB/Python/C++ GPU forward/back-projection primitives for 2D/3D, supports fan/cone/parallel; TIGRE (https://github.com/CERN/TIGRE) — MATLAB/Python CUDA toolbox with FDK plus 10+ iterative algorithms, real-dataset focus; Plastimatch (https://plastimatch.org/) — GPU FDK, deformable registration, DRR; open-source, clinical-grade C++.
+- **RTK** (<https://github.com/RTKConsortium/RTK>) — ITK-based GPU FDK + iterative, clinical DICOM-RT.
+- **ASTRA Toolbox** (<https://github.com/astra-toolbox/astra-toolbox>) — GPU forward/back-projection primitives (parallel/fan/cone).
+- **TIGRE** (<https://github.com/CERN/TIGRE>) — CUDA FDK + iterative algorithms, real-data focus.
+- **Plastimatch** (<https://plastimatch.org/>) — GPU FDK, DRR, registration.
 
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
+Study these for the production approach; reimplement didactically (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-cuFFT (ramp filter in k-space), CUDA texture memory (hardware trilinear backprojection interpolation), cuBLAS; kernel pattern: one CUDA thread per output voxel, loops over projections; multi-GPU split over projection subsets. --
+Per-pixel **backprojection gather** on a 2-D thread grid · linear detector
+interpolation · host-precomputed trig for CPU/GPU parity · independent outputs
+(no atomics). Texture memory is the production accelerator for the interpolation.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Texture interpolation.** Bind the filtered sinogram to a `cudaTextureObject_t`
+   and replace the manual linear interp with `tex2D` — the production trick.
+2. **Filter on the GPU with cuFFT.** Move the ramp filter to the frequency domain
+   (`cufftExecR2C` → multiply by |ω| → `cufftExecC2R`). Compare to the spatial filter.
+3. **Fan-beam geometry.** Add the fan-beam weighting and rebinning. How do the ray
+   equations change?
+4. **3-D FDK.** Extend to cone-beam: a 3-D voxel grid, 2-D projections, and the
+   FDK cosine weighting — the algorithm clinical scanners use.
+5. **Compare without the ramp filter.** Backproject the *raw* sinogram and see the
+   characteristic `1/r` blur the filter removes.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **2-D parallel-beam only** (real scanners are fan/cone beam; FDK is the 3-D
+  extension, described in THEORY).
+- The ramp filter is a **spatial** convolution here for clarity; production filters
+  via FFT.
+- Reconstructed values are arbitrary phantom-density units, not calibrated HU.
+- Interpolation is manual linear (no texture hardware) so the math is visible.
