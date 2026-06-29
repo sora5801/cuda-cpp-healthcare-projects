@@ -1,34 +1,44 @@
 // ===========================================================================
-// src/reference_cpu.cpp  --  The plain-C++ baseline we trust
+// src/reference_cpu.cpp  --  Loader + serial ensemble integration (CPU baseline)
 // ---------------------------------------------------------------------------
-// Project 1.35 -- QMMM/ML Potential Hybrid MD   (template skeleton)
+// Project 1.35 : QMMM/ML Potential Hybrid MD   (reduced-scope teaching version)
 //
 // ROLE IN THE PROJECT
 //   This is the "ground truth" the GPU result is checked against. It is written
-//   to be OBVIOUSLY correct -- a single readable loop, no parallelism, no
-//   cleverness -- so that when the GPU and CPU agree, we believe the GPU.
+//   to be OBVIOUSLY correct -- a single readable loop, no parallelism -- so that
+//   when the GPU and CPU agree, we believe the GPU. All the physics lives in
+//   nnpmm.h as __host__ __device__ inline functions, so this reference and the
+//   GPU kernel run identical math; this file just (a) parses the tiny config and
+//   (b) loops run_trajectory() over the ensemble -- the embarrassingly-parallel
+//   loop the GPU kernel turns into one-thread-per-trajectory.
 //
 //   Compiled by the host C++ compiler only (no CUDA here). See reference_cpu.h.
-//
-// TODO(impl): replace the SAXPY placeholder below with this project's real
-//             reference algorithm (keep it simple and readable on purpose).
-//
-// READ THIS AFTER: reference_cpu.h. Compare against kernels.cu (the GPU twin).
 // ===========================================================================
 #include "reference_cpu.h"
 
-// out[i] = a * x[i] + y[i], computed serially on the CPU.
-//   Complexity: O(n) time, O(1) extra space. This is the baseline whose wall
-//   time (timed in main.cu via util::CpuTimer) we compare with the GPU kernel.
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);  // allocate + zero n outputs
-    for (int i = 0; i < n; ++i) {
-        // The whole computation in one line. Each output element depends only
-        // on its own inputs -> no data dependencies between iterations, which
-        // is exactly WHY this maps perfectly onto independent GPU threads
-        // (one thread per i) in kernels.cu.
-        out[static_cast<std::size_t>(i)] = a * x[static_cast<std::size_t>(i)]
-                                             + y[static_cast<std::size_t>(i)];
-    }
+#include <fstream>
+#include <stdexcept>
+
+// load_ensemble: read "M dt steps amp" from a whitespace-separated text file.
+// Fails LOUDLY (throws) on a missing/garbled file so the demo never silently
+// runs on empty input. The parsed fields are validated for sane ranges.
+EnsembleConfig load_ensemble(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) throw std::runtime_error("cannot open ensemble file: " + path);
+    EnsembleConfig c;
+    if (!(in >> c.M >> c.dt >> c.steps >> c.amp))
+        throw std::runtime_error(
+            "bad parameters (expected 'M dt steps amp') in " + path);
+    if (c.M <= 0 || c.steps <= 0 || c.dt <= 0.0)
+        throw std::runtime_error("invalid ensemble parameters in " + path);
+    return c;
+}
+
+// integrate_cpu: the serial reference. Each member is independent, so this is a
+// plain for-loop here; kernels.cu gives each iteration its own GPU thread.
+void integrate_cpu(const EnsembleConfig& c, std::vector<TrajResult>& results) {
+    const int M = ensemble_size(c);
+    results.assign(M, TrajResult{});
+    for (int idx = 0; idx < M; ++idx)
+        results[idx] = run_trajectory(idx, M, c.amp, c.dt, c.steps);
 }

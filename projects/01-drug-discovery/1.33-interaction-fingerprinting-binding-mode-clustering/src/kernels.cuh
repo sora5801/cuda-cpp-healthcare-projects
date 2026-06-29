@@ -1,52 +1,61 @@
 // ===========================================================================
 // src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 1.33 -- Interaction Fingerprinting & Binding-Mode Clustering   (template skeleton)
+// Project 1.33 : Interaction Fingerprinting & Binding-Mode Clustering
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   The "what the GPU offers" header. main.cu calls build_ifps_gpu() (STAGE A)
+//   and ifp_cluster_gpu() (STAGE B); kernels.cu implements the host wrappers and
+//   the device kernels. Included only by .cu translation units (it pulls in CUDA
+//   types), which is why the CPU reference lives behind the pure-C++
+//   reference_cpu.h instead.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+// THE TWO GPU PATTERNS (see ../THEORY.md "GPU mapping" and PATTERNS.md sec 1)
+//   STAGE A  -- one thread per POSE builds that pose's IFP by scanning all
+//               NUM_RESIDUES residues (a small inner loop). Embarrassingly
+//               parallel: poses never interact. Mirrors the "independent jobs"
+//               pattern of flagship 1.12.
+//   STAGE B  -- consensus-bit Tanimoto k-means:
+//                 ASSIGN  : one thread per pose -> nearest centroid (popcount).
+//                 TALLY   : one thread per pose -> atomicAdd into integer per-bit
+//                           counters (integer adds commute -> deterministic,
+//                           the lesson of flagship 11.09).
+//                 UPDATE  : majority vote on the host (shared with the CPU).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: ifp.h, reference_cpu.h, util/cuda_check.cuh, util/timer.cuh.
+// Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // Dataset + the shared host helpers (init/update/cost)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// ---------------------------------------------------------------------------
+// build_ifps_gpu : STAGE A on the device.
+//   Uploads residues + poses, launches one thread per pose to build the packed
+//   IFP bit-vectors, copies them back. Output `fps` is resized to [P*FP_WORDS]
+//   and must equal the CPU build_ifps() bit-for-bit.
+//     d         : the loaded dataset (residues + poses).
+//     fps       : host output, [P*FP_WORDS] 64-bit words (output parameter).
+//     kernel_ms : out-param, measured kernel time in ms (CUDA events; STAGE A).
+// ---------------------------------------------------------------------------
+void build_ifps_gpu(const Dataset& d, std::vector<uint64_t>& fps, float* kernel_ms);
+
+// ---------------------------------------------------------------------------
+// ifp_cluster_gpu : STAGE B on the device.
+//   Runs `iters` Lloyd iterations of consensus-bit Tanimoto k-means on the
+//   already-built fingerprints `fps` ([P*FP_WORDS]). ASSIGN + per-bit TALLY run
+//   on the GPU; the majority-vote UPDATE runs on the host (update_centroids),
+//   exactly as the CPU reference does -> bit-identical centroids and labels.
+//     fps       : the IFP bit-vectors, [P*FP_WORDS] (typically from STAGE A).
+//     P, K      : number of poses, number of clusters.
+//     iters     : fixed Lloyd iterations (deterministic; no convergence test).
+//     centroids : host output [K*FP_WORDS]; labels [P]; sizes [K] (out-params).
+//     kernel_ms : out-param, summed assign+tally kernel time in ms (CUDA events).
+//   Returns the final clustering cost (sum of Tanimoto distances).
+// ---------------------------------------------------------------------------
+double ifp_cluster_gpu(const std::vector<uint64_t>& fps, int P, int K, int iters,
+                       std::vector<uint64_t>& centroids, std::vector<int>& labels,
+                       std::vector<unsigned int>& sizes, float* kernel_ms);

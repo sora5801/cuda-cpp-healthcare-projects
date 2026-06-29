@@ -1,5 +1,13 @@
 1.35 -- QMMM/ML Potential Hybrid MD
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+REDUCED-SCOPE TEACHING VERSION: NNP weights are fixed/synthetic.
+hybrid NNP/MM chain: 8 atoms (4 MM, link@4, 4 ML), NNP=4x3 MLP
+ensemble: 64 trajectories, 300 steps @ dt=0.005, link perturbation +/-0.200
+sample members (idx perturb -> finalPE finalE maxForce):
+  m0    -0.200 ->    -2.480797     0.705637     1.924769
+  m16   -0.098 ->    -4.456266    -4.060512     5.934750
+  m32   +0.003 ->    -4.755624    -4.590117     0.267700
+  m48   +0.105 ->    -4.639954    -4.363458     3.268006
+  m63   +0.200 ->    -4.353222    -4.058608     5.792803
+unperturbed (m32): finalPE=-4.755624  finalE=-4.590117
+worst energy conservation (max |finalE - initialE|) = 0.199177
+RESULT: PASS (GPU ensemble matches CPU within tol=1.0e-06)

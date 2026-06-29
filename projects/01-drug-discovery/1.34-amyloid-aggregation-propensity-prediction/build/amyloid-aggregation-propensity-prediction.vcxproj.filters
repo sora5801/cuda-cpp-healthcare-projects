@@ -29,6 +29,9 @@
     <ClInclude Include="..\src\kernels.cuh">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\propensity.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\reference_cpu.h">
       <Filter>Header Files</Filter>
     </ClInclude>

@@ -1,5 +1,19 @@
-1.32 -- Alchemical Hydration Free Energy (ΔGsolv)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+1.32 -- Alchemical Hydration Free Energy (dG_solv)
+system: 24 solvent sites, T=1.500, eps=1.000, sigma=1.000, q=0.000, alpha_sc=0.500
+sampling: 11 windows x 64 walkers (200 MC equil + 800 prod steps each)
+lambda schedule (lambda  <dU/dlambda>  accept%):
+  w0   lambda=0.0000  dUdl=   +0.2020  acc= 90.8%
+  w1   lambda=0.1000  dUdl=   -0.0348  acc= 86.6%
+  w2   lambda=0.2000  dUdl=   -0.3915  acc= 83.3%
+  w3   lambda=0.3000  dUdl=   -0.7050  acc= 80.1%
+  w4   lambda=0.4000  dUdl=   -0.8507  acc= 77.9%
+  w5   lambda=0.5000  dUdl=   -1.0195  acc= 76.2%
+  w6   lambda=0.6000  dUdl=   -1.2080  acc= 72.9%
+  w7   lambda=0.7000  dUdl=   -1.3281  acc= 70.9%
+  w8   lambda=0.8000  dUdl=   -1.4747  acc= 68.0%
+  w9   lambda=0.9000  dUdl=   -1.7736  acc= 64.8%
+  w10  lambda=1.0000  dUdl=   -1.6031  acc= 64.4%
+delta-G_solv (TI, trapezoid)  =   +0.9487  [reduced eps units]
+delta-G_solv (BAR, pairwise)  =   +0.9083  [reduced eps units]
+TI/BAR agreement: |dG_TI - dG_BAR| = 0.0403
+RESULT: PASS (GPU per-walker sums match CPU within tol=1.0e-09)

@@ -1,11 +1,12 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.33 -- Interaction Fingerprinting & Binding-Mode Clustering   (template skeleton)
+# Project 1.33 -- Interaction Fingerprinting & Binding-Mode Clustering
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/interaction-fingerprinting-binding-mode-clustering.sln (CLAUDE.md §5). Both
-# compile the SAME src/ files, so they stay in lockstep.
+# compile the SAME src/ files (main.cu, kernels.cu, reference_cpu.cpp), so they
+# stay in lockstep. No extra CUDA library is needed -- only the CUDA runtime.
 #
 #   cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build/cmake

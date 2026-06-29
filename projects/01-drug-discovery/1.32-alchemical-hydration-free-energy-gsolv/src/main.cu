@@ -1,122 +1,111 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: alchemical delta-G_solv via TI + BAR, verified
 // ---------------------------------------------------------------------------
-// Project 1.32 -- Alchemical Hydration Free Energy (ΔGsolv)   (template skeleton)
+// Project 1.32 : Alchemical Hydration Free Energy (delta-G_solv)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the standard flagship layout):
+//   1. Load the calculation config (lambda windows, walkers, MC steps, system).
+//   2. Build the synthetic solvent bath (deterministic geometry).
+//   3. CPU reference: run every (window, walker) Metropolis chain serially.
+//   4. GPU: one thread per walker, the SAME chain each (kernels.cu).
+//   5. VERIFY the GPU per-walker results match the CPU's; REDUCE to per-window
+//      <dU/dlambda>; estimate delta-G_solv by Thermodynamic Integration AND by
+//      BAR; print a DETERMINISTIC report to stdout and timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
-//
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then alchemy.h (the physics + MC walker), reference_cpu
+// (driver + TI/BAR), kernels.cu (the GPU ensemble).
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // run_gpu, AlchConfig, BathStorage, WalkerResult
+#include "reference_cpu.h"    // load_config, build_bath, run_cpu, reduce_windows, estimate_*
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "1.32";
-static const char* PROJECT_NAME = "Alchemical Hydration Free Energy (ΔGsolv)";
+static const char* PROJECT_NAME = "Alchemical Hydration Free Energy (dG_solv)";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// CPU and GPU run the IDENTICAL double-precision Metropolis chain per walker, so
+// per-walker sums agree to ~round-off. We allow a hair more than machine epsilon
+// because each walker accumulates thousands of double adds whose FMA contraction
+// may differ between nvcc and the host compiler (PATTERNS.md section 4, the
+// "short double-precision" class). 1e-9 on energies of order ~1 is conservative.
+static constexpr double TOLERANCE = 1.0e-9;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/alchemy_config.txt";
+    AlchConfig cfg;
+    try {
+        cfg = load_config(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. Build the synthetic solvent bath -------------------------------
+    BathStorage bath = build_bath(cfg.sys, cfg.sys.n_solvent, cfg.bath_seed);
+    const int W = total_walkers(cfg);
+
+    // ---- 3. CPU reference (timed) ------------------------------------------
+    std::vector<WalkerResult> walk_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    run_cpu(cfg, bath, walk_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 4. GPU ensemble (kernel timed) ------------------------------------
+    std::vector<WalkerResult> walk_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    run_gpu(cfg, bath, walk_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 5a. Verify per-walker agreement -----------------------------------
+    // Compare the raw accumulators each walker produced; if these match, every
+    // downstream average and free energy matches too. We track the worst absolute
+    // difference over the dU/dlambda and BAR sums.
+    double worst = 0.0;
+    for (int i = 0; i < W; ++i) {
+        worst = std::fmax(worst, std::fabs(walk_cpu[i].sum_dudl   - walk_gpu[i].sum_dudl));
+        worst = std::fmax(worst, std::fabs(walk_cpu[i].sum_du_fwd - walk_gpu[i].sum_du_fwd));
+        worst = std::fmax(worst, std::fabs(walk_cpu[i].sum_du_bwd - walk_gpu[i].sum_du_bwd));
+    }
+    const bool pass = worst <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5b. Reduce to per-window stats and estimate delta-G ----------------
+    // Use the GPU results downstream (they passed verification); the CPU's would
+    // give the identical numbers. TI integrates <dU/dlambda> over lambda; BAR
+    // combines adjacent windows' energy differences -- two independent estimators
+    // of the same delta-G_solv, a classic cross-check in free-energy work.
+    std::vector<WindowStats> stats = reduce_windows(cfg, walk_gpu);
+    const double g_ti  = estimate_ti(cfg, stats);
+    const double g_bar = estimate_bar(cfg, stats);
+
+    // ---- 5c. Deterministic report -> STDOUT --------------------------------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("system: %d solvent sites, T=%.3f, eps=%.3f, sigma=%.3f, q=%.3f, alpha_sc=%.3f\n",
+                cfg.sys.n_solvent, cfg.sys.temperature, cfg.sys.epsilon,
+                cfg.sys.sigma, cfg.sys.q_solute, cfg.sys.alpha_sc);
+    std::printf("sampling: %d windows x %d walkers (%d MC equil + %d prod steps each)\n",
+                cfg.n_windows, cfg.n_walkers, cfg.n_equil, cfg.n_prod);
+    std::printf("lambda schedule (lambda  <dU/dlambda>  accept%%):\n");
+    for (int w = 0; w < cfg.n_windows; ++w) {
+        std::printf("  w%-2d  lambda=%.4f  dUdl=%+10.4f  acc=%5.1f%%\n",
+                    w, stats[w].lambda, stats[w].mean_dudl, 100.0 * stats[w].accept_frac);
+    }
+    std::printf("delta-G_solv (TI, trapezoid)  = %+9.4f  [reduced eps units]\n", g_ti);
+    std::printf("delta-G_solv (BAR, pairwise)  = %+9.4f  [reduced eps units]\n", g_bar);
+    std::printf("TI/BAR agreement: |dG_TI - dG_BAR| = %.4f\n", std::fabs(g_ti - g_bar));
+    std::printf("RESULT: %s (GPU per-walker sums match CPU within tol=%.1e)\n",
+                pass ? "PASS" : "FAIL", TOLERANCE);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5d. Varying detail -> STDERR --------------------------------------
+    std::fprintf(stderr, "[data]   config: %s  (%d walkers total)\n", path.c_str(), W);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernel: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact only -- the GPU edge grows with windows*walkers; "
+                         "real FEP runs many GPUs over thousands of walkers.\n");
+    std::fprintf(stderr, "[verify] worst per-walker |diff| = %.3e  (tolerance %.1e)\n", worst, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

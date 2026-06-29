@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.34 -- Amyloid / Aggregation Propensity Prediction   (template skeleton)
+# Project 1.34 -- Amyloid / Aggregation Propensity Prediction
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/amyloid-aggregation-propensity-prediction.sln (CLAUDE.md §5). Both

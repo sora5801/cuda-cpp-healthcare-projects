@@ -1,7 +1,7 @@
 # ===========================================================================
 # demo/run_demo.ps1  --  One command: build (if needed) + run + verify
 # ---------------------------------------------------------------------------
-# Project 1.29 -- Kinase Selectivity Panel Scoring   (template skeleton)
+# Project 1.29 : Kinase Selectivity Panel Scoring
 #
 # WHAT IT DOES (CLAUDE.md §6.3)
 #   1. Ensure the Release exe exists (build it with MSBuild if missing).
@@ -18,7 +18,7 @@ $ProjectRoot = Split-Path -Parent $Demo
 $Slug        = "kinase-selectivity-panel-scoring"
 $Sln         = Join-Path $ProjectRoot "build\$Slug.sln"
 $Exe         = Join-Path $ProjectRoot "build\x64\Release\$Slug.exe"
-$Sample      = Join-Path $ProjectRoot "data\sample\saxpy_sample.txt"
+$Sample      = Join-Path $ProjectRoot "data\sample\kinase_panel_sample.txt"
 $Expected    = Join-Path $Demo "expected_output.txt"
 
 function Find-MSBuild {

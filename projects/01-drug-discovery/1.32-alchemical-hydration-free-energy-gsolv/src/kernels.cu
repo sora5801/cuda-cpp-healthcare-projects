@@ -1,94 +1,113 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Ensemble Metropolis kernel (one thread per walker)
 // ---------------------------------------------------------------------------
-// Project 1.32 -- Alchemical Hydration Free Energy (ΔGsolv)   (template skeleton)
+// Project 1.32 : Alchemical Hydration Free Energy (delta-G_solv)
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of run_cpu(): each thread runs the SAME Metropolis chain (alchemy.h)
+// for one (window, walker) and writes one WalkerResult. main.cu reduces the
+// per-walker results into per-window stats and then into delta-G, and verifies
+// the GPU per-walker results against the CPU's. See ../THEORY.md section 4.
 // ===========================================================================
 #include "kernels.cuh"
-#include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "util/cuda_check.cuh"
+#include "util/timer.cuh"
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// 128 threads/block is a solid occupancy default on sm_75..sm_89. Each thread is
+// register-heavy (it holds the solute position, energy, and accumulators), so a
+// moderate block size avoids spilling while keeping the SMs busy.
+static constexpr int THREADS_PER_BLOCK = 128;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// ensemble_kernel: thread `gid` owns global walker gid.
+//   It decodes its (window w, walker k) from gid, looks up the window's lambda
+//   and its neighbours' lambdas (for BAR), then runs the full Metropolis loop and
+//   writes one WalkerResult. Pure embarrassing parallelism -- no shared memory, no
+//   atomics, no inter-thread communication.
+//
+//   THREAD -> DATA MAPPING
+//     gid = blockIdx.x*blockDim.x + threadIdx.x   in [0, n_windows*n_walkers)
+//     w   = gid / n_walkers     (which lambda-window)
+//     k   = gid % n_walkers     (which walker in that window)  -- k is unused
+//           directly because the walker's RNG is seeded from gid, guaranteeing an
+//           independent, reproducible stream that MATCHES the CPU's gid loop.
+//
+//   The solvent coordinates (d_x/d_y/d_z) are read-only device pointers; we wrap
+//   them in a SolventBath on the stack so run_walker() is byte-identical to the
+//   host call. n_windows is passed so we can clamp the neighbour windows at 0 / 1.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void ensemble_kernel(SystemParams sys,
+                                const double* __restrict__ d_x,
+                                const double* __restrict__ d_y,
+                                const double* __restrict__ d_z,
+                                int n_solvent, int n_windows, int n_walkers,
+                                uint64_t seed, int n_equil, int n_prod,
+                                WalkerResult* __restrict__ out) {
+    const int gid = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = n_windows * n_walkers;
+    if (gid >= total) return;                       // guard the ragged last block
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+    const int w = gid / n_walkers;                  // this thread's lambda-window
+
+    // Reconstruct this window's lambda and its neighbours' lambdas on a uniform
+    // [0,1] grid. We inline the formula (window_lambda lives in a host header that
+    // is fine to call here too, but recomputing keeps the kernel self-contained).
+    const double inv = (n_windows > 1) ? 1.0 / double(n_windows - 1) : 0.0;
+    const double lam      = double(w) * inv;
+    const double lam_prev = double((w > 0)             ? w - 1 : w) * inv;
+    const double lam_next = double((w < n_windows - 1) ? w + 1 : w) * inv;
+
+    // Wrap the device solvent arrays in the same SolventBath the host uses.
+    SolventBath bath{ d_x, d_y, d_z, n_solvent };
+
+    // Run the identical Metropolis walker the CPU runs -> identical result.
+    out[gid] = run_walker(bath, sys, lam, lam_prev, lam_next,
+                          seed, uint64_t(gid), n_equil, n_prod);
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// run_gpu: copy the bath to the device, launch one thread per walker, copy the
+// WalkerResults back, and time just the kernel with CUDA events.
+//   We deliberately exclude the H2D/D2H copies from the timing: they are tiny
+//   here (a few KB of bath + results) and the teaching point is the parallel
+//   sampling work, not PCIe traffic. (A throughput study would time the whole
+//   pipeline; see THEORY section 5 and the honest-timing note in PATTERNS.md.)
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void run_gpu(const AlchConfig& c, const BathStorage& bath,
+             std::vector<WalkerResult>& walkers, float* kernel_ms) {
+    const int W = total_walkers(c);
+    const int n = c.sys.n_solvent;
+    walkers.assign(W, WalkerResult{});
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // --- allocate + upload the read-only solvent bath (SoA doubles) ----------
+    double *d_x = nullptr, *d_y = nullptr, *d_z = nullptr;
+    const std::size_t bath_bytes = std::size_t(n) * sizeof(double);
+    CUDA_CHECK(cudaMalloc(&d_x, bath_bytes));
+    CUDA_CHECK(cudaMalloc(&d_y, bath_bytes));
+    CUDA_CHECK(cudaMalloc(&d_z, bath_bytes));
+    CUDA_CHECK(cudaMemcpy(d_x, bath.x.data(), bath_bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_y, bath.y.data(), bath_bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_z, bath.z.data(), bath_bytes, cudaMemcpyHostToDevice));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // --- output buffer: one WalkerResult per walker --------------------------
+    WalkerResult* d_out = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_out, std::size_t(W) * sizeof(WalkerResult)));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // --- launch one thread per walker, timed with CUDA events ----------------
+    const int blocks = (W + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    ensemble_kernel<<<blocks, THREADS_PER_BLOCK>>>(
+        c.sys, d_x, d_y, d_z, n, c.n_windows, c.n_walkers,
+        c.seed, c.n_equil, c.n_prod, d_out);
+    *kernel_ms = timer.stop_ms();          // blocks until the kernel finishes
+    CUDA_CHECK_LAST("ensemble_kernel");    // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
+    // --- copy results back and free device memory ----------------------------
+    CUDA_CHECK(cudaMemcpy(walkers.data(), d_out,
+                          std::size_t(W) * sizeof(WalkerResult),
+                          cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_out));
     CUDA_CHECK(cudaFree(d_x));
     CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    CUDA_CHECK(cudaFree(d_z));
 }

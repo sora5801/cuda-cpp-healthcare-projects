@@ -1,31 +1,45 @@
 // ===========================================================================
-// src/reference_cpu.h  --  Prototype of the CPU reference computation
+// src/reference_cpu.h  --  Ensemble config + CPU reference (the trusted baseline)
 // ---------------------------------------------------------------------------
-// Project 1.35 -- QMMM/ML Potential Hybrid MD   (template skeleton)
+// Project 1.35 : QMMM/ML Potential Hybrid MD   (reduced-scope teaching version)
 //
-// WHY A SEPARATE HEADER
-//   The CPU reference (reference_cpu.cpp) is compiled by the plain C++ compiler
-//   and must NOT see any CUDA/__global__ syntax, so its prototype cannot live in
-//   kernels.cuh. Both main.cu and reference_cpu.cpp include THIS pure-C++ header
-//   so they agree on the function signature.
+// The ensemble is a set of M INDEPENDENT short MD trajectories that differ only
+// by a fixed per-member perturbation of the link atom (an active-learning probe
+// of configuration space). The trajectory driver itself lives in nnpmm.h (shared
+// host+device). This header adds the host-only glue:
+//   * EnsembleConfig          -- how many members + integration settings,
+//   * load_ensemble()         -- read it from the tiny text sample,
+//   * integrate_cpu()         -- the serial reference the GPU is checked against.
 //
-// THE CONTRACT (this template's placeholder computation):
-//   SAXPY -- "Single-precision A*X Plus Y":  out[i] = a * x[i] + y[i].
-//   This is the canonical first GPU kernel; here it stands in as a buildable
-//   placeholder. TODO(impl): replace saxpy_cpu with this project's real
-//   reference computation, and update the prototype + callers accordingly.
-//
-//   The CPU reference exists for two reasons (CLAUDE.md section 5):
-//     (a) it is the readable baseline that makes the GPU speed-up legible, and
-//     (b) the demo runs BOTH and asserts they agree within tolerance.
+// Pure C++ (no CUDA): kernels.cu reuses EnsembleConfig and TrajResult unchanged.
+// READ THIS AFTER: nnpmm.h. Compare against kernels.cu (the GPU twin).
 // ===========================================================================
 #pragma once
 
+#include <string>
 #include <vector>
 
-// Compute out = a*x + y on the CPU, element by element.
-//   x, y : input vectors of equal length n
-//   a    : the scalar multiplier
-//   out  : resized to n and filled with the result (output parameter)
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out);
+#include "nnpmm.h"   // NNPMM_HD, run_trajectory, TrajResult, N_ATOMS, ...
+
+// One ensemble job. The geometry/potential are fixed in nnpmm.h; what varies
+// per RUN is how many members, the integration timestep/length, and the size of
+// the active-learning perturbation applied to the link atom.
+struct EnsembleConfig {
+    int    M = 0;        // number of trajectories (ensemble members)
+    double dt = 0.0;     // velocity-Verlet timestep (time units)
+    int    steps = 0;    // steps per trajectory (run length = steps*dt)
+    double amp = 0.0;    // max link-atom perturbation (+/- amp across members)
+};
+
+// Number of ensemble members (kept as a function to mirror flagship style).
+// NNPMM_HD so the GPU kernel can call it for its bounds check too (host+device).
+NNPMM_HD inline int ensemble_size(const EnsembleConfig& c) { return c.M; }
+
+// Load an EnsembleConfig from the text sample (see data/README.md):
+//   "M dt steps amp"
+EnsembleConfig load_ensemble(const std::string& path);
+
+// CPU reference: run every trajectory serially. `results` is sized to M. This is
+// the trusted baseline; the GPU ensemble must agree with it within tolerance
+// (and, because both call run_trajectory() from nnpmm.h, the math is identical).
+void integrate_cpu(const EnsembleConfig& c, std::vector<TrajResult>& results);

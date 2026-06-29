@@ -1,12 +1,12 @@
 # ===========================================================================
 # demo/run_demo.ps1  --  One command: build (if needed) + run + verify
 # ---------------------------------------------------------------------------
-# Project 1.34 -- Amyloid / Aggregation Propensity Prediction   (template skeleton)
+# Project 1.34 : Amyloid / Aggregation Propensity Prediction
 #
 # WHAT IT DOES (CLAUDE.md §6.3)
 #   1. Ensure the Release exe exists (build it with MSBuild if missing).
-#   2. Run it on data/sample/, capturing stdout (deterministic) separately
-#      from stderr (timing / varies).
+#   2. Run it on data/sample/amyloid_sample.fasta, capturing stdout
+#      (deterministic) separately from stderr (timing / varies run to run).
 #   3. Diff stdout against demo/expected_output.txt (line endings normalized).
 #   4. Echo the stderr timing for the learner; report PASS/FAIL and exit code.
 #
@@ -18,7 +18,7 @@ $ProjectRoot = Split-Path -Parent $Demo
 $Slug        = "amyloid-aggregation-propensity-prediction"
 $Sln         = Join-Path $ProjectRoot "build\$Slug.sln"
 $Exe         = Join-Path $ProjectRoot "build\x64\Release\$Slug.exe"
-$Sample      = Join-Path $ProjectRoot "data\sample\saxpy_sample.txt"
+$Sample      = Join-Path $ProjectRoot "data\sample\amyloid_sample.fasta"
 $Expected    = Join-Path $Demo "expected_output.txt"
 
 function Find-MSBuild {

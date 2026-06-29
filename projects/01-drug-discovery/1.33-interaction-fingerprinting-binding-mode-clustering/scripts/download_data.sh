@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Pointers to the FULL datasets (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 1.33 -- Interaction Fingerprinting & Binding-Mode Clustering   (template skeleton)
+# Project 1.33 -- Interaction Fingerprinting & Binding-Mode Clustering
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. Real interaction fingerprints come from
+# docking poses or MD frames of actual complexes; turning those into the bit-
+# vectors this project clusters needs a chemistry toolkit (ProLIF/ODDT), which is
+# out of scope. So this script PRINTS where to get the structures + how to derive
+# IFPs, and defers to make_synthetic.py for an offline, self-contained stand-in.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +20,18 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.33 -- Interaction Fingerprinting & Binding-Mode Clustering"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    PDB-bind complex structures (http://www.pdbbind.org.cn); KLIFS (https://klifs.net); ChEMBL bioactivity with structures (https://www.ebi.ac.uk/chembl/); BindingDB (https://www.bindingdb.org)."
+echo "This project clusters INTERACTION FINGERPRINTS (bit-vectors). To build them"
+echo "from real structures you need (a) protein-ligand poses and (b) an interaction"
+echo "detector. Public sources for the structures:"
+echo "  * PDBbind   - complexes + affinities : http://www.pdbbind.org.cn"
+echo "  * KLIFS     - kinase IFP features    : https://klifs.net"
+echo "  * ChEMBL    - bioactivity + structs  : https://www.ebi.ac.uk/chembl/"
+echo "  * BindingDB - measured binding data  : https://www.bindingdb.org"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Derive IFPs with a toolkit, then emit rows matching data/README.md:"
+echo "  * ProLIF : https://github.com/chemosim-lab/ProLIF  (IFPs from MD/poses)"
+echo "  * ODDT   : https://github.com/oddt/oddt           (open drug-discovery toolkit)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "No credentials are bypassed here. The committed data/sample/ifp_sample.txt is"
+echo "enough to run the demo offline. For a larger SYNTHETIC problem:"
+echo "    python scripts/make_synthetic.py --per-mode 500"

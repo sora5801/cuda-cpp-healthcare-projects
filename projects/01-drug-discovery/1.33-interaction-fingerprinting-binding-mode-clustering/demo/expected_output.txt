@@ -1,5 +1,11 @@
 1.33 -- Interaction Fingerprinting & Binding-Mode Clustering
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+pocket: 24 residues x 4 interaction types = 96 IFP bits
+stage A: built 120 interaction fingerprints (CPU==GPU: yes)
+stage B: 120 poses -> 4 binding-mode clusters, 12 iterations
+  cluster 0 (n=  30): consensus contacts = R0:hydrophobic R0:hbond R1:hydrophobic R4:hydrophobic R4:hbond R5:hydrophobic
+  cluster 1 (n=  30): consensus contacts = R2:hydrophobic R3:hydrophobic R6:hydrophobic R7:hydrophobic R7:aromatic
+  cluster 2 (n=  30): consensus contacts = R16:hydrophobic R16:hbond R17:hydrophobic R17:ionic R20:hydrophobic R20:hbond R20:ionic R21:hydrophobic
+  cluster 3 (n=  30): consensus contacts = R18:hydrophobic R19:hydrophobic R22:hydrophobic R23:hydrophobic R23:ionic
+cost = 2.7484
+mode recovery (purity vs planted modes) = 100.00%
+RESULT: PASS (GPU IFPs + labels + centroids match CPU)

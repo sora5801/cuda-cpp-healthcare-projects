@@ -2,11 +2,12 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 1.29 -- Kinase Selectivity Panel Scoring   (template skeleton)
+# Project 1.29 : Kinase Selectivity Panel Scoring
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# size + checksum, and NEVER bypasses credentials/registration. The real
+# selectivity datasets require registration or limit redistribution, so this
+# script only PRINTS instructions + links and defers to make_synthetic.py.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,24 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.29 -- Kinase Selectivity Panel Scoring"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    KLIFS — kinase-ligand interaction fingerprinting database (https://klifs.net); KinomeScan — 468-kinase selectivity data (verify URL); ChEMBL kinase activity data (https://www.ebi.ac.uk/chembl/); DTC drug-target commons kinase panel (https://dtcommons.ai)."
+echo "This project ships a SYNTHETIC committed sample (data/sample/kinase_panel_sample.txt),"
+echo "which is all the demo needs. The real selectivity datasets are external:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  * KLIFS (kinase-ligand interaction fingerprints) -> https://klifs.net"
+echo "      Use the web API or the 'kissim' package to build per-kinase IFPs."
+echo "      Free for academic use; check site terms before any redistribution."
+echo "  * KINOMEscan / Kd selectivity (Karaman et al. 2008, DiscoverX/Eurofins)"
+echo "      Published supplements or commercial panels; provider-specific license."
+echo "  * ChEMBL kinase bioactivity -> https://www.ebi.ac.uk/chembl/  (CC BY-SA 3.0)"
+echo "  * Drug-Target Commons (DTC) -> https://drugtargetcommons.fimm.fi  (CC BY 4.0)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "These require registration and/or forbid wholesale redistribution, so they"
+echo "are NOT downloaded automatically and NOT committed (CLAUDE.md section 8)."
+echo
+echo "For a larger SYNTHETIC panel, edit the PANEL list in scripts/make_synthetic.py"
+echo "and re-run:  python scripts/make_synthetic.py"
+echo
+echo "When wiring a real dataset, follow this idempotent pattern:"
+echo "  1) skip download if the file already exists with the right checksum"
+echo "  2) print source URL + expected size + SHA256"
+echo "  3) for credentialed sets, print registration instructions ONLY"

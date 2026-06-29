@@ -1,94 +1,190 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  GPU aggregation scan: one block per protein, tiled window
 // ---------------------------------------------------------------------------
-// Project 1.34 -- Amyloid / Aggregation Propensity Prediction   (template skeleton)
+// Project 1.34 : Amyloid / Aggregation Propensity Prediction
 //
 // WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
+//   The GPU twin of scan_dataset_cpu(). It uploads the amino-acid propensity
+//   scale into CONSTANT memory (read by every thread, never changes -> the
+//   constant cache broadcasts a value to a whole warp), then launches ONE BLOCK
+//   PER PROTEIN. Each block stages its protein's per-residue propensities into
+//   SHARED memory once (the tile + halo), every thread reads its W-wide window
+//   from there (calling the SAME windowed_mean() the CPU uses), and a single
+//   thread reduces the smoothed profile to the protein's AggResult.
 //
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
+//   main.cu runs this and scan_dataset_cpu() and asserts they agree.
 //
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// READ THIS AFTER: kernels.cuh (the thread-mapping idea), propensity.h (the
+//                  shared physics). Compare against reference_cpu.cpp.
 // ===========================================================================
 #include "kernels.cuh"
+#include "propensity.h"          // AA_PROPENSITY, propensity_of_code, windowed_mean
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+#include <cstdio>
+#include <cstdlib>
+
+// Threads per block. We scan one protein per block; each thread handles one (or
+// more, by block-striding) residues of that protein. 256 is a solid sm_75..89
+// default: a multiple of the 32-lane warp, 8 warps to hide latency, high
+// occupancy. The shared tile sizes to the protein, NOT to the block.
+static constexpr int AGG_THREADS = 256;
+
+// The propensity scale in CONSTANT memory. It is 21 floats, identical for every
+// thread of every block and constant for the whole launch -- the textbook case
+// for __constant__ (a single value broadcasts to all 32 lanes of a warp in one
+// transaction). We copy AA_PROPENSITY (from propensity.h) here once per run.
+__constant__ float c_scale[AA_COUNT];
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// scale_propensity_device: device-side lookup that reads the CONSTANT-memory
+//   copy of the scale (the host/__host__ propensity_of_code in propensity.h
+//   reads the plain array; on the device we want the cached constant copy). The
+//   numbers are identical, so CPU and GPU still agree exactly.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__device__ inline float scale_propensity_device(int code) {
+    if (code < 0 || code >= AA_COUNT) return 0.0f;   // PAD_CODE / junk -> 0
+    return c_scale[code];
+}
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
+// ---------------------------------------------------------------------------
+// agg_scan_kernel: scan ONE protein per block.
+//   grid  : num blocks  (blockIdx.x = protein index p)
+//   block : AGG_THREADS threads (threadIdx.x = residue stride origin)
+//   shared: dynamic, `len` floats -- this protein's per-residue propensities.
+//           We tile the WHOLE protein (len <= AGG_MAX_LEN), so the window mean's
+//           halo reads are simply in-tile reads with clamping; no separate halo
+//           load is needed (clamping at [0,len) handles the termini exactly as
+//           the CPU does). For very long sequences a per-block tile would be
+//           split across multiple blocks -- left as an exercise (THEORY §7).
+//
+//   Thread-to-data map: thread t processes residues t, t+blockDim, t+2*blockDim,
+//   ... so all `len` residues are covered regardless of how len compares to the
+//   block size (block-stride loop -- the standard "grid-stride" idiom applied
+//   within a block).
+//
+//   Memory spaces touched: global (flat_codes/lengths read, smoothed/results
+//   written), shared (the propensity tile), constant (the scale). No atomics:
+//   the final reduction is done by thread 0 over the shared tile's smoothed
+//   values recomputed deterministically, so the result is bit-reproducible.
+// ---------------------------------------------------------------------------
+__global__ void agg_scan_kernel(const int* __restrict__ flat_codes,
+                                const int* __restrict__ lengths,
+                                int stride, int half, float threshold,
+                                float* __restrict__ smoothed,
+                                AggResult* __restrict__ results) {
+    const int p   = blockIdx.x;            // this block's protein index
+    const int len = lengths[p];            // its real residue count
+    const std::size_t base = static_cast<std::size_t>(p) * stride;  // row start
+
+    // Dynamic shared tile: the protein's per-residue propensities (len floats).
+    extern __shared__ float tile[];
+
+    // 1) LOAD + LOOKUP: each thread fills the tile entries it owns by reading the
+    //    residue code from global memory and mapping it through the constant-
+    //    memory scale. Block-stride so any len <= AGG_MAX_LEN is covered.
+    for (int i = threadIdx.x; i < len; i += blockDim.x) {
+        tile[i] = scale_propensity_device(flat_codes[base + i]);
+    }
+    __syncthreads();                       // tile fully populated before any read
+
+    // 2) SMOOTH: each thread computes the centered windowed mean for its
+    //    residues, reading the W-wide window straight from shared memory. This
+    //    is the same windowed_mean() the CPU calls -> identical arithmetic.
+    for (int i = threadIdx.x; i < len; i += blockDim.x) {
+        smoothed[base + i] = windowed_mean(tile, len, i, half);
+    }
+    __syncthreads();                       // all smoothed[] written before reduce
+
+    // 3) REDUCE: one thread per block scans the smoothed profile to produce the
+    //    AggResult. Doing this serially in thread 0 keeps it deterministic and
+    //    dead simple; for short chains it is negligible vs. the parallel smooth.
+    //    (A parallel reduction would need care to stay deterministic -- and the
+    //    longest-APR run length is inherently sequential -- so we keep it here.)
+    if (threadIdx.x == 0) {
+        AggResult r;
+        r.peak_score = -1.0f;              // first residue always wins initially
+        int run = 0;                       // current contiguous prone run
+        for (int i = 0; i < len; ++i) {
+            const float s = smoothed[base + i];
+            if (s > r.peak_score) { r.peak_score = s; r.peak_pos = i; }
+            if (s >= threshold) {
+                ++r.prone_count;
+                ++run;
+                if (run > r.longest_apr) r.longest_apr = run;
+            } else {
+                run = 0;
+            }
+        }
+        if (len == 0) r.peak_score = 0.0f; // empty-protein guard (matches CPU)
+        results[p] = r;
     }
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// scan_dataset_gpu: host wrapper -- the five canonical CUDA steps.
+//   (1) upload the propensity scale to constant memory + the flat batch to
+//       global; (2) launch one block per protein; (3) time the kernel; (4) copy
+//       the smoothed profiles and per-protein results back; (5) free.
+//   We time ONLY the kernel (CUDA events), not the H2D/D2H copies (THEORY §6).
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void scan_dataset_gpu(const Dataset& ds, int window, float threshold,
+                      std::vector<AggResult>& results,
+                      std::vector<float>& smoothed, float* kernel_ms) {
+    const int half = (window - 1) / 2;     // window W = 2*half + 1
+    results.assign(ds.num, AggResult{});
+    smoothed.assign(static_cast<std::size_t>(ds.num) * ds.stride, 0.0f);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // Guard: we tile each protein wholly in one block's shared memory, so the
+    // longest sequence must fit. (Real tools split long chains across blocks --
+    // left as an exercise; here we fail loudly rather than silently truncate.)
+    if (ds.max_len > AGG_MAX_LEN) {
+        std::fprintf(stderr,
+            "[scan_dataset_gpu] longest protein has %d residues > AGG_MAX_LEN=%d; "
+            "split long chains across blocks (see THEORY exercises).\n",
+            ds.max_len, AGG_MAX_LEN);
+        std::exit(EXIT_FAILURE);
+    }
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // (1) Upload the scale (host AA_PROPENSITY -> device c_scale) once.
+    CUDA_CHECK(cudaMemcpyToSymbol(c_scale, AA_PROPENSITY, sizeof(AA_PROPENSITY)));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // (1b) Device buffers for the flat batch and the outputs.
+    int       *d_codes = nullptr, *d_lengths = nullptr;
+    float     *d_smoothed = nullptr;
+    AggResult *d_results  = nullptr;
+    const std::size_t flat_n = ds.flat_codes.size();
+    CUDA_CHECK(cudaMalloc(&d_codes,    flat_n * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_lengths,  ds.num * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_smoothed, flat_n * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_results,  ds.num * sizeof(AggResult)));
+
+    CUDA_CHECK(cudaMemcpy(d_codes, ds.flat_codes.data(),
+                          flat_n * sizeof(int), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_lengths, ds.lengths.data(),
+                          ds.num * sizeof(int), cudaMemcpyHostToDevice));
+
+    // (2)+(3) Launch one block per protein; shared mem = max_len floats (the
+    //         tile is sized to the longest protein so every block has room).
+    const int grid = ds.num;
+    const std::size_t shmem = static_cast<std::size_t>(ds.max_len) * sizeof(float);
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    agg_scan_kernel<<<grid, AGG_THREADS, shmem>>>(
+        d_codes, d_lengths, ds.stride, half, threshold, d_smoothed, d_results);
+    *kernel_ms = timer.stop_ms();
+    CUDA_CHECK_LAST("agg_scan_kernel");    // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // (4) Copy results back to the host vectors.
+    CUDA_CHECK(cudaMemcpy(smoothed.data(), d_smoothed,
+                          flat_n * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(results.data(), d_results,
+                          ds.num * sizeof(AggResult), cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    // (5) Free device memory (no GPU garbage collector).
+    CUDA_CHECK(cudaFree(d_codes));
+    CUDA_CHECK(cudaFree(d_lengths));
+    CUDA_CHECK(cudaFree(d_smoothed));
+    CUDA_CHECK(cudaFree(d_results));
 }

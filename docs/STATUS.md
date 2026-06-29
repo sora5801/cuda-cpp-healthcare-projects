@@ -2,15 +2,15 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 43/301 projects done (14.3%) | todo 258 | in-progress 0 | missing 0
+**Progress:** 48/301 projects done (15.9%) | todo 253 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 23 | 0 | 44 |
-| 🟡 Intermediate | 206 | 19 | 0 | 187 |
-| 🔴 Advanced | 28 | 1 | 0 | 27 |
+| 🟡 Intermediate | 206 | 23 | 0 | 183 |
+| 🔴 Advanced | 28 | 2 | 0 | 26 |
 
-## 1. Drug Discovery & Molecular Design  (30/35 done)
+## 1. Drug Discovery & Molecular Design  (35/35 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -42,13 +42,13 @@
 | 1.26 | Steered Molecular Dynamics (SMD) | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.27 | MM-GBSA / MM-PBSA Rescoring | 🟢 Beginner | Established | [x] done | - | - |
 | 1.28 | Covalent Docking | 🟡 Intermediate | Active R&D | [x] done | - | - |
-| 1.29 | Kinase Selectivity Panel Scoring | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 1.29 | Kinase Selectivity Panel Scoring | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.30 | Trajectory RMSD, Clustering & Contact Analysis | 🟢 Beginner | Established | [x] done | worker | main |
 | 1.31 | Solvent-Accessible Surface Area (SASA) on GPU | 🟢 Beginner | Established | [x] done | worker | main |
-| 1.32 | Alchemical Hydration Free Energy (ΔGsolv) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 1.33 | Interaction Fingerprinting & Binding-Mode Clustering | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 1.34 | Amyloid / Aggregation Propensity Prediction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 1.35 | QMMM/ML Potential Hybrid MD | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
+| 1.32 | Alchemical Hydration Free Energy (ΔGsolv) | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 1.33 | Interaction Fingerprinting & Binding-Mode Clustering | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 1.34 | Amyloid / Aggregation Propensity Prediction | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 1.35 | QMMM/ML Potential Hybrid MD | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 
 ## 2. Structural Biology & Protein Science  (1/35 done)
 

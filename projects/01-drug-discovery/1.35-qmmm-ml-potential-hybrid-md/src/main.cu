@@ -1,122 +1,129 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: integrate the hybrid-MD ensemble, verify, report
 // ---------------------------------------------------------------------------
-// Project 1.35 -- QMMM/ML Potential Hybrid MD   (template skeleton)
+// Project 1.35 : QMMM/ML Potential Hybrid MD   (reduced-scope teaching version)
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load the ensemble config (M trajectories, dt, steps, perturbation amp).
+//   2. CPU reference: run every trajectory serially         -> trusted answer.
+//   3. GPU: one thread per trajectory (full velocity-Verlet) -> the thing taught.
+//   4. VERIFY: assert the GPU summaries match the CPU within a tolerance.
+//   5. REPORT: deterministic results to stdout; timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   Each "trajectory" is a tiny hybrid NNP/MM molecular-dynamics run: a 1-D chain
+//   whose reactive center is described by a (surrogate) neural-network potential
+//   and whose environment is classical Lennard-Jones, coupled by mechanical
+//   embedding across a link-atom boundary. See nnpmm.h for the physics and
+//   ../THEORY.md for the "why". REDUCED-SCOPE TEACHING VERSION (CLAUDE.md §13):
+//   the NNP weights are fixed/synthetic, standing in for a model trained on QM
+//   data (MACE/NequIP on Transition1x/SPICE). NOT a clinical or research tool.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Run-varying numbers (timings) go to STDERR, which
+//   the demo shows but does not diff.
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// READ THIS FIRST in the code tour, then nnpmm.h (the physics), kernels.cu (the
+// GPU path), reference_cpu.cpp (the baseline).
 // ===========================================================================
+#include <cmath>     // std::fabs, std::fmax
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // integrate_gpu, EnsembleConfig, TrajResult
+#include "reference_cpu.h"    // load_ensemble, integrate_cpu, ensemble_size
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "1.35";
 static const char* PROJECT_NAME = "QMMM/ML Potential Hybrid MD";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Verification tolerance. The whole trajectory is computed in DOUBLE precision
+// on both sides via the SAME shared functions (nnpmm.h), so the only source of
+// disagreement is floating-point reassociation: the GPU fuses multiply-adds
+// (FMA) where the host compiler may not, and that ~1e-15 per-op difference
+// compounds over hundreds of integration steps. 1e-6 is comfortably above that
+// drift yet far below any physically meaningful energy scale here -- an honest,
+// documented tolerance (docs/PATTERNS.md §4, the "long iterative solver" case).
+static constexpr double TOLERANCE = 1.0e-6;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1]
+                                        : "data/sample/ensemble_params.txt";
+    EnsembleConfig c;
+    try {
+        c = load_ensemble(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const int M = ensemble_size(c);
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<TrajResult> res_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    integrate_cpu(c, res_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU ensemble (kernel timed) -----------------------------------
+    std::vector<TrajResult> res_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    integrate_gpu(c, res_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (worst per-member difference across all summary fields) -
+    double worst = 0.0;
+    for (int i = 0; i < M; ++i) {
+        worst = std::fmax(worst, std::fabs(res_cpu[i].final_pe     - res_gpu[i].final_pe));
+        worst = std::fmax(worst, std::fabs(res_cpu[i].final_total  - res_gpu[i].final_total));
+        worst = std::fmax(worst, std::fabs(res_cpu[i].max_force    - res_gpu[i].max_force));
+        worst = std::fmax(worst, std::fabs(res_cpu[i].energy_drift - res_gpu[i].energy_drift));
+    }
+    const bool pass = worst <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) ----------
+    // A physical sanity check we report so the science -- not just CPU==GPU
+    // agreement -- is visible (docs/PATTERNS.md §4, the "stronger check"):
+    //   * worst energy conservation = max over members of |final - initial|
+    //     total energy. Velocity-Verlet is SYMPLECTIC, so this stays small and
+    //     BOUNDED (no secular drift), validating that the dynamics are stable.
+    //   * we also print the unperturbed member (idx M/2) as a stable anchor.
+    const int mid = M / 2;                        // the (near-)unperturbed member
+    double worst_conservation = 0.0;
+    for (int i = 0; i < M; ++i)
+        worst_conservation = std::fmax(worst_conservation, res_gpu[i].energy_drift);
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("REDUCED-SCOPE TEACHING VERSION: NNP weights are fixed/synthetic.\n");
+    std::printf("hybrid NNP/MM chain: %d atoms (%d MM, link@%d, %d ML), NNP=%dx%d MLP\n",
+                N_ATOMS, LINK_IDX, LINK_IDX, N_ATOMS - LINK_IDX, N_HID, N_G);
+    std::printf("ensemble: %d trajectories, %d steps @ dt=%.3f, link perturbation +/-%.3f\n",
+                M, c.steps, c.dt, c.amp);
+    std::printf("sample members (idx perturb -> finalPE finalE maxForce):\n");
+    // Five evenly-spaced members so the table is stable regardless of M (>=5).
+    const int picks[5] = {0, M / 4, M / 2, (3 * M) / 4, M - 1};
+    for (int s = 0; s < 5; ++s) {
+        const int i = picks[s];
+        const double perturb = member_perturbation(i, M, c.amp);
+        std::printf("  m%-4d %+.3f -> %12.6f %12.6f %12.6f\n",
+                    i, perturb, res_gpu[i].final_pe,
+                    res_gpu[i].final_total, res_gpu[i].max_force);
+    }
+    std::printf("unperturbed (m%d): finalPE=%.6f  finalE=%.6f\n",
+                mid, res_gpu[mid].final_pe, res_gpu[mid].final_total);
+    std::printf("worst energy conservation (max |finalE - initialE|) = %.6f\n",
+                worst_conservation);
+    std::printf("RESULT: %s (GPU ensemble matches CPU within tol=1.0e-06)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
+    std::fprintf(stderr, "[data]   source: %s  (%d members)\n", path.c_str(), M);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- the GPU's edge grows with "
+                         "ensemble size; real active-learning runs 10^4-10^6 trajectories.\n");
+    std::fprintf(stderr, "[verify] worst per-member diff = %.3e  (tolerance %.1e)\n",
+                 worst, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

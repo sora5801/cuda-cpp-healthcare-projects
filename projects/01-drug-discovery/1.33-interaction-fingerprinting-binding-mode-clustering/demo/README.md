@@ -5,29 +5,50 @@
 Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on the committed `data/sample/ifp_sample.txt` (120 poses in a
+   24-residue model pocket, drawn from 4 planted binding modes).
+3. **STAGE A** — build the interaction fingerprints on CPU and GPU and confirm
+   they are **bit-identical**.
+4. **STAGE B** — cluster the IFPs into binding modes on CPU and GPU and confirm
+   the labels + consensus centroids match **exactly**.
+5. **Report** each mode's consensus contacts, the clustering cost, and the
+   recovery purity vs. the planted modes; print a clear `PASS`/`FAIL`.
+6. **Time** both stages (CUDA events) — a *teaching artifact*, not a benchmark.
 
-The program splits its output deliberately:
+The program splits its output deliberately (PATTERNS.md §3):
 
 - **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+  [`expected_output.txt`](expected_output.txt). Determinism is guaranteed by
+  using only integer math: geometry→bits is exact, and the consensus centroid is
+  an integer **majority vote** (no float atomics to reorder).
+- **stderr** carries the timing (which varies run to run), so it is shown but
+  never diffed.
 
 ## Expected result
 
 ```
 1.33 -- Interaction Fingerprinting & Binding-Mode Clustering
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+pocket: 24 residues x 4 interaction types = 96 IFP bits
+stage A: built 120 interaction fingerprints (CPU==GPU: yes)
+stage B: 120 poses -> 4 binding-mode clusters, 12 iterations
+  cluster 0 (n=  30): consensus contacts = R0:hydrophobic R0:hbond R1:hydrophobic R4:hydrophobic R4:hbond R5:hydrophobic
+  cluster 1 (n=  30): consensus contacts = R2:hydrophobic R3:hydrophobic R6:hydrophobic R7:hydrophobic R7:aromatic
+  cluster 2 (n=  30): consensus contacts = R16:hydrophobic R16:hbond R17:hydrophobic R17:ionic R20:hydrophobic R20:hbond R20:ionic R21:hydrophobic
+  cluster 3 (n=  30): consensus contacts = R18:hydrophobic R19:hydrophobic R22:hydrophobic R23:hydrophobic R23:ionic
+cost = 2.7484
+mode recovery (purity vs planted modes) = 100.00%
+RESULT: PASS (GPU IFPs + labels + centroids match CPU)
 ```
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+## How to read it
+
+- **Four clusters of 30** — the demo recovered all four planted modes exactly
+  (purity 100%). Each cluster's "consensus contacts" lists the residue:type bits
+  set in a majority of its members — a human-readable summary of *that binding
+  mode's interaction pattern*. The four lists touch four disjoint residue
+  neighborhoods (top-left, top-right, bottom-left, bottom-right of the pocket),
+  exactly the four corners the synthetic modes were planted in.
+- **`cost`** is the k-means objective in Tanimoto space (sum of each pose's
+  distance to its mode's consensus); lower means tighter modes.
+- **`CPU==GPU: yes` / `RESULT: PASS`** is the correctness gate: the GPU IFPs,
+  cluster labels, and consensus centroids all match the CPU reference bit-for-bit.

@@ -1,52 +1,56 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for kinase panel scoring
 // ---------------------------------------------------------------------------
-// Project 1.29 -- Kinase Selectivity Panel Scoring   (template skeleton)
+// Project 1.29 : Kinase Selectivity Panel Scoring
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   Scoring ONE compound against N kinases is N INDEPENDENT jobs, so we give each
+//   kinase its own GPU thread. Two CUDA features carry the teaching weight here
+//   (the same "score one query vs N items" pattern as flagship 1.12):
+//     * the QUERY COMPOUND's feature vector lives in CONSTANT memory -- it is read
+//       by every thread but never written during the launch, so the constant
+//       cache broadcasts it warp-wide in one transaction instead of NFEAT global
+//       loads per thread; and
+//     * the per-kinase physics is the SHARED __host__ __device__ score_kinase()
+//       (selectivity_core.h), so the GPU thread and the CPU reference compute
+//       bit-for-bit identical integers -> exact verification.
+//   A grid-stride loop lets one modest grid cover a panel of any size.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   This header contains a __global__ declaration, so it is included ONLY by .cu
+//   units. main.cu calls score_panel_gpu(). The pure-C++ data model it shares
+//   with the CPU side lives in reference_cpu.h.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, selectivity_core.h,
+// reference_cpu.h. Then read kernels.cu. Science/GPU-mapping: ../THEORY.md.
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
+#include "reference_cpu.h"   // KinasePanel, KinasePocket, NFEAT (pure C++, safe in .cu)
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// score_kinase_kernel: one thread scores one kinase. The compound is read from
+// the __constant__ symbol defined in kernels.cu (NOT a parameter).
+//   pockets : [n] device array of KinasePocket (req[NFEAT] + bias + id), row i = kinase i
+//   n       : number of kinases in the panel
+//   pK_milli: [n] output predicted affinity * 1000 (exact integer)
+//   hit     : [n] output 0/1 flag, 1 if bound above the selectivity threshold
+__global__ void score_kinase_kernel(const KinasePocket* __restrict__ pockets, int n,
+                                    int32_t* __restrict__ pK_milli,
+                                    int32_t* __restrict__ hit);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// score_panel_gpu: uploads the compound to constant memory and the pockets to
+// global memory, launches the kernel, times ONLY the kernel (CUDA events), copies
+// the per-kinase results back, and returns the integer S-count (sum of `hit`).
+//   panel     : the loaded problem (compound + n kinase pockets)
+//   pK_milli  : resized to n; filled with per-kinase predicted pK (milli-units)
+//   hit       : resized to n; filled with per-kinase 0/1 hit flags
+//   kernel_ms : out-param, GPU-measured kernel time in milliseconds
+//   returns   : S-count = number of kinases bound above threshold (deterministic)
+int32_t score_panel_gpu(const KinasePanel& panel,
+                        std::vector<int32_t>& pK_milli,
+                        std::vector<int32_t>& hit,
+                        float* kernel_ms);

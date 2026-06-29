@@ -1,31 +1,74 @@
 // ===========================================================================
-// src/reference_cpu.h  --  Prototype of the CPU reference computation
+// src/reference_cpu.h  --  Data model + CPU reference for kinase panel scoring
 // ---------------------------------------------------------------------------
-// Project 1.29 -- Kinase Selectivity Panel Scoring   (template skeleton)
+// Project 1.29 : Kinase Selectivity Panel Scoring
 //
-// WHY A SEPARATE HEADER
-//   The CPU reference (reference_cpu.cpp) is compiled by the plain C++ compiler
-//   and must NOT see any CUDA/__global__ syntax, so its prototype cannot live in
-//   kernels.cuh. Both main.cu and reference_cpu.cpp include THIS pure-C++ header
-//   so they agree on the function signature.
+// WHY A PURE-C++ HEADER
+//   reference_cpu.cpp is compiled by the host C++ compiler and must not see any
+//   CUDA syntax, so the shared DATA MODEL (the loaded panel container + the text
+//   loader) and the CPU-reference prototypes live here. kernels.cuh ALSO includes
+//   this header to reuse the same types -- nothing CUDA-specific leaks in either
+//   direction. The per-kinase *physics* lives one level deeper in
+//   selectivity_core.h (the __host__ __device__ core shared by CPU and GPU).
 //
-// THE CONTRACT (this template's placeholder computation):
-//   SAXPY -- "Single-precision A*X Plus Y":  out[i] = a * x[i] + y[i].
-//   This is the canonical first GPU kernel; here it stands in as a buildable
-//   placeholder. TODO(impl): replace saxpy_cpu with this project's real
-//   reference computation, and update the prototype + callers accordingly.
+// THE PROBLEM (see ../THEORY.md for the full derivation)
+//   Kinases share highly similar ATP pockets, so a drug that hits the intended
+//   kinase often hits dozens of others -> toxicity. "Selectivity panel scoring"
+//   profiles ONE compound against a PANEL of N kinases and asks two questions:
+//       (1) which kinases does it bind, and how strongly (predicted pK per kinase)?
+//       (2) how SELECTIVE is it overall (the S-score: fraction of the panel hit)?
+//   Each kinase is scored INDEPENDENTLY from the same compound -> embarrassingly
+//   parallel: one GPU thread per kinase (kernels.cu), the constant compound in
+//   GPU constant memory (the 1.12 "score one query vs N items" pattern).
 //
-//   The CPU reference exists for two reasons (CLAUDE.md section 5):
-//     (a) it is the readable baseline that makes the GPU speed-up legible, and
-//     (b) the demo runs BOTH and asserts they agree within tolerance.
+// READ THIS BEFORE: reference_cpu.cpp, kernels.cuh. (Physics: selectivity_core.h.)
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
+#include <string>
 #include <vector>
 
-// Compute out = a*x + y on the CPU, element by element.
-//   x, y : input vectors of equal length n
-//   a    : the scalar multiplier
-//   out  : resized to n and filled with the result (output parameter)
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out);
+#include "selectivity_core.h"   // NFEAT, KinasePocket, score_kinase, pK helpers
+
+// ---------------------------------------------------------------------------
+// KinasePanel : a loaded problem instance.
+//   ligand  : [NFEAT] the query compound's per-channel feature offers.
+//   pockets : N kinase pockets (each a KinasePocket: req[NFEAT] + bias + id).
+//   names   : [N] human-readable kinase names, parallel to `pockets` (report only).
+//   n       : number of kinases in the panel (== pockets.size()).
+// The pockets are stored as a flat std::vector<KinasePocket> precisely so the GPU
+// path can memcpy the whole array to the device in one shot (kernels.cu).
+// ---------------------------------------------------------------------------
+struct KinasePanel {
+    int n = 0;                          // number of kinases in the panel
+    int32_t ligand[NFEAT] = {0};        // the query compound's feature offers
+    std::vector<KinasePocket> pockets;  // [n] pocket requirement vectors
+    std::vector<std::string> names;     // [n] kinase names (reporting only)
+};
+
+// ---------------------------------------------------------------------------
+// load_panel : parse the tiny text dataset (format documented in data/README.md).
+//   File layout (whitespace-separated, '#'-comment lines ignored):
+//     line:  N  NFEAT
+//     line:  LIGAND  f0 f1 ... f7              (the query compound's offers)
+//     N lines: <name> <bias> r0 r1 ... r7      (one kinase pocket per line)
+//   Throws std::runtime_error on a missing file, a NFEAT mismatch, or bad data
+//   so the demo fails LOUDLY instead of silently scoring garbage.
+// ---------------------------------------------------------------------------
+KinasePanel load_panel(const std::string& path);
+
+// ---------------------------------------------------------------------------
+// score_panel_cpu : the trusted serial reference.
+//   For each kinase i, compute the raw match score (score_kinase from the shared
+//   core), convert to a predicted affinity pK in milli-units, and record whether
+//   it counts as a "hit" (pK >= threshold). Fills two parallel output arrays:
+//     pK_milli[i] : predicted affinity * 1000 (exact integer)
+//     hit[i]      : 1 if bound above threshold, else 0
+//   Returns the integer S-count = sum(hit) -- the numerator of the S-score. This
+//   is the obviously-correct baseline the GPU result is checked against
+//   (bit-for-bit, since both call the same __host__ __device__ score_kinase()).
+// ---------------------------------------------------------------------------
+int32_t score_panel_cpu(const KinasePanel& panel,
+                        std::vector<int32_t>& pK_milli,
+                        std::vector<int32_t>& hit);

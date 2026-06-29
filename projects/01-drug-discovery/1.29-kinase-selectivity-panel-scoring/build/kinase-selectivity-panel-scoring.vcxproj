@@ -153,6 +153,9 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- The shared __host__ __device__ scoring physics, included by both the CPU
+         reference and the GPU kernel so they compute bit-identical integers. -->
+    <ClInclude Include="..\src\selectivity_core.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

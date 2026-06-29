@@ -152,6 +152,9 @@
     <CudaCompile Include="..\src\kernels.cu" />
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
+    <!-- propensity.h: the shared __host__ __device__ per-residue physics that
+         makes the CPU reference and the GPU kernel compute identical results. -->
+    <ClInclude Include="..\src\propensity.h" />
     <ClInclude Include="..\src\reference_cpu.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />

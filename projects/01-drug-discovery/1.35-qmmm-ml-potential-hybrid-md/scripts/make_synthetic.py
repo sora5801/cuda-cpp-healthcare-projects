@@ -1,48 +1,56 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate the synthetic ensemble-config sample
 # ---------------------------------------------------------------------------
-# Project 1.35 -- QMMM/ML Potential Hybrid MD   (template skeleton)
+# Project 1.35 : QMMM/ML Potential Hybrid MD   (reduced-scope teaching version)
 #
 # WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+#   The real datasets for training the ML potential (Transition1x, SPICE,
+#   ANI-1ccx) are large QM/DFT reference sets that cannot be shipped in this repo
+#   and require their own training pipeline (see data/README.md). This teaching
+#   project does NOT train a network; its NNP weights are FIXED, committed
+#   surrogate values inside src/nnpmm.h. So the only "input" the program needs is
+#   a tiny ENSEMBLE CONFIG describing how many short MD trajectories to run and
+#   with what integration settings. This script writes that config.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
+#   The output is therefore SYNTHETIC and deterministic -- it is a run spec, not
+#   measured data, and is labeled synthetic everywhere (CLAUDE.md §8).
 #
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# FILE FORMAT (whitespace-separated, read by load_ensemble in reference_cpu.cpp):
+#     M  dt  steps  amp
+#   M     : number of ensemble members (independent trajectories)
+#   dt    : velocity-Verlet timestep (time units)
+#   steps : integration steps per trajectory
+#   amp   : max +/- perturbation applied to the link atom across the ensemble
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py                 # default tiny sample
+#   python scripts/make_synthetic.py --M 4096        # bigger ensemble (stress GPU)
 # ===========================================================================
 import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+OUT = ROOT / "data" / "sample" / "ensemble_params.txt"
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
+    ap = argparse.ArgumentParser(description="Generate the synthetic ensemble config.")
+    ap.add_argument("--M", type=int, default=64, help="number of trajectories")
+    ap.add_argument("--dt", type=float, default=0.005, help="Verlet timestep")
+    ap.add_argument("--steps", type=int, default=300, help="steps per trajectory")
+    ap.add_argument("--amp", type=float, default=0.20, help="link-atom perturbation +/-")
     ap.add_argument("--out", default=str(OUT), help="output path")
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
-
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    # One line: "M dt steps amp". A small dt keeps the symplectic integrator
+    # stable; 300 steps is long enough to show energy conservation, short enough
+    # to run instantly. amp=0.20 spreads the ensemble across configuration space.
+    line = f"{args.M} {args.dt:g} {args.steps} {args.amp:g}\n"
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    Path(args.out).write_text(line, encoding="utf-8")
+    print(f"[make_synthetic] wrote {args.out}  "
+          f"(M={args.M}, dt={args.dt}, steps={args.steps}, amp={args.amp}; SYNTHETIC)")
 
 
 if __name__ == "__main__":

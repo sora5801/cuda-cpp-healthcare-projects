@@ -153,6 +153,9 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- nnpmm.h: the shared __host__ __device__ hybrid NNP/MM physics core,
+         included by BOTH reference_cpu.cpp (host) and the .cu files (nvcc). -->
+    <ClInclude Include="..\src\nnpmm.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

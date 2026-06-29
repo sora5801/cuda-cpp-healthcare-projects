@@ -1,48 +1,66 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Write the alchemical delta-G calculation config
 # ---------------------------------------------------------------------------
-# Project 1.32 -- Alchemical Hydration Free Energy (ΔGsolv)   (template skeleton)
+# Project 1.32 : Alchemical Hydration Free Energy (delta-G_solv)
 #
-# WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+# The committed "data" is the SETUP of a free-energy calculation, not measured
+# input: the lambda schedule, the Monte Carlo sampling budget, and the model
+# system parameters (Lennard-Jones + soft-core). The program builds the solvent
+# bath deterministically from `bath_seed` (the same jittered-shell recipe the C++
+# build_bath() uses), so the whole calculation is reproducible from this one line.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
-#
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# OUTPUT (data/README.md format), a single whitespace-separated line:
+#   n_solvent box T epsilon sigma q_solute alpha_sc max_step
+#   n_windows n_walkers n_equil n_prod seed bath_seed
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py
+#   python scripts/make_synthetic.py --n-windows 21 --n-walkers 256   # finer/bigger
 # ===========================================================================
 import argparse
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "data" / "sample" / "alchemy_config.txt"
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
+    ap = argparse.ArgumentParser(description="Write the alchemical delta-G config line.")
+    # --- physical model (reduced LJ units; see data/README.md + THEORY) -------
+    ap.add_argument("--n-solvent", type=int, default=24, help="fixed solvent sites in the bath")
+    ap.add_argument("--box", type=float, default=3.0, help="half-width of the solute sampling box [sigma]")
+    ap.add_argument("--T", type=float, default=1.5, help="temperature [reduced eps/k_B]")
+    ap.add_argument("--epsilon", type=float, default=1.0, help="LJ well depth [eps]")
+    ap.add_argument("--sigma", type=float, default=1.0, help="LJ diameter [sigma]")
+    ap.add_argument("--q-solute", type=float, default=0.0, help="solute charge (0 = LJ-only)")
+    ap.add_argument("--alpha-sc", type=float, default=0.5, help="soft-core alpha (dimensionless)")
+    ap.add_argument("--max-step", type=float, default=0.4, help="Metropolis trial displacement [sigma]")
+    # --- sampling schedule ----------------------------------------------------
+    ap.add_argument("--n-windows", type=int, default=11, help="lambda windows (>=2, includes 0 and 1)")
+    ap.add_argument("--n-walkers", type=int, default=64, help="independent MC chains per window")
+    ap.add_argument("--n-equil", type=int, default=200, help="burn-in MC steps per walker")
+    ap.add_argument("--n-prod", type=int, default=800, help="production MC steps per walker")
+    ap.add_argument("--seed", type=int, default=20260628, help="global RNG seed")
+    ap.add_argument("--bath-seed", type=int, default=7, help="solvent-geometry seed")
+    ap.add_argument("--out", default=str(OUT))
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    if args.n_windows < 2:
+        ap.error("--n-windows must be at least 2 (the endpoints lambda=0 and lambda=1)")
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    line = (f"{args.n_solvent} {args.box:g} {args.T:g} {args.epsilon:g} "
+            f"{args.sigma:g} {args.q_solute:g} {args.alpha_sc:g} {args.max_step:g} "
+            f"{args.n_windows} {args.n_walkers} {args.n_equil} {args.n_prod} "
+            f"{args.seed} {args.bath_seed}")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    Path(args.out).write_text(line + "\n", encoding="utf-8")
+    total = args.n_windows * args.n_walkers
+    print(f"[make_synthetic] wrote {args.out}")
+    print(f"  {args.n_windows} windows x {args.n_walkers} walkers = {total} GPU threads; "
+          f"{args.n_equil}+{args.n_prod} MC steps each")
+    print(f"  model: {args.n_solvent} solvent sites, T={args.T}, alpha_sc={args.alpha_sc} "
+          f"(SYNTHETIC, reduced LJ units -- not a force-field prediction)")
 
 
 if __name__ == "__main__":

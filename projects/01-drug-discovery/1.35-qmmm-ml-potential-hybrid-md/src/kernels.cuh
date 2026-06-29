@@ -1,52 +1,50 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU ensemble-integration interface (the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 1.35 -- QMMM/ML Potential Hybrid MD   (template skeleton)
+// Project 1.35 : QMMM/ML Potential Hybrid MD   (reduced-scope teaching version)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (GPU pattern: ENSEMBLE -- thread per trajectory; PATTERNS.md §1)
+//   Active-learning of reactive ML potentials needs MANY short MD trajectories
+//   from slightly different starting points, to map out where the model is
+//   uncertain. Each trajectory is sequential in TIME but INDEPENDENT of the
+//   others, so we give each one its own GPU thread: the thread runs the whole
+//   velocity-Verlet loop in registers and writes a single TrajResult summary.
+//   No inter-thread communication, no shared memory, no atomics -- pure
+//   embarrassing parallelism over ensemble members. (Same shape as flagships
+//   9.02 SEIR and 13.02 PBPK.)
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The per-step physics -- the hybrid NNP(ML)+LJ(MM) force/energy and the
+//   integrator -- is shared with the CPU reference in nnpmm.h, so the GPU result
+//   matches the CPU to floating-point round-off. kernels.cu defines the kernel.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   This header is included only by .cu translation units (it declares a
+//   __global__ kernel), so the plain C++ compiler never sees it -- that is why
+//   the CPU reference declarations live in the pure-C++ reference_cpu.h.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, nnpmm.h, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
+#include "reference_cpu.h"   // EnsembleConfig, TrajResult (pure C++, safe in .cu)
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ensemble_kernel: thread `idx` integrates ensemble member idx and writes its
+//   TrajResult.
+//   Launch config (set in integrate_gpu):
+//     grid  = ceil(M / THREADS_PER_BLOCK) blocks
+//     block = THREADS_PER_BLOCK threads
+//   Thread-to-data map: idx = blockIdx.x * blockDim.x + threadIdx.x  -> member.
+//   Memory: each thread keeps its small per-atom state (x,v,a of N_ATOMS) in
+//   registers/local memory; the only global write is out[idx]. No atomics.
+__global__ void ensemble_kernel(EnsembleConfig c, TrajResult* __restrict__ out);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// integrate_gpu: launch one thread per member, copy results back, time the
+//   kernel with CUDA events.
+//   c         : the ensemble config (passed by value -> copied to every thread)
+//   results   : host output, resized to M (output parameter)
+//   kernel_ms : out-param, milliseconds spent in the kernel (CUDA-event measured)
+void integrate_gpu(const EnsembleConfig& c, std::vector<TrajResult>& results,
+                   float* kernel_ms);

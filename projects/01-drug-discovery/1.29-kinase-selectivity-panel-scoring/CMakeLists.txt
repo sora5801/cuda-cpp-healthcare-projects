@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.29 -- Kinase Selectivity Panel Scoring   (template skeleton)
+# Project 1.29 : Kinase Selectivity Panel Scoring
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/kinase-selectivity-panel-scoring.sln (CLAUDE.md §5). Both

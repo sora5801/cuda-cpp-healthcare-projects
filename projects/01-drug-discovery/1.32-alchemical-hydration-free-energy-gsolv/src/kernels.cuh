@@ -1,52 +1,35 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU ensemble-of-walkers interface
 // ---------------------------------------------------------------------------
-// Project 1.32 -- Alchemical Hydration Free Energy (ΔGsolv)   (template skeleton)
+// Project 1.32 : Alchemical Hydration Free Energy (delta-G_solv)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (the ensemble-over-threads pattern, after flagship 9.02)
+//   A free-energy calculation runs many INDEPENDENT Monte Carlo chains: one per
+//   (lambda-window, walker). Each chain is sequential in its own steps but has no
+//   communication with the others, so we give every walker its OWN GPU THREAD.
+//   The thread runs the full Metropolis loop (alchemy.h, in registers) and writes
+//   one WalkerResult. There is no inter-thread communication and the per-window
+//   averaging happens afterward on the host -- so the result is deterministic and
+//   matches the CPU reference (which runs the identical run_walker()) to round-off.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The only device-memory traffic during sampling is reading the (shared, read-
+//   only) solvent bath coordinates; the solute position and accumulators live in
+//   registers. kernels.cu copies the bath to the device, launches one thread per
+//   walker, and copies the WalkerResults back.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, alchemy.h, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // AlchConfig, BathStorage, WalkerResult (pure C++, safe in .cu)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Host wrapper: run the WHOLE ensemble of walkers on the GPU (one thread each),
+// fill `walkers` (sized total_walkers(c)), and report the kernel time in ms.
+//   c       : the calculation config (windows, walkers, steps, system params)
+//   bath    : the solvent geometry (copied to the device inside)
+//   walkers : output, one WalkerResult per global walker (resized here)
+//   kernel_ms : out-param, GPU-measured kernel time (teaching artifact only)
+void run_gpu(const AlchConfig& c, const BathStorage& bath,
+             std::vector<WalkerResult>& walkers, float* kernel_ms);
