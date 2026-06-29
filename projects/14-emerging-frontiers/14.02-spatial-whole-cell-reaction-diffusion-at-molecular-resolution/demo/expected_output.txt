@@ -1,5 +1,5 @@
-14.2 -- Spatial / Whole-Cell Reaction-Diffusion at Molecular Resolution
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+14.2 -- Spatial Reaction-Diffusion (Gray-Scott)
+Gray-Scott: 128x128 grid, 8000 steps, Du=0.160 Dv=0.080 F=0.0545 k=0.0620
+pattern: total V=3345.5114, max V=0.4160, active cells (V>0.2)=8592 of 16384
+V along center row (8 samples): 0.0057 0.1434 0.0218 0.3123 0.3703 0.0189 0.2761 0.0078
+RESULT: PASS (GPU field matches CPU within tol=1.0e-03)

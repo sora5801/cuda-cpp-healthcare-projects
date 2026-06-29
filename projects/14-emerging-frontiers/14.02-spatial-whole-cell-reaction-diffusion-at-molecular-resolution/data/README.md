@@ -1,37 +1,50 @@
-# Data — 14.2 Spatial / Whole-Cell Reaction-Diffusion at Molecular Resolution
+# Data — 14.02 Spatial Reaction-Diffusion (Gray-Scott)
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/grayscott_params.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
-| License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Origin | **Synthetic** simulation parameters (`scripts/make_synthetic.py`) |
+| License | Public domain (CC0) |
+| Setup | 128×128 periodic grid, central seed, Gray-Scott labyrinth regime |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+The "data" is the **simulation setup**; the initial grid (U=1, V=0, with a central
+V seed) is built deterministically from these parameters.
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+### File format (one line)
 
-## Full dataset
+```
+nx  ny  Du  Dv  F  k  dt  steps  seed_half
+```
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+| Field | Meaning |
+|---|---|
+| `nx`, `ny` | grid size (periodic boundaries) |
+| `Du`, `Dv` | diffusion coefficients of U and V |
+| `F` | feed rate; with `k`, selects the pattern (spots/stripes/mazes) |
+| `k` | kill rate |
+| `dt` | explicit-Euler timestep (keep `dt < 1/(4·max(Du,Dv))` for stability) |
+| `steps` | number of timesteps |
+| `seed_half` | half-size of the central V-seed square |
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+Default: `128 128 0.16 0.08 0.0545 0.062 1 8000 8` → a **labyrinth** Turing pattern.
+Try `--F 0.0367 --k 0.0649 --seed-half 10` for self-replicating spots.
 
-Catalog dataset notes (verbatim):
+## "Full dataset" / molecular-resolution RD
 
-> CellOrganizer — generative models of subcellular morphology for simulation domains (http://www.cellorganizer.org/); PDB molecular crowding configurations; SBML-spatial format models (BioModels); MCell neural synapse models (https://mcell.org/).
+The catalog project (14.2) is **particle-based** reaction-diffusion at molecular
+resolution — every molecule tracked individually — a 🔴 frontier problem. This
+flagship is the **continuum (grid) teaching version**; the real thing uses:
 
-## Provenance & field meanings
+- **ReaDDy** (<https://github.com/readdy/readdy>) — GPU particle-based RD.
+- **Smoldyn** (<https://github.com/ssandrews/Smoldyn>) — off-lattice PBRD.
+- **MCell** (<https://mcell.org/>) — Monte-Carlo 3-D RD for neurons.
+- **STEPS** (<https://github.com/CNS-OIST/STEPS>) — tetrahedral-mesh spatial SSA.
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+Bigger grid: `python scripts/make_synthetic.py --nx 256 --ny 256 --steps 12000`.
+
+## Provenance & honesty
+
+The configuration is **synthetic**; Gray-Scott is an abstract two-chemical model,
+not real cellular biochemistry. It demonstrates the reaction-diffusion / stencil
+pattern; it is **not** a molecular simulation and not for any scientific claim.

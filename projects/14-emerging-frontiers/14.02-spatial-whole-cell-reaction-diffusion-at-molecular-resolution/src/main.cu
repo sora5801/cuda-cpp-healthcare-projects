@@ -1,122 +1,98 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: run reaction-diffusion, verify, report
 // ---------------------------------------------------------------------------
-// Project 14.2 -- Spatial / Whole-Cell Reaction-Diffusion at Molecular Resolution   (template skeleton)
+// Project 14.02 : Spatial / Whole-Cell Reaction-Diffusion (teaching stencil)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape:
+//   1. Load params + build the seeded grid (data/sample + init_fields).
+//   2. CPU reference RD simulation (reference_cpu.cpp).
+//   3. GPU RD simulation (kernels.cu) -- identical per-cell stencil (rd.h).
+//   4. VERIFY: the final U/V fields match (within FP tolerance; see THEORY).
+//   5. REPORT: deterministic pattern metrics + sampled cells.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// From a tiny seed the V field self-organizes into a Turing pattern.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then rd.h (the stencil), kernels.cu, reference_cpu.cpp.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // simulate_gpu, RdParams
+#include "reference_cpu.h"    // load_rd, init_fields, simulate_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "14.2";
-static const char* PROJECT_NAME = "Spatial / Whole-Cell Reaction-Diffusion at Molecular Resolution";
+static const char* PROJECT_NAME = "Spatial Reaction-Diffusion (Gray-Scott)";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Over thousands of nonlinear steps, CPU and GPU drift at the float-FMA level;
+// the field values are O(1), so a 1e-3 tolerance is well within "same pattern".
+static constexpr double TOLERANCE = 1.0e-3;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load + seed ----------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/grayscott_params.txt";
+    RdParams P;
+    try {
+        P = load_rd(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    std::vector<double> U0, V0;
+    init_fields(P, U0, V0);
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<double> U_cpu = U0, V_cpu = V0;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    simulate_cpu(P, U_cpu, V_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU simulation (loop timed) -----------------------------------
+    std::vector<double> U_gpu = U0, V_gpu = V0;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    simulate_gpu(P, U_gpu, V_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (final fields agree) -----------------------------------
+    double worst = 0.0;
+    for (int i = 0; i < P.nx * P.ny; ++i) {
+        worst = std::fmax(worst, std::fabs(U_cpu[i] - U_gpu[i]));
+        worst = std::fmax(worst, std::fabs(V_cpu[i] - V_gpu[i]));
+    }
+    const bool pass = worst <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    // Pattern metrics from the GPU field: total V "mass", peak V, and how many
+    // cells are "active" (V above a threshold) -- a measure of pattern coverage.
+    double total_v = 0.0, max_v = 0.0;
+    int active = 0;
+    for (int i = 0; i < P.nx * P.ny; ++i) {
+        total_v += V_gpu[i];
+        max_v = std::fmax(max_v, V_gpu[i]);
+        if (V_gpu[i] > 0.2) ++active;
+    }
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("Gray-Scott: %dx%d grid, %d steps, Du=%.3f Dv=%.3f F=%.4f k=%.4f\n",
+                P.nx, P.ny, P.steps, P.Du, P.Dv, P.F, P.k);
+    std::printf("pattern: total V=%.4f, max V=%.4f, active cells (V>0.2)=%d of %d\n",
+                total_v, max_v, active, P.nx * P.ny);
+    std::printf("V along center row (8 samples):");
+    const int cy = P.ny / 2;
+    for (int s = 0; s < 8; ++s) {
+        const int x = (s * (P.nx - 1)) / 7;
+        std::printf(" %.4f", V_gpu[cy * P.nx + x]);
+    }
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("RESULT: %s (GPU field matches CPU within tol=1.0e-03)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d cells, %d steps)\n", path.c_str(), P.nx * P.ny, P.steps);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- the GPU's edge grows with grid size; whole-cell "
+                         "molecular RD needs multi-GPU systems.\n");
+    std::fprintf(stderr, "[verify] worst field diff = %.3e  (tolerance %.1e)\n", worst, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

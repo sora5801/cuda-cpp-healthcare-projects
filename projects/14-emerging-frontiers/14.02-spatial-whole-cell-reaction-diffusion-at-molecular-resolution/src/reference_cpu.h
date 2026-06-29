@@ -1,31 +1,28 @@
 // ===========================================================================
-// src/reference_cpu.h  --  Prototype of the CPU reference computation
+// src/reference_cpu.h  --  RD parameters, field init, CPU reference
 // ---------------------------------------------------------------------------
-// Project 14.2 -- Spatial / Whole-Cell Reaction-Diffusion at Molecular Resolution   (template skeleton)
+// Project 14.02 : Spatial / Whole-Cell Reaction-Diffusion (teaching stencil)
 //
-// WHY A SEPARATE HEADER
-//   The CPU reference (reference_cpu.cpp) is compiled by the plain C++ compiler
-//   and must NOT see any CUDA/__global__ syntax, so its prototype cannot live in
-//   kernels.cuh. Both main.cu and reference_cpu.cpp include THIS pure-C++ header
-//   so they agree on the function signature.
-//
-// THE CONTRACT (this template's placeholder computation):
-//   SAXPY -- "Single-precision A*X Plus Y":  out[i] = a * x[i] + y[i].
-//   This is the canonical first GPU kernel; here it stands in as a buildable
-//   placeholder. TODO(impl): replace saxpy_cpu with this project's real
-//   reference computation, and update the prototype + callers accordingly.
-//
-//   The CPU reference exists for two reasons (CLAUDE.md section 5):
-//     (a) it is the readable baseline that makes the GPU speed-up legible, and
-//     (b) the demo runs BOTH and asserts they agree within tolerance.
+// Pure C++ (no CUDA). The per-cell update is in rd.h; kernels.cu reuses RdParams.
+// The CPU reference runs the identical stencil as the GPU, so the final fields
+// must match (within the float-accumulation tolerance discussed in THEORY).
 // ===========================================================================
 #pragma once
 
+#include <string>
 #include <vector>
 
-// Compute out = a*x + y on the CPU, element by element.
-//   x, y : input vectors of equal length n
-//   a    : the scalar multiplier
-//   out  : resized to n and filled with the result (output parameter)
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out);
+#include "rd.h"   // RdParams, rd_update
+
+// Load RdParams from the one-line text format (data/README.md):
+//   "nx ny Du Dv F k dt steps seed_half"
+RdParams load_rd(const std::string& path);
+
+// Initialize the grid: U = 1, V = 0 everywhere, except a central square of side
+// (2*seed_half+1) seeded with U = 0.5, V = 0.25 -- the perturbation that grows
+// into patterns. U and V are sized to nx*ny.
+void init_fields(const RdParams& P, std::vector<double>& U, std::vector<double>& V);
+
+// CPU reference: advance the fields `steps` timesteps in place (double-buffered
+// explicit Euler). The trusted baseline the GPU stencil is checked against.
+void simulate_cpu(const RdParams& P, std::vector<double>& U, std::vector<double>& V);

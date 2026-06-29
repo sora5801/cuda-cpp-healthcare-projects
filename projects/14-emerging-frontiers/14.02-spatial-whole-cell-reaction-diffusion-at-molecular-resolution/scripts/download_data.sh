@@ -1,33 +1,24 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
-# ---------------------------------------------------------------------------
-# Project 14.2 -- Spatial / Whole-Cell Reaction-Diffusion at Molecular Resolution   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# scripts/download_data.sh  --  Molecular-resolution RD pointers (Linux/macOS)
+# Project 14.02 : Spatial / Whole-Cell Reaction-Diffusion. Nothing to download.
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
-echo "[download_data] Project 14.2 -- Spatial / Whole-Cell Reaction-Diffusion at Molecular Resolution"
-echo "[download_data] Target data dir: $DATA_DIR"
+echo "[download_data] Project 14.02 -- Spatial / Whole-Cell Reaction-Diffusion"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    CellOrganizer — generative models of subcellular morphology for simulation domains (http://www.cellorganizer.org/); PDB molecular crowding configurations; SBML-spatial format models (BioModels); MCell neural synapse models (https://mcell.org/)."
+echo "There is no file to download: the grid is built from the parameters in"
+echo "data/sample/grayscott_params.txt."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "This flagship is the continuum (grid stencil) TEACHING version. The full"
+echo "project is PARTICLE-based reaction-diffusion at molecular resolution:"
+echo "  ReaDDy  : https://github.com/readdy/readdy   (GPU particle RD)"
+echo "  Smoldyn : https://github.com/ssandrews/Smoldyn"
+echo "  MCell   : https://mcell.org/"
+echo "  STEPS   : https://github.com/CNS-OIST/STEPS"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Bigger grid (no download):"
+echo "  python scripts/make_synthetic.py --nx 256 --ny 256 --steps 12000"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

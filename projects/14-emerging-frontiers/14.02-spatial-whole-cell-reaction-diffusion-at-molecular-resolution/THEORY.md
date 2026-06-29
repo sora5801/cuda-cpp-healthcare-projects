@@ -1,87 +1,107 @@
-# THEORY — 14.2 Spatial / Whole-Cell Reaction-Diffusion at Molecular Resolution
+# THEORY — 14.02 Spatial Reaction-Diffusion (Gray-Scott)
 
-> The deep didactic explanation (the "why"). Written for a sharp student who
-> knows C++ but is new to CUDA and new to this domain. Diagrams in Mermaid/ASCII
-> are welcome. See [README.md](README.md) for the quick tour and build steps.
->
-> _Educational only — not for clinical use._
-
-<!-- =======================================================================
-     The block below is the verbatim catalog deep-dive for this project,
-     stamped in by scaffold.py as raw material. Use it to write the sections
-     that follow, then DELETE it (or fold it into "The science"). Every
-     TODO(theory) below must be completed before the project is "done".
-     ======================================================================= -->
-
-<details>
-<summary>Catalog deep-dive (raw source material — fold into the sections below, then remove)</summary>
-
-### 14.2 Spatial / Whole-Cell Reaction-Diffusion at Molecular Resolution 🔴 · Frontier/Theoretical
-
-- **Deep dive:** Particle-based reaction-diffusion (PBRD) simulators track each molecule as an individual particle, enabling sub-micron spatial resolution of signaling gradients, receptor clustering, and organelle targeting. GPU-accelerated PBRD (Smoldyn GPU, ReaDDy GPU) parallelizes over molecules: each particle diffuses and reacts independently, with nearest-neighbor checks via GPU cell-list algorithms. A full cytoplasm simulation at molecular resolution for even a minimal cell (~500 K unique molecules) at physiologically relevant timescales (milliseconds) requires O(10¹²) timestep-particle updates — tractable only on multi-GPU systems. eGFRD (enhanced Green's Function Reaction Dynamics) is theoretically the most accurate but computationally costly, a prime GPU target.
-- **Key algorithms:** Brownian dynamics with reaction (Smoluchowski), eGFRD Green's function propagators, interaction-site model (ISSA), diffusion-limited reaction kernel sampling, GPU cell-list O(N) neighbor search, reactive molecular dynamics.
-- **Datasets:** CellOrganizer — generative models of subcellular morphology for simulation domains (http://www.cellorganizer.org/); PDB molecular crowding configurations; SBML-spatial format models (BioModels); MCell neural synapse models (https://mcell.org/).
-- **Starter repos/tools:** ReaDDy (https://github.com/readdy/readdy) — GPU-accelerated particle-based RD (CPU + GPU backends); Smoldyn (https://github.com/ssandrews/Smoldyn) — off-lattice GPU-capable PBRD; MCell (https://mcell.org/) — Monte Carlo 3D reaction-diffusion for neurons; STEPS (https://github.com/CNS-OIST/STEPS) — tetrahedral-mesh spatial SSA with GPU support.
-- **CUDA libraries & GPU pattern:** CUDA cell-list neighbor search (one thread per particle for neighbor pair collection), cuRAND for per-particle Brownian displacement sampling, Thrust for reaction-event sorting; pattern: GPU cell-list built from particle positions → parallel Brownian displacement → reaction probability check for each particle pair → acceptance-rejection sampling → time step advance.
-
-</details>
-
----
+> For a reader who knows C++ but is new to CUDA and to pattern formation. See
+> [README.md](README.md) for the tour and build. _Educational only; this is a
+> reduced-scope teaching version of a frontier problem._
 
 ## 1. The science
 
-TODO(theory): The biology / medicine / physics being modeled — enough for a
-reader to understand the *problem* before any math. What real-world question
-does computing this answer?
+How does a uniform ball of cells become a patterned organism — stripes, spots,
+segments? Alan **Turing** (1952) showed that two diffusing, reacting chemicals can
+spontaneously break symmetry and form stationary patterns: a slowly-diffusing
+"activator" and a fast-diffusing "inhibitor". The same mechanism is invoked for
+skin/coat patterns, coral, and intracellular organization of signaling molecules.
+The **Gray-Scott** model is a clean two-chemical reaction-diffusion system that
+exhibits an astonishing variety of these patterns.
 
 ## 2. The math
 
-TODO(theory): The governing equations / formal problem statement, with **every
-symbol defined** (units, ranges). State inputs, outputs, and the objective.
+Two fields `U(x,y,t)` and `V(x,y,t)` on a periodic grid:
+
+```
+dU/dt = Du ∇²U − U V² + F (1 − U)        # U is fed in at rate F, consumed by reaction
+dV/dt = Dv ∇²V + U V² − (F + k) V        # V is produced by reaction, removed at rate F+k
+```
+
+`U + 2V` would be conserved without feed/kill; the autocatalytic term `U V²`
+(two V plus one U make three V) is the nonlinearity that drives pattern growth.
+The uniform state `(U=1, V=0)` is stable, so patterns only appear where a
+perturbation can grow — a region of the `(F, k)` plane mapped famously by Pearson:
+spots, stripes, mazes, self-replicating "mitosis", and spatiotemporal chaos.
 
 ## 3. The algorithm
 
-TODO(theory): Step-by-step. Include **complexity analysis**: serial cost vs. the
-parallel work/depth. Where is the arithmetic intensity? What is the data-access
-pattern?
+```
+init: U=1, V=0; seed a central square with U=0.5, V=0.25
+each step:
+    for every cell (x,y):
+        lapU = U[N]+U[S]+U[E]+U[W] - 4 U      # 5-point Laplacian (periodic)
+        U' = U + dt (Du lapU - U V^2 + F (1-U))
+        V' = V + dt (Dv lapV + U V^2 - (F+k) V)
+    swap (U,V) <- (U',V')
+```
+
+**Complexity.** Each step is `Θ(nx·ny)` cell updates; total `steps · nx · ny`.
+Perfectly parallel across cells.
 
 ## 4. The GPU mapping
 
-TODO(theory): How the algorithm becomes **threads / blocks / grids**.
-- Thread-to-data mapping (which thread owns which element).
-- Launch configuration and the reasoning (block size, grid size).
-- Memory hierarchy used and **why**: global / shared / registers / constant /
-  texture. Where is the bandwidth bottleneck? What is the occupancy story?
-- Which CUDA library (cuBLAS / cuFFT / cuRAND / cuSOLVER / Thrust) does what,
-  and what it would take to write that step by hand (no black boxes — §6.1.6).
+**Decomposition.** One thread per grid cell, on a 2-D grid of 16×16 blocks. The
+host runs the time loop, launching the stencil kernel once per step and
+**ping-ponging** two (U,V) buffer pairs.
 
-```
-TODO(theory): an ASCII or Mermaid diagram of the grid/block decomposition.
-```
+**Why two buffers.** The update reads a cell's neighbours' *current* values and
+writes its *next* value. Writing in place would let a cell read a neighbour already
+updated this step (a race). Double buffering freezes the read state, so all cells
+are independent within a step — no atomics, no `__syncthreads`. (Identical reasoning
+to the lattice-Boltzmann project `6.04`.)
+
+**Memory.** U and V live in global memory; each cell reads its 4 neighbours
+(periodic indexing via modulo). The access is local and regular; the kernel is
+memory-bandwidth bound, and shared-memory **tiling** of a block + halo is the
+standard optimization (Exercise 2). One kernel launch per step makes the GPU
+launch-bound on small grids; the advantage grows with grid size.
+
+**CPU/GPU parity.** The per-cell update is one `__host__ __device__` function in
+double precision, so the GPU reproduces the CPU field. The labyrinth regime is a
+stable attractor, so the two stay within ~`1e-7` over 8000 steps (unlike the
+chaotic regimes, where they would diverge — a reproducibility caveat shared with
+project 10.02).
 
 ## 5. Numerical considerations
 
-TODO(theory): Precision (FP32 vs FP64) and why. Stability. Race conditions and
-whether atomics are used. **Determinism**: does the parallel reduction reorder
-floating-point sums? If so, say so and quantify the caveat.
+- **Stability.** Explicit Euler diffusion is conditionally stable: roughly
+  `dt < dx² / (4·max(Du,Dv))`. With `dx=1`, `Du=0.16`, that is `dt < ~1.56`, so
+  `dt=1` is safe. Larger `dt` blows up.
+- **Determinism.** No reductions/atomics, double-buffered reads → reproducible and
+  CPU-matching for stable regimes.
+- **Sensitivity.** Some `(F,k)` give chaotic dynamics where tiny FP differences
+  amplify; the committed sample uses a stable pattern-forming regime so the demo
+  is reproducible.
 
 ## 6. How we verify correctness
 
-TODO(theory): The CPU reference (`src/reference_cpu.cpp`), the **tolerance** and
-why that value, and the edge cases checked. Explain why agreement between an
-independent serial implementation and the GPU implementation is convincing
-evidence of correctness.
+`main.cu` runs the simulation on CPU and GPU and compares the final U and V fields
+cell-by-cell (`worst diff ≈ 1e-7`). Beyond CPU/GPU parity, the result is the
+*right kind of thing*: from a tiny seed the system self-organizes into a connected
+Turing labyrinth covering about half the grid — the hallmark behaviour of the
+model, not a flat or blown-up field.
 
 ## 7. Where this sits in the real world
 
-TODO(theory): How production tools (named in the catalog "Prior art") do this
-differently — what they add (scale, accuracy, features) that this teaching
-version omits. If this is a 🔴 frontier project shipped as a reduced-scope
-teaching version, describe the full approach here.
-
----
+This continuum PDE is the textbook entry point. The catalog's actual project is
+**particle-based reaction-diffusion (PBRD)** at *molecular resolution*: track each
+molecule as it diffuses (Brownian motion) and reacts on encounter, resolving
+sub-micron gradients and receptor clustering that a smooth concentration field
+cannot. GPU PBRD (ReaDDy, Smoldyn) parallelizes over *molecules* with cell-list
+neighbour search; **eGFRD** is more accurate still. A whole minimal cell (~500k
+molecules) at millisecond timescales is ~10¹² particle-timestep updates — a
+multi-GPU grand challenge. The stencil you parallelize here is the mean-field limit
+of that molecular picture.
 
 ## References
 
-TODO(theory): Papers, docs, and the starter repos from the catalog, with one
-line each on what to learn from them.
+- Turing (1952), *The Chemical Basis of Morphogenesis*.
+- Gray & Scott (1984); Pearson (1993), *Complex Patterns in a Simple System* (the (F,k) phase diagram).
+- ReaDDy / Smoldyn / MCell / STEPS — particle-based reaction-diffusion engines.
+- NVIDIA CUDA C++ Programming Guide — 2-D stencils, shared-memory tiling.

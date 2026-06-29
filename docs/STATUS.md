@@ -2,13 +2,13 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 12/301 projects done (4.0%) | todo 289 | in-progress 0 | missing 0
+**Progress:** 13/301 projects done (4.3%) | todo 288 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 5 | 0 | 62 |
 | 🟡 Intermediate | 206 | 7 | 0 | 199 |
-| 🔴 Advanced | 28 | 0 | 0 | 28 |
+| 🔴 Advanced | 28 | 1 | 0 | 27 |
 
 ## 1. Drug Discovery & Molecular Design  (1/35 done)
 
@@ -360,12 +360,12 @@
 | 13.18 | Pharmacogenomics-Guided Precision Dosing | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
 | 13.19 | Antibody Pharmacokinetics & FcRn-Mediated Recycling | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
 
-## 14. Emerging, Theoretical & Grand-Challenge Frontiers  (0/16 done)
+## 14. Emerging, Theoretical & Grand-Challenge Frontiers  (1/16 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
 | 14.01 | Whole-Cell Simulation | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
-| 14.02 | Spatial / Whole-Cell Reaction-Diffusion at Molecular Resolution | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
+| 14.02 | Spatial / Whole-Cell Reaction-Diffusion at Molecular Resolution | 🔴 Advanced | Frontier/Theoretical | [x] done | lead | main |
 | 14.03 | Patient / Organ Digital Twins | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 14.04 | Quantum-Classical Hybrid Drug Design | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
 | 14.05 | Foundation Models for Biology & Chemistry | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
