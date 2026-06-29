@@ -1,52 +1,53 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for 3D shape screening
 // ---------------------------------------------------------------------------
-// Project 1.13 -- Pharmacophore & 3D Shape Screening   (template skeleton)
+// Project 1.13 : Pharmacophore & 3D Shape Screening
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   Scoring the query against N library conformers is N INDEPENDENT jobs, so we
+//   give each conformer its own GPU thread (the same "independent jobs" pattern
+//   as 1.12 Tanimoto and 12.01 spectral search -- PATTERNS.md sec 1). Two CUDA
+//   features make it efficient and are the teaching points of this project:
+//     * the QUERY molecule lives in CONSTANT memory: every thread reads all of
+//       its atoms but none writes them, and it never changes during the launch,
+//       so the constant cache broadcasts it warp-wide in one transaction; and
+//     * each thread runs the SAME shared physics core (shape_overlap.h) the CPU
+//       reference runs, so GPU and CPU agree to ~machine precision.
+//   A grid-stride loop lets one modest grid cover an arbitrarily large library.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   This header is included only by .cu units. It reuses the ConformerSet /
+//   Molecule data model from reference_cpu.h (pure C++, safe inside nvcc).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: shape_overlap.h, reference_cpu.h, util/cuda_check.cuh.
+// Then read kernels.cu. The GPU-mapping rationale is in ../THEORY.md sec 4.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // ConformerSet, Molecule (pure C++, safe in .cu)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// ---------------------------------------------------------------------------
+// shape_screen_kernel: one thread scores one library conformer against the
+// query (which it reads from the __constant__ symbol defined in kernels.cu).
+//   d_lib   : [n] device array of library Molecules (POD, copied as raw bytes)
+//   n       : number of library conformers
+//   o_aa    : the query self-overlap O_AA, precomputed once on the host and
+//             passed by value (identical for every thread -> no redundant work)
+//   d_out   : [n] device array of Shape Tanimoto scores (output, double)
+// The thread-to-data map and launch config are documented at the definition.
+// ---------------------------------------------------------------------------
+__global__ void shape_screen_kernel(const Molecule* __restrict__ d_lib, int n,
+                                    double o_aa, double* __restrict__ d_out);
+
+// ---------------------------------------------------------------------------
+// shape_screen_gpu: host wrapper. Uploads the query to constant memory and the
+// library to global memory, precomputes O_AA on the host (a single molecule
+// self-overlap -- trivially cheap and avoids every thread recomputing it),
+// launches the kernel, times ONLY the kernel with CUDA events, and returns the
+// per-conformer scores.
+//   set        : the loaded screening problem (query + n conformers)
+//   out        : resized to n; filled with per-conformer Shape Tanimoto scores
+//   kernel_ms  : out-param, GPU-measured kernel time in milliseconds
+// ---------------------------------------------------------------------------
+void shape_screen_gpu(const ConformerSet& set, std::vector<double>& out, float* kernel_ms);

@@ -6,29 +6,43 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+This project is a small but **complete molecular-dynamics (MD) engine**: it takes a
+box of atoms, computes the forces between them, and steps them forward in time with
+Newton's laws to produce a trajectory. It models the simplest physically meaningful
+force field — a single **Lennard-Jones** pair interaction — and integrates it with
+the standard **velocity-Verlet** scheme under periodic boundaries. The GPU computes
+the expensive all-pairs force sum (one thread per atom, positions tiled through
+shared memory); a serial CPU reference runs the identical physics so we can verify
+the GPU and watch the integrator **conserve energy** — the hallmark of a correct MD
+simulation. It is a **reduced-scope teaching version** of a production engine; see
+[THEORY.md §7](THEORY.md) for what GROMACS/OpenMM/NAMD add on top.
 
 ## What this computes & why the GPU helps
 
-Classical MD simulates the time evolution of every atom in a biomolecular system by integrating Newton's equations of motion using empirical force fields (AMBER, CHARMM, GROMOS). Each timestep requires evaluating bonded interactions (bonds, angles, dihedrals) and non-bonded interactions (Lennard-Jones + electrostatics) for millions of atom pairs. GPUs accelerate the embarrassingly parallel pairwise force evaluation, reducing a day of CPU work to minutes on modern A100-class cards. The critical bottleneck — neighbor-list construction and PME reciprocal-space summation — maps cleanly onto CUDA threadblocks. Multi-GPU scaling via domain decomposition allows systems of 10–100 million atoms to be simulated in production.
+Classical MD simulates the time evolution of every atom by integrating Newton's
+equations of motion. Each timestep must evaluate the **non-bonded forces** between
+atom pairs — here the Lennard-Jones term — which is by far the dominant cost.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** the force on each atom is an independent sum over all
+other atoms, so for `N` atoms the force evaluation is `O(N²)` work *that is fully
+data-parallel in the atom index*. The GPU assigns **one thread per atom**; each
+thread accumulates its own total force while the block **cooperatively stages atom
+positions through shared memory** (the classic n-body tiling trick), cutting global-
+memory traffic from ~N² to ~N²/blockSize. Everything else (the velocity/position
+updates) is cheap O(N) streaming. This is exactly the step production engines
+parallelize first, reducing a day of CPU work to minutes on a modern GPU.
 
 ## The algorithm in brief
 
-Verlet/leapfrog integrator, LINCS/SHAKE bond constraint solvers, Particle-Mesh Ewald (PME) electrostatics, Lennard-Jones cutoff with long-range dispersion correction, Berendsen/Parrinello-Rahman barostat, velocity rescaling/Nosé-Hoover thermostat.
+- **Lennard-Jones 12-6 force/energy** per atom pair, with a cutoff and the
+  minimum-image convention for periodic boundaries.
+- **Velocity-Verlet** integration (kick → drift → recompute forces → kick): time-
+  reversible and symplectic, so it conserves energy over long runs.
+- **All-pairs (direct) `O(N²)` force sum** on the GPU with shared-memory tiling.
+- **Energy/temperature diagnostics** and a position checksum as verifiable
+  observables.
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
 derivation.
@@ -53,56 +67,103 @@ msbuild build\molecular-dynamics-engine.sln /p:Configuration=Release /p:Platform
 
 ```powershell
 ./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.sh           # Linux/macOS (uses the optional CMake build)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+The demo builds if needed, runs on `data/sample/lj_sample.txt`, prints the result,
+shows the GPU-vs-CPU agreement check, and prints a timing line (on stderr).
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
+- **Sample (committed):** `data/sample/lj_sample.txt` — a tiny **synthetic**
+  Lennard-Jones fluid (27 atoms) so the demo runs offline with zero downloads.
+- **Generate / scale:** `python scripts/make_synthetic.py [--side 8]`.
+- **Pointers to real data:** `scripts/download_data.ps1` / `.sh` (idempotent; print
+  the production force-field links, never bypass any registration).
+- **Provenance, units, license:** see [data/README.md](data/README.md).
 
-Catalog dataset notes: CHARMM36m force-field parameter set — comprehensive parameters for proteins, lipids, nucleic acids and carbohydrates (https://mackerell.umaryland.edu/charmm_ff.shtml); AMBER ff19SB — protein force field with improved backbone torsion potentials (https://ambermd.org); GPCRmd database — curated MD trajectories of GPCR proteins (https://gpcrmd.org); MoDEL — molecular dynamics extended library of protein simulations (https://mmb.irbbarcelona.org/MoDEL/).
+This engine teaches the LJ force field, so the synthetic fluid is the intended
+input; real biomolecular MD instead reads CHARMM36m / AMBER ff19SB force fields and
+structures (links in `data/README.md`).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt). The
+program integrates the **same** trajectory on the **GPU** (`src/kernels.cu`) and a
+**CPU reference** (`src/reference_cpu.cpp`) and asserts their observables agree
+within a documented tolerance — that agreement, together with **energy
+conservation** (relative drift ≈ `2.5e-8`), is the correctness guarantee. Sample
+result:
+
+```
+E0          = -103.417311
+E_final     = -103.417308
+max |dE|    = 2.534680e-06
+rel drift   = 2.450924e-08
+RESULT: PASS (GPU matches CPU: dE<=1.0e-06, dchksum<=1.0e-04)
+```
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/md.h`](src/md.h) — the shared `__host__ __device__` physics: LJ
+   force/energy, minimum image, the Verlet helpers. **Start here** — both the CPU
+   and GPU call this, which is why their results match.
+2. [`src/main.cu`](src/main.cu) — loads the system, runs CPU + GPU, verifies, reports.
+3. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial velocity-
+   Verlet driver and the file loader.
+4. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface and the tiling idea.
+5. [`src/kernels.cu`](src/kernels.cu) — the tiled all-pairs force kernel + the
+   kick/drift kernels + the device-side integration loop.
+6. [`src/util/`](src/util/) — shared `CUDA_CHECK`, the CUDA-event timer, I/O helpers.
 
 ## Prior art & further reading
 
-GROMACS (https://github.com/gromacs/gromacs) — production-grade GPU-accelerated MD engine with CUDA/HIP/SYCL backends; OpenMM (https://github.com/openmm/openmm) — Python-scriptable MD toolkit with CUDA, OpenCL, and CPU platforms; NAMD (https://www.ks.uiuc.edu/Research/namd/) — scalable MD with multi-GPU support via CUDA; AMBER pmemd.cuda (https://ambermd.org/GPUSupport.php) — highly optimized GPU MD engine for AMBER force fields.
+- **GROMACS** (https://github.com/gromacs/gromacs) — production GPU MD; study its
+  non-bonded kernels and neighbour search.
+- **OpenMM** (https://github.com/openmm/openmm) — clean, documented CUDA platform;
+  great for seeing how PME, constraints, and thermostats are organized.
+- **NAMD** (https://www.ks.uiuc.edu/Research/namd/) — scalable multi-GPU MD; study
+  its domain decomposition.
+- **AMBER `pmemd.cuda`** (https://ambermd.org/GPUSupport.php) — highly optimized GPU
+  engine for AMBER force fields.
 
 Study these to learn the production approach; **do not copy code wholesale** —
 reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-cuFFT for PME reciprocal sum, custom CUDA kernels for pairwise force evaluation, thrust for sorted neighbor list, NCCL for multi-GPU halo exchange; pattern is data-parallel threadblocks over atom pairs with shared-memory reductions. --
+**Custom all-pairs force kernel with shared-memory tiling** (the n-body pattern):
+one thread per atom, positions staged through shared memory and reused block-wide;
+plain O(N) thread-per-atom kernels for the velocity/position updates. Energy is
+reduced **deterministically** (per-atom array summed in fixed order on the host) so
+stdout is reproducible. Production MD layers cuFFT (PME), Thrust/CUB (neighbour
+lists), and NCCL (multi-GPU) on top — out of scope here, described in THEORY §7.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Scale it up.** Generate a 512-atom system (`make_synthetic.py --side 8`) and
+   watch the GPU/CPU timing gap on stderr change — the O(N²) GPU win grows with N.
+2. **Single vs double precision.** Switch `Vec3` and `md.h` to `float` and observe
+   the energy drift worsen; explain why MD needs FP64 (THEORY §5).
+3. **Add a neighbour list.** Replace the all-pairs loop with a cell list so only
+   pairs within `rcut` are visited, taking the per-step cost from O(N²) to O(N).
+4. **Shift the potential at the cutoff.** The raw cutoff makes U discontinuous at
+   `rcut`; add the energy/force shift production codes use and see the drift improve.
+5. **Add a thermostat.** Implement simple velocity rescaling to hold a target
+   temperature, turning the constant-energy run into a constant-temperature one.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced scope on purpose.** One non-bonded term (Lennard-Jones) only — no bonds,
+  angles, dihedrals, or electrostatics/PME. A full biomolecular force field is much
+  larger (THEORY §7).
+- **`O(N²)` direct force sum**, not a neighbour list, so it does not scale to the
+  millions of atoms a production run handles. This is a deliberate teaching choice.
+- **Synthetic data.** The committed sample is a synthetic LJ fluid, labeled
+  synthetic everywhere; it models a noble-gas-like fluid, **not** a biomolecule, and
+  carries **no clinical meaning**.
+- **Not bit-identical CPU↔GPU.** GPU FMA and summation order differ from the serial
+  CPU; we verify to a small, documented physical tolerance and explain why
+  (THEORY §5). Timings are teaching artifacts, never benchmark claims.

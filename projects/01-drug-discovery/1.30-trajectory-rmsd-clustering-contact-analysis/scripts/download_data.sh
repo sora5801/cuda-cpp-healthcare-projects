@@ -2,11 +2,12 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 1.30 -- Trajectory RMSD, Clustering & Contact Analysis   (template skeleton)
+# Project 1.30 : Trajectory RMSD, Clustering & Contact Analysis
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md sec 8): idempotent, documented, prints the source URLs +
+# how to fetch, and NEVER bypasses credentials/registration. The demo runs fully
+# offline on the committed synthetic sample, so this script only prints guidance
+# and pointers to the real molecular-dynamics trajectory archives.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,24 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.30 -- Trajectory RMSD, Clustering & Contact Analysis"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    MDCATH trajectory dataset (https://huggingface.co/datasets/compsciencelab/mdcath); PDB trajectory depositions; GPCRmd (https://gpcrmd.org); MDDB (https://www.mddbr.eu) — molecular dynamics database."
+echo "The committed sample (data/sample/trajectory_sample.txt) is SYNTHETIC and is"
+echo "all the demo needs -- no download is required to build, run, or verify."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Real molecular-dynamics trajectories to analyze with the same pipeline"
+echo "(you will need to adapt the loader to the real file format + atom count):"
+echo "  * MDCATH  (curated all-atom trajectories):"
+echo "        https://huggingface.co/datasets/compsciencelab/mdcath"
+echo "  * GPCRmd  (GPCR molecular-dynamics database):  https://gpcrmd.org"
+echo "  * MDDB    (molecular-dynamics database):       https://www.mddbr.eu"
+echo "  * PDB trajectory depositions (RCSB / PDB-Dev): https://www.rcsb.org"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
+echo "These archives may require account registration and carry their own licenses."
+echo "Respect every license; this script does NOT attempt to bypass any login."
+echo
+echo "For a larger SYNTHETIC trajectory (no download, fully offline), run:"
+echo "    python scripts/make_synthetic.py --frames 100000"
+echo
+echo "When wiring a real dataset, follow this idempotent pattern:"
+echo "    1) skip the download if the file already exists with the right checksum"
+echo "    2) print the source URL + expected size + SHA256"
 echo "    3) for credentialed sets, print registration instructions ONLY"

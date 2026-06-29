@@ -1,33 +1,44 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Fetch / point at the FULL dataset (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 1.1 -- Molecular Dynamics Engine   (template skeleton)
+# Project 1.1 : Molecular Dynamics Engine  (reduced-scope teaching version)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. This teaching engine runs on a SYNTHETIC
+# Lennard-Jones fluid (data/sample/lj_sample.txt) and needs no external download,
+# so this script just ensures the synthetic sample exists and prints pointers to
+# the real force fields a production engine would consume.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="$PROJECT_ROOT/data"
+SAMPLE="$DATA_DIR/sample/lj_sample.txt"
 
 echo "[download_data] Project 1.1 -- Molecular Dynamics Engine"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
 
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    CHARMM36m force-field parameter set — comprehensive parameters for proteins, lipids, nucleic acids and carbohydrates (https://mackerell.umaryland.edu/charmm_ff.shtml); AMBER ff19SB — protein force field with improved backbone torsion potentials (https://ambermd.org); GPCRmd database — curated MD trajectories of GPCR proteins (https://gpcrmd.org); MoDEL — molecular dynamics extended library of protein simulations (https://mmb.irbbarcelona.org/MoDEL/)."
+# (a) Idempotent: regenerate the tiny synthetic sample only if it is missing.
+if [[ -f "$SAMPLE" ]]; then
+  echo "[download_data] Synthetic sample already present: $SAMPLE"
+else
+  echo "[download_data] Generating synthetic sample ..."
+  python "$(dirname "${BASH_SOURCE[0]}")/make_synthetic.py"
+fi
+
+# (b) Pointers to the real force fields / trajectory libraries (study material).
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "This engine is a teaching model of the Lennard-Jones force field, so it"
+echo "runs entirely on the committed SYNTHETIC sample -- no download required."
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Production biomolecular MD instead reads these (do NOT commit them here):"
+echo "  CHARMM36m force field  : https://mackerell.umaryland.edu/charmm_ff.shtml"
+echo "  AMBER ff19SB           : https://ambermd.org"
+echo "  GPCRmd trajectories    : https://gpcrmd.org"
+echo "  MoDEL protein library  : https://mmb.irbbarcelona.org/MoDEL/"
+echo
+echo "For a larger SYNTHETIC system (e.g. 512 atoms), run:"
+echo "    python scripts/make_synthetic.py --side 8"

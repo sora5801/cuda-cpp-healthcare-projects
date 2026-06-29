@@ -1,12 +1,12 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 1.30 -- Trajectory RMSD, Clustering & Contact Analysis   (template skeleton)
+# Project 1.30 : Trajectory RMSD, Clustering & Contact Analysis
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md sec 8): idempotent, documented, prints the source URLs +
+# how to fetch, and NEVER bypasses credentials/registration. The demo runs fully
+# offline on the committed synthetic sample, so this script only prints guidance
+# and pointers to the real molecular-dynamics trajectory archives.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,25 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.30 -- Trajectory RMSD, Clustering & Contact Analysis"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    MDCATH trajectory dataset (https://huggingface.co/datasets/compsciencelab/mdcath); PDB trajectory depositions; GPCRmd (https://gpcrmd.org); MDDB (https://www.mddbr.eu) — molecular dynamics database."
+Write-Host "The committed sample (data/sample/trajectory_sample.txt) is SYNTHETIC and is"
+Write-Host "all the demo needs -- no download is required to build, run, or verify."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real molecular-dynamics trajectories to analyze with the same pipeline"
+Write-Host "(you will need to adapt the loader to the real file format + atom count):"
+Write-Host "  * MDCATH  (curated all-atom trajectories):"
+Write-Host "        https://huggingface.co/datasets/compsciencelab/mdcath"
+Write-Host "  * GPCRmd  (GPCR molecular-dynamics database):  https://gpcrmd.org"
+Write-Host "  * MDDB    (molecular-dynamics database):       https://www.mddbr.eu"
+Write-Host "  * PDB trajectory depositions (RCSB / PDB-Dev): https://www.rcsb.org"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
+Write-Host "These archives may require account registration and carry their own licenses."
+Write-Host "Respect every license; this script does NOT attempt to bypass any login."
+Write-Host ""
+Write-Host "For a larger SYNTHETIC trajectory (no download, fully offline), run:"
+Write-Host "    python scripts/make_synthetic.py --frames 100000"
+Write-Host ""
+Write-Host "When wiring a real dataset, follow this idempotent pattern:"
+Write-Host "    1) skip the download if the file already exists with the right checksum"
+Write-Host "    2) print the source URL + expected size + SHA256"
 Write-Host "    3) for credentialed sets, print registration instructions ONLY"

@@ -1,5 +1,9 @@
 1.13 -- Pharmacophore & 3D Shape Screening
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Gaussian shape screen: query (7 atoms) vs 9 library conformers
+top-5 by Shape Tanimoto:
+  #1  lib_00_self  ShapeTanimoto = 1.000000
+  #2  lib_01_jitter  ShapeTanimoto = 0.983953
+  #3  lib_02_shift05  ShapeTanimoto = 0.942894
+  #4  lib_04_rot  ShapeTanimoto = 0.930734
+  #5  lib_05_grow  ShapeTanimoto = 0.864093
+RESULT: PASS (GPU matches CPU within tol=1.0e-09)

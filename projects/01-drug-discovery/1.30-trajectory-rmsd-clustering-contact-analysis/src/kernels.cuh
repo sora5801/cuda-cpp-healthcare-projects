@@ -1,52 +1,52 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for trajectory RMSD + contacts
 // ---------------------------------------------------------------------------
-// Project 1.30 -- Trajectory RMSD, Clustering & Contact Analysis   (template skeleton)
+// Project 1.30 : Trajectory RMSD, Clustering & Contact Analysis
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   Analyzing F frames of a trajectory is F INDEPENDENT jobs: frame f's RMSD to
+//   the reference and its native-contact fraction Q depend only on frame f and
+//   the (shared) reference frame -- never on any other frame. So we give each
+//   frame its OWN GPU thread, exactly the "independent jobs" pattern from the
+//   1.12 fingerprint search (PATTERNS.md sec 1). The per-thread work here is a
+//   small dense computation -- build a 3x3 covariance, solve a 4x4 eigenvalue by
+//   QCP, sweep N^2 atom pairs -- all living in rmsd_core.h so the device thread
+//   and the CPU reference run byte-identical math.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The reference frame is read by EVERY thread but never changes during the
+//   launch, so it is the textbook candidate for CONSTANT memory (its broadcast
+//   cache hands one address to a whole warp in a single transaction). That is
+//   the teaching point this header sets up; the kernel in kernels.cu reads the
+//   reference from a __constant__ buffer rather than a kernel parameter.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   This header is included only by .cu units; it pulls in reference_cpu.h for
+//   the Trajectory type and rmsd_core.h (transitively) for N_ATOMS.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, reference_cpu.h,
+//   rmsd_core.h. Then read kernels.cu. The GPU mapping is in ../THEORY.md.
 // ===========================================================================
 #pragma once
 
-#include <vector>
+#include "reference_cpu.h"   // Trajectory, FrameMetrics, N_ATOMS (pure C++)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Device kernel: one thread per frame.
+//   d_coords  : [n_frames * N_ATOMS * 3] device array of all frames (frame-major)
+//   n_frames  : number of frames
+//   native_total : native-contact count of the reference frame (precomputed on
+//                  the host so every thread divides Q by the same integer)
+//   d_rmsd    : [n_frames] output, per-frame optimal-superposition RMSD
+//   d_qnc     : [n_frames] output, per-frame native-contact fraction (0..1)
+// The reference frame is NOT a parameter -- it is read from the __constant__
+// symbol uploaded by analyze_trajectory_gpu().
+__global__ void analyze_frames_kernel(const double* __restrict__ d_coords,
+                                      int n_frames, int native_total,
+                                      double* __restrict__ d_rmsd,
+                                      double* __restrict__ d_qnc);
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Host wrapper: uploads the reference frame to constant memory and all frames to
+// global memory, launches the kernel (one thread per frame), times ONLY the
+// kernel with CUDA events, and copies the per-frame metrics back.
+//   traj       : the loaded trajectory (frames + which one is the reference)
+//   out        : out.rmsd / out.qnc each resized to traj.n_frames and filled
+//   kernel_ms  : out-param, GPU-measured kernel time in milliseconds
+void analyze_trajectory_gpu(const Trajectory& traj, FrameMetrics& out, float* kernel_ms);

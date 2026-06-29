@@ -1,94 +1,127 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Per-frame trajectory analysis kernel + host wrapper
 // ---------------------------------------------------------------------------
-// Project 1.30 -- Trajectory RMSD, Clustering & Contact Analysis   (template skeleton)
+// Project 1.30 : Trajectory RMSD, Clustering & Contact Analysis
 //
 // WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
+//   Implements analyze_frames_kernel (one thread per frame) and the host glue
+//   analyze_trajectory_gpu (upload reference -> constant memory, upload frames
+//   -> global memory, launch, time, copy back). It is the GPU twin of
+//   analyze_trajectory_cpu() in reference_cpu.cpp; both call the SAME per-frame
+//   math from rmsd_core.h, so main.cu's CPU-vs-GPU check is exact to ~1e-9.
 //
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
+//   Teaching points (see ../THEORY.md "GPU mapping"):
+//     * one thread per frame -- independent jobs, the 1.12 pattern;
+//     * the shared reference frame lives in __constant__ memory (broadcast);
+//     * a grid-stride loop lets a modest grid cover an arbitrarily long traj;
+//     * double precision (FP64) throughout, so CPU and GPU agree to ~eps.
 //
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// READ THIS AFTER: kernels.cuh (the interface + the constant-memory idea) and
+//   rmsd_core.h (the math every thread runs).
 // ===========================================================================
 #include "kernels.cuh"
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// ---------------------------------------------------------------------------
+// The REFERENCE frame in CONSTANT memory.
+//   * Every thread reads all N_ATOMS*3 reference coordinates but NONE writes
+//     them, and they are identical for the whole launch -> constant memory is
+//     the ideal home: its hardware cache broadcasts one address to an entire
+//     warp in a single transaction, instead of a global load per thread.
+//   * Size is fixed at compile time (N_ATOMS*3*8 = 384 bytes for N_ATOMS=16),
+//     trivially within the 64 KB constant bank. Filled by cudaMemcpyToSymbol()
+//     in analyze_trajectory_gpu().
+//   * rmsd_core.h's kabsch_rmsd/frac_native_contacts take a `const double*` to
+//     the reference, so we simply pass &c_ref[0] -- the same code runs on the
+//     CPU (where the pointer is into a std::vector) and the GPU (constant mem).
+// ---------------------------------------------------------------------------
+__constant__ double c_ref[N_ATOMS * 3];
+
+// 128 threads/block: a multiple of the 32-lane warp with good occupancy on
+// sm_75..sm_89. Each thread does a fair amount of FP64 work (a 4x4 eigenvalue
+// plus an N^2 contact sweep), so we keep the block modest; the grid-stride loop
+// below handles any number of frames. (See THEORY "GPU mapping" for the
+// occupancy reasoning.)
+static constexpr int THREADS_PER_BLOCK = 128;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// analyze_frames_kernel: one logical thread per frame, via a grid-stride loop so
+// a fixed-size grid still covers an arbitrarily long trajectory.
+//   Thread (blockIdx.x, threadIdx.x) starts at f = block*blockDim + thread and
+//   strides by the total thread count until f >= n_frames.
+//   Memory: c_ref from the constant cache (broadcast); frame f's coordinates
+//   from global memory; two scalar writes (d_rmsd[f], d_qnc[f]). No shared
+//   memory or atomics -- outputs are fully independent.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
+__global__ void analyze_frames_kernel(const double* __restrict__ d_coords,
+                                      int n_frames, int native_total,
+                                      double* __restrict__ d_rmsd,
+                                      double* __restrict__ d_qnc) {
+    const int stride = blockDim.x * gridDim.x;             // total threads in grid
+    for (int f = blockIdx.x * blockDim.x + threadIdx.x; f < n_frames; f += stride) {
+        // Pointer to this frame's first coordinate (frame-major layout). The
+        // same frame_ptr() helper is used by the CPU reference.
+        const double* fr = frame_ptr(d_coords, f);
+        // Both calls are the shared __host__ __device__ math from rmsd_core.h --
+        // IDENTICAL arithmetic to the CPU path. The reference comes from constant
+        // memory (c_ref); kabsch_rmsd/frac_native_contacts don't care where the
+        // pointer points, so no special device variant is needed.
+        d_rmsd[f] = kabsch_rmsd(fr, c_ref);
+        d_qnc[f]  = frac_native_contacts(fr, c_ref, native_total);
     }
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// analyze_trajectory_gpu: the canonical CUDA steps, with the reference frame
+// going to constant memory instead of a global buffer. We time ONLY the kernel
+// (CUDA events), not the H2D/D2H copies (those are discussed in THEORY).
+//
+//   IMPORTANT (determinism): native_total is computed ONCE on the host from the
+//   reference frame and passed in, so every thread divides Q by the identical
+//   integer -- matching the CPU reference exactly. We deliberately do not
+//   recompute it per thread (wasteful and a chance for divergence).
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void analyze_trajectory_gpu(const Trajectory& traj, FrameMetrics& out, float* kernel_ms) {
+    const int n = traj.n_frames;
+    out.rmsd.assign(static_cast<std::size_t>(n), 0.0);
+    out.qnc.assign(static_cast<std::size_t>(n), 0.0);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    const std::size_t coords_bytes = traj.coords.size() * sizeof(double);
+    const std::size_t out_bytes    = static_cast<std::size_t>(n) * sizeof(double);
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // (a) Upload the reference frame to the __constant__ symbol. This is a
+    //     special copy that targets the constant bank rather than ordinary
+    //     global memory. The host computes native_total from the same data.
+    const double* h_ref = frame_ptr(traj.coords.data(), traj.ref);
+    CUDA_CHECK(cudaMemcpyToSymbol(c_ref, h_ref, N_ATOMS * 3 * sizeof(double)));
+    const int native_total = count_native_contacts(h_ref);  // once, on the host
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // (b) Allocate + upload all frames, and allocate the two output arrays.
+    double* d_coords = nullptr;   // [n*N_ATOMS*3] device, frame-major
+    double* d_rmsd   = nullptr;   // [n] device output
+    double* d_qnc    = nullptr;   // [n] device output
+    CUDA_CHECK(cudaMalloc(&d_coords, coords_bytes));
+    CUDA_CHECK(cudaMalloc(&d_rmsd, out_bytes));
+    CUDA_CHECK(cudaMalloc(&d_qnc, out_bytes));
+    CUDA_CHECK(cudaMemcpy(d_coords, traj.coords.data(), coords_bytes, cudaMemcpyHostToDevice));
+
+    // (c) Launch. Enough blocks to cover n frames one-thread-each, but capped so
+    //     the grid stays modest; the grid-stride loop covers any larger n.
+    int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    if (blocks < 1) blocks = 1;
+    if (blocks > 1024) blocks = 1024;   // cap: grid-stride handles the remainder
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    analyze_frames_kernel<<<blocks, THREADS_PER_BLOCK>>>(d_coords, n, native_total,
+                                                         d_rmsd, d_qnc);
+    *kernel_ms = timer.stop_ms();
+    CUDA_CHECK_LAST("analyze_frames_kernel");
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    // (d) Copy the per-frame metrics back, then (e) free device memory.
+    CUDA_CHECK(cudaMemcpy(out.rmsd.data(), d_rmsd, out_bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(out.qnc.data(),  d_qnc,  out_bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_coords));
+    CUDA_CHECK(cudaFree(d_rmsd));
+    CUDA_CHECK(cudaFree(d_qnc));
 }

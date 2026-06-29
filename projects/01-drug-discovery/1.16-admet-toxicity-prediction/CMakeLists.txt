@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.16 -- ADMET / Toxicity Prediction   (template skeleton)
+# Project 1.16 -- ADMET / Toxicity Prediction
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/admet-toxicity-prediction.sln (CLAUDE.md §5). Both

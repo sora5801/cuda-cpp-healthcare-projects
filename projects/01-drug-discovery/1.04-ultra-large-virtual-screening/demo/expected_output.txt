@@ -1,5 +1,10 @@
 1.4 -- Ultra-Large Virtual Screening
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+screened 64 ligands against 1 target (filter cascade + surrogate dock)
+passed drug-likeness cascade: 56 / 64
+top-5 hits (by surrogate score):
+  #1  ligand[3]  score=1540  MW=345  logP=2.42  feat=0x0000A5B3
+  #2  ligand[38]  score=1540  MW=350  logP=2.50  feat=0x0000A5B3
+  #3  ligand[43]  score=1540  MW=355  logP=2.58  feat=0x0000A5B3
+  #4  ligand[58]  score=1538  MW=360  logP=2.66  feat=0x0000A5B3
+  #5  ligand[1]  score=1461  MW=272  logP=1.99  feat=0x007EBFF2
+RESULT: PASS (GPU matches CPU exactly)

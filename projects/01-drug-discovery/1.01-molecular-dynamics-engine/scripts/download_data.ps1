@@ -1,33 +1,43 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Fetch / point at the FULL dataset (Windows)
 # ---------------------------------------------------------------------------
-# Project 1.1 -- Molecular Dynamics Engine   (template skeleton)
+# Project 1.1 : Molecular Dynamics Engine  (reduced-scope teaching version)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. This teaching engine runs on a
+# SYNTHETIC Lennard-Jones fluid (data/sample/lj_sample.txt) and needs no external
+# download, so this script just (a) ensures the synthetic sample exists and (b)
+# prints pointers to the real force fields a production engine would consume.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $DataDir = Join-Path $ProjectRoot "data"
+$Sample  = Join-Path $DataDir "sample\lj_sample.txt"
 
 Write-Host "[download_data] Project 1.1 -- Molecular Dynamics Engine"
 Write-Host "[download_data] Target data dir: $DataDir"
+Write-Host ""
 
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
+# (a) Idempotent: regenerate the tiny synthetic sample only if it is missing.
+if (Test-Path $Sample) {
+    Write-Host "[download_data] Synthetic sample already present: $Sample"
+} else {
+    Write-Host "[download_data] Generating synthetic sample ..."
+    python (Join-Path $PSScriptRoot "make_synthetic.py")
+}
+
+# (b) Pointers to the real force fields / trajectory libraries (study material).
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    CHARMM36m force-field parameter set — comprehensive parameters for proteins, lipids, nucleic acids and carbohydrates (https://mackerell.umaryland.edu/charmm_ff.shtml); AMBER ff19SB — protein force field with improved backbone torsion potentials (https://ambermd.org); GPCRmd database — curated MD trajectories of GPCR proteins (https://gpcrmd.org); MoDEL — molecular dynamics extended library of protein simulations (https://mmb.irbbarcelona.org/MoDEL/)."
+Write-Host "This engine is a teaching model of the Lennard-Jones force field, so it"
+Write-Host "runs entirely on the committed SYNTHETIC sample -- no download required."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Production biomolecular MD instead reads these (do NOT commit them here):"
+Write-Host "  CHARMM36m force field  : https://mackerell.umaryland.edu/charmm_ff.shtml"
+Write-Host "  AMBER ff19SB           : https://ambermd.org"
+Write-Host "  GPCRmd trajectories    : https://gpcrmd.org"
+Write-Host "  MoDEL protein library  : https://mmb.irbbarcelona.org/MoDEL/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "For a larger SYNTHETIC system (e.g. 512 atoms), run:"
+Write-Host "    python scripts/make_synthetic.py --side 8"

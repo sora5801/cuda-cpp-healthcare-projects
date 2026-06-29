@@ -1,11 +1,12 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.31 -- Solvent-Accessible Surface Area (SASA) on GPU   (template skeleton)
+# Project 1.31 : Solvent-Accessible Surface Area (SASA) on GPU
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/solvent-accessible-surface-area-sasa-on-gpu.sln (CLAUDE.md §5). Both
-# compile the SAME src/ files, so they stay in lockstep.
+# compile the SAME src/ files, so they stay in lockstep. No extra CUDA library is
+# linked: SASA is pure compute (only the CUDA runtime is needed).
 #
 #   cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build/cmake

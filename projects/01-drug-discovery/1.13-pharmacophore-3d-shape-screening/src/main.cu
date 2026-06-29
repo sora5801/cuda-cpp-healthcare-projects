@@ -1,122 +1,120 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load conformers, screen, verify, report
 // ---------------------------------------------------------------------------
-// Project 1.13 -- Pharmacophore & 3D Shape Screening   (template skeleton)
+// Project 1.13 : Pharmacophore & 3D Shape Screening
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// The 5-step shape every project in this repo follows:
+//   1. Load the problem (a query + n library conformers from data/sample).
+//   2. CPU reference  (reference_cpu.cpp)  -> trusted Shape Tanimoto scores.
+//   3. GPU screen     (kernels.cu)         -> the thing being taught.
+//   4. VERIFY: GPU agrees with CPU within tolerance.
+//   5. REPORT: deterministic top-K ranking to stdout; timing + error to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// STDOUT is byte-for-byte deterministic (diffed by demo/run_demo against
+// demo/expected_output.txt); run-to-run timings go to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then shape_overlap.h (the physics), kernels.cuh ->
+// kernels.cu (the GPU side), then reference_cpu.* (the baseline + loader).
 // ===========================================================================
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <numeric>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // shape_screen_gpu, ConformerSet, Molecule
+#include "reference_cpu.h"    // load_conformers, shape_tanimoto_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "1.13";
 static const char* PROJECT_NAME = "Pharmacophore & 3D Shape Screening";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Tolerance: CPU and GPU run the IDENTICAL double-precision physics in the
+// IDENTICAL loop order (shape_overlap.h). The only possible difference is FMA
+// contraction (the device may fuse a*b+c where the host does not), which is a
+// ~1e-12 relative effect on a short sum. 1e-9 (absolute, on scores in [0,1]) is
+// a generous, honest floor that this difference never reaches. See THEORY sec 6.
+static constexpr double TOLERANCE = 1.0e-9;
+static constexpr int    TOP_K     = 5;       // how many best hits to report
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
+// max_abs_err for DOUBLE arrays (util::max_abs_err is float-only). Returns
+// +infinity on a length mismatch so a shape bug cannot masquerade as agreement.
+static double max_abs_err_d(const std::vector<double>& a, const std::vector<double>& b) {
+    if (a.size() != b.size()) return std::numeric_limits<double>::infinity();
+    double worst = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        double d = std::fabs(a[i] - b[i]);
+        if (d > worst) worst = d;
     }
+    return worst;
 }
 
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// Return the indices of the TOP_K largest scores, ties broken by lower index
+// (so the ranking is deterministic). Uses partial_sort on an index vector.
+static std::vector<int> top_k(const std::vector<double>& score, int k) {
+    std::vector<int> idx(score.size());
+    std::iota(idx.begin(), idx.end(), 0);                 // 0,1,2,...,n-1
+    const int kk = std::min<int>(k, static_cast<int>(idx.size()));
+    std::partial_sort(idx.begin(), idx.begin() + kk, idx.end(),
+        [&](int a, int b) {
+            if (score[a] != score[b]) return score[a] > score[b];  // higher first
+            return a < b;                                          // tie -> lower idx
+        });
+    idx.resize(kk);
+    return idx;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/conformers_sample.txt";
+    ConformerSet set;
+    try {
+        set = load_conformers(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<double> score_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    shape_tanimoto_cpu(set, score_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU screen (kernel timed inside the wrapper) ------------------
+    std::vector<double> score_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    shape_screen_gpu(set, score_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify ---------------------------------------------------------
+    const double err  = max_abs_err_d(score_cpu, score_gpu);
+    const bool   pass = err <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    // We print the GPU scores (verified equal to the CPU's) at FIXED 6-decimal
+    // precision so the output is byte-identical run to run.
+    const std::vector<int> best = top_k(score_gpu, TOP_K);
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("Gaussian shape screen: query (%d atoms) vs %d library conformers\n",
+                set.query.n_atoms, set.n);
+    std::printf("top-%d by Shape Tanimoto:\n", static_cast<int>(best.size()));
+    for (std::size_t r = 0; r < best.size(); ++r) {
+        const int k = best[r];
+        std::printf("  #%zu  %-10s  ShapeTanimoto = %.6f\n",
+                    r + 1, set.name[static_cast<std::size_t>(k)].c_str(), score_gpu[k]);
+    }
+    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-09)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (query=%d atoms, n=%d conformers)\n",
+                 path.c_str(), set.query.n_atoms, set.n);
     std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- this tiny sample is dominated by "
+                         "launch/copy overhead; the GPU wins at library scale (millions of conformers).\n");
+    std::fprintf(stderr, "[verify] max_abs_err = %.3e  (tolerance %.1e)\n", err, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

@@ -1,12 +1,14 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 1.4 -- Ultra-Large Virtual Screening   (template skeleton)
+# Project 1.4 : Ultra-Large Virtual Screening
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs +
+# the recipe, and NEVER bypasses credentials/registration. Real screening
+# libraries are huge and license-bound, so this script does NOT auto-download a
+# multi-billion-compound set; it prints the RDKit recipe to turn a SMILES list
+# into this project's descriptor format, and defers to make_synthetic.py for an
+# offline stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +18,27 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.4 -- Ultra-Large Virtual Screening"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Enamine REAL library — >6B synthesizable compounds (https://enamine.net/compound-collections/real-compounds); ZINC20 — free virtual screening database (https://zinc20.docking.org); ChEMBL — bioactivity reference (https://www.ebi.ac.uk/chembl/); ExCAPE-DB — large-scale public chemogenomics dataset (https://solr.ideaconsult.net/search/excape/)."
+Write-Host "Real virtual-screening libraries (descriptors + features):"
+Write-Host "  Enamine REAL  >6B make-on-demand : https://enamine.net/compound-collections/real-compounds"
+Write-Host "  ZINC20        ~2B purchasable     : https://zinc20.docking.org"
+Write-Host "  ChEMBL        bioactivity ref     : https://www.ebi.ac.uk/chembl/"
+Write-Host "  ExCAPE-DB     chemogenomics       : https://solr.ideaconsult.net/search/excape/"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "These sets are huge and license-bound -- download a SMILES subset from the"
+Write-Host "links above (respect each license), then compute this project's columns with"
+Write-Host "RDKit (mw logp_x100 hbd hba rotb psa feat_hex):"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  from rdkit import Chem"
+Write-Host "  from rdkit.Chem import Descriptors, Lipinski, rdMolDescriptors"
+Write-Host "  m = Chem.MolFromSmiles(smiles)"
+Write-Host "  mw   = round(Descriptors.MolWt(m))"
+Write-Host "  logp = round(Descriptors.MolLogP(m) * 100)"
+Write-Host "  hbd  = Lipinski.NumHDonors(m);  hba = Lipinski.NumHAcceptors(m)"
+Write-Host "  rotb = Descriptors.NumRotatableBonds(m)"
+Write-Host "  psa  = round(Descriptors.TPSA(m))"
+Write-Host "  # feat = a 32-bit pharmacophore/Morgan bitmask folded to 32 bits"
+Write-Host ""
+Write-Host "The committed tiny sample in data/sample/ is enough to run the demo."
+Write-Host "For a larger SYNTHETIC problem (no download, fully offline), run:"
+Write-Host "    python scripts/make_synthetic.py --n 1000000"

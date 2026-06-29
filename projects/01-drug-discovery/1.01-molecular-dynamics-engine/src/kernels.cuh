@@ -1,52 +1,47 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU molecular-dynamics interface (declarations + idea)
 // ---------------------------------------------------------------------------
-// Project 1.1 -- Molecular Dynamics Engine   (template skeleton)
+// Project 1.1 : Molecular Dynamics Engine  (reduced-scope teaching version)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (the all-pairs N-body force pattern)
+//   The cost of MD is dominated by the FORCE EVALUATION: computing, every step,
+//   the force on each atom from every other atom. For N atoms that is N*(N-1)
+//   pairwise interactions -- an O(N^2) sum that is "embarrassingly parallel" in
+//   the index i: the force on atom i is INDEPENDENT of the force on atom k. So we
+//   give EACH ATOM ITS OWN GPU THREAD: thread i loops over all j, accumulating its
+//   own total force in registers, then we kick/drift it. This is the classic
+//   GPU N-body mapping (the same shape as the famous CUDA n-body sample).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   To avoid hammering global memory -- a naive kernel would read all N positions
+//   from DRAM for every one of the N threads, i.e. N^2 global loads -- we TILE the
+//   j-loop through SHARED MEMORY: each block cooperatively loads a tile of
+//   positions once, all its threads reuse that tile, then we advance to the next
+//   tile. This cuts global traffic to ~N^2/TILE and is the single most important
+//   optimization here (see THEORY §GPU mapping; mirrors PATTERNS.md tiling idea).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   The per-pair physics + the Verlet kicks come from md.h, the SAME header the
+//   CPU reference uses, so the GPU trajectory matches the CPU one to round-off.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, md.h, reference_cpu.h.
+//   Then read kernels.cu for the implementation.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // MdSystem, MdResult, SimParams (all pure C++)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// ---------------------------------------------------------------------------
+// integrate_gpu: run the whole velocity-Verlet simulation on the GPU and return
+//   the same MdResult the CPU reference produces, so main.cu can compare them.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   sys       : the initial system (parameters + initial positions/velocities).
+//               Not modified (its pos/vel are copied to the device).
+//   kernel_ms : out-param; total milliseconds spent in the integration kernels
+//               (CUDA-event measured), reported as a teaching artifact on stderr.
+//
+//   All CUDA bookkeeping (allocate, copy, launch, free) is hidden inside; main.cu
+//   stays clean and just calls this. Implementation + the device kernels live in
+//   kernels.cu.
+// ---------------------------------------------------------------------------
+MdResult integrate_gpu(const MdSystem& sys, float* kernel_ms);

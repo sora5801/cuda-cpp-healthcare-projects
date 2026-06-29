@@ -2,8 +2,8 @@
   "id": "1.1",
   "id_padded": "1.01",
   "project": "Molecular Dynamics Engine",
-  "status": "todo",
-  "owner": "",
-  "branch": "",
+  "status": "done",
+  "owner": "worker",
+  "branch": "main",
   "skeleton": true
 }

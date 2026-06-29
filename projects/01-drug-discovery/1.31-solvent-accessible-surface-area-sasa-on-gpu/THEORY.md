@@ -1,87 +1,252 @@
 # THEORY — 1.31 Solvent-Accessible Surface Area (SASA) on GPU
 
 > The deep didactic explanation (the "why"). Written for a sharp student who
-> knows C++ but is new to CUDA and new to this domain. Diagrams in Mermaid/ASCII
-> are welcome. See [README.md](README.md) for the quick tour and build steps.
+> knows C++ but is new to CUDA and new to this domain. See [README.md](README.md)
+> for the quick tour and build steps.
 >
 > _Educational only — not for clinical use._
-
-<!-- =======================================================================
-     The block below is the verbatim catalog deep-dive for this project,
-     stamped in by scaffold.py as raw material. Use it to write the sections
-     that follow, then DELETE it (or fold it into "The science"). Every
-     TODO(theory) below must be completed before the project is "done".
-     ======================================================================= -->
-
-<details>
-<summary>Catalog deep-dive (raw source material — fold into the sections below, then remove)</summary>
-
-### 1.31 Solvent-Accessible Surface Area (SASA) on GPU 🟢 · Established
-
-- **Deep dive:** SASA measures the protein or ligand surface area accessible to solvent, used in solvation energy estimation, buried surface analysis for protein-protein interfaces, and GB implicit solvent models. Shrake-Rupley algorithm uses a grid of test points per atom — embarrassingly parallel over atoms. GPU implementation computes neighbor lists, tests points for burial, and accumulates per-atom SASA in parallel. GPU-SASA is critical in MM-GBSA workflows where SASA must be evaluated for every trajectory snapshot.
-- **Key algorithms:** Shrake-Rupley point grid algorithm, LCPO (linear combination of pairwise overlaps), numerical surface integration, buried SASA for interface area, hydrophobic patch detection.
-- **Datasets:** PDB protein structures (https://www.rcsb.org); ASA benchmark set for validation (verify URL); MD trajectory ensembles for SASA time series.
-- **Starter repos/tools:** FreeSASA (https://github.com/mittinatten/freesasa) — fast open SASA library; AMBER SASA via pmemd (https://ambermd.org); MDTraj SASA (https://github.com/mdtraj/mdtraj) — GPU-friendly SASA computation; Biopython SASA (https://github.com/biopython/biopython) — Python SASA utilities.
-- **CUDA libraries & GPU pattern:** CUDA threadblocks over atoms; shared memory for neighbor coordinates; warp reduction for test-point counting; GPU-parallel shrake-rupley with texture memory for neighbor lookup.
-
-</details>
 
 ---
 
 ## 1. The science
 
-TODO(theory): The biology / medicine / physics being modeled — enough for a
-reader to understand the *problem* before any math. What real-world question
-does computing this answer?
+Proteins and ligands live in water. How a molecule behaves — how it folds, how
+tightly two proteins bind, how a drug partitions between water and a binding
+pocket — depends heavily on **which parts of its surface the water can reach**.
+
+The **solvent-accessible surface area (SASA)** makes this precise. Imagine
+rolling a ball the size of a water molecule (radius ≈ 1.4 Å) over the molecule's
+atoms. The surface traced by the **centre** of that ball is the *solvent-
+accessible surface*; its area, per atom and in total, is the SASA. (A closely
+related quantity, the *molecular* or *solvent-excluded* surface, tracks the ball's
+**contact** point instead — see §7.)
+
+Why it matters:
+
+- **Solvation energy.** Non-polar solvation free energy is, to first order,
+  proportional to non-polar SASA (the "γ·SASA" surface-tension term in implicit
+  solvent). Polar SASA feeds the polar/electrostatic term.
+- **Implicit solvent (GB/SA, MM-GBSA).** Generalized-Born + Surface-Area models
+  replace explicit water with a continuum; the **SA** part is literally SASA, and
+  it must be recomputed for **every** snapshot of a molecular-dynamics trajectory
+  — thousands of frames — which is why a fast GPU SASA is valuable.
+- **Interfaces and hot spots.** The **buried** SASA when two proteins dock (total
+  SASA of the parts minus SASA of the complex) measures interface size; per-atom
+  SASA highlights exposed hydrophobic patches that drive aggregation or binding.
 
 ## 2. The math
 
-TODO(theory): The governing equations / formal problem statement, with **every
-symbol defined** (units, ranges). State inputs, outputs, and the objective.
+**Inputs.** A molecule of `n` atoms. Atom `i` has a centre
+**cᵢ** = (xᵢ, yᵢ, zᵢ) in Ångström and a van der Waals radius `rᵢ` (Å). A probe
+radius `rₚ` = 1.4 Å (water).
+
+**Inflated radius.** Each atom's solvent-accessible sphere has radius
+
+&nbsp;&nbsp;&nbsp;&nbsp;`Rᵢ = rᵢ + rₚ`.
+
+A point on atom `i`'s accessible sphere is *accessible* (reachable by the probe
+centre) iff it is **not inside any other atom's accessible sphere**:
+
+&nbsp;&nbsp;&nbsp;&nbsp;point **p** is accessible ⇔ for all `j ≠ i`: ‖**p** − **cⱼ**‖ ≥ `Rⱼ`.
+
+**Per-atom SASA (exact integral).** The accessible area of atom `i` is the area of
+the portion of its sphere of radius `Rᵢ` that satisfies the condition above:
+
+&nbsp;&nbsp;&nbsp;&nbsp;`SASAᵢ = ∫_{Sᵢ} 1[ p accessible ] dA`,
+
+where `Sᵢ` is the sphere of radius `Rᵢ` centred at **cᵢ**. The total is
+`SASA = Σᵢ SASAᵢ`.
+
+**Shrake–Rupley discretization.** We cannot integrate over the sphere
+analytically once neighbours overlap, so we **sample**. Put `P` test points
+`{ûₖ}` spread uniformly on the unit sphere; test point `k` of atom `i` sits at
+
+&nbsp;&nbsp;&nbsp;&nbsp;**pᵢₖ** = **cᵢ** + `Rᵢ` · ûₖ.
+
+If `Eᵢ` of the `P` points are accessible, the area estimate is
+
+&nbsp;&nbsp;&nbsp;&nbsp;`SASAᵢ ≈ (Eᵢ / P) · 4π Rᵢ²`   (each point represents `4πRᵢ²/P` of area).
+
+The whole computation reduces to the **integer** `Eᵢ` (a count) plus one multiply.
 
 ## 3. The algorithm
 
-TODO(theory): Step-by-step. Include **complexity analysis**: serial cost vs. the
-parallel work/depth. Where is the arithmetic intensity? What is the data-access
-pattern?
+```
+for each atom i:                       # n atoms
+    Ri = r[i] + probe
+    exposed = 0
+    for each test point k in 0..P-1:   # P points (=96)
+        p = c[i] + Ri * unit[k]
+        buried = false
+        for each atom j != i:          # n-1 neighbours
+            if |p - c[j]|^2 < (r[j]+probe)^2:   # squared-distance test
+                buried = true; break
+        if not buried: exposed += 1
+    SASA[i] = exposed * (4*pi*Ri^2 / P)
+total = sum_i SASA[i]
+```
+
+**Uniform points without a table — the Fibonacci lattice.** Classic
+Shrake–Rupley uses a geodesic (subdivided icosahedron) sphere. We instead use the
+**Fibonacci spiral**: point `k` has `z = 1 − (2k+1)/P` and is rotated by the
+golden angle `θ = π(3−√5)·k`. This gives a low-discrepancy, nearly-uniform point
+set with **no lookup table and no poles**, generated by a handful of arithmetic
+ops — ideal for running identically on CPU and GPU (`fib_point` in
+`src/sasa_core.h`).
+
+**Complexity.**
+- Serial: `O(n² · P)` time — every atom × every point × every neighbour.
+- Parallel (this project): the `n` atoms are independent → **work** stays
+  `O(n² · P)` but the **depth** drops to `O(n · P)` (one atom's inner loop), and
+  we run `n` of them concurrently. The arithmetic is cheap (a few subtracts, three
+  multiplies, one compare per (point, neighbour) pair), so the kernel is
+  **memory-bound** on the neighbour coordinates — which is the whole reason for
+  the shared-memory tiling in §4.
 
 ## 4. The GPU mapping
 
-TODO(theory): How the algorithm becomes **threads / blocks / grids**.
-- Thread-to-data mapping (which thread owns which element).
-- Launch configuration and the reasoning (block size, grid size).
-- Memory hierarchy used and **why**: global / shared / registers / constant /
-  texture. Where is the bandwidth bottleneck? What is the occupancy story?
-- Which CUDA library (cuBLAS / cuFFT / cuRAND / cuSOLVER / Thrust) does what,
-  and what it would take to write that step by hand (no black boxes — §6.1.6).
+**Thread-to-data mapping.** One thread owns one atom:
+`i = blockIdx.x · blockDim.x + threadIdx.x` (with a grid-stride loop so a capped
+grid covers any `n`). That thread runs the full point loop for atom `i` and writes
+a single integer `Eᵢ`.
+
+**Launch configuration.** `blockDim.x = 128` — a multiple of the 32-lane warp,
+giving the scheduler four warps per block to hide memory latency, and it doubles
+as the shared-memory **tile size** (one cached atom per thread). Grid =
+`ceil(n / 128)` blocks, capped at 1024 (the grid-stride loop handles the rest).
+
+**Memory hierarchy.**
+
+- **Global memory** holds the `n` atoms (`Atom` = 4 doubles = 32 B). Read by every
+  thread.
+- **Shared memory** caches one **tile** of 128 neighbour atoms (`128 × 32 B = 4
+  KB`). The block cooperatively loads a tile, then *all 128 threads* test their
+  points against that one tile. This is the classic **N-body / all-pairs**
+  optimization: the expensive global load of a neighbour is **shared by the whole
+  block** instead of repeated by every thread, cutting global traffic by ≈
+  `blockDim`. `__syncthreads()` fences keep the tile coherent across the load and
+  the use.
+- **Registers** hold the running `exposed` count and the current test point — no
+  atomics, because each atom's output is independent (no two threads write the
+  same `Eᵢ`).
+
+**No CUDA library is used.** SASA is a hand-written stencil-free all-pairs sweep;
+there is no FFT/GEMM/sort step, so we link only the CUDA runtime. (If you *wanted*
+a neighbour list — Exercise 4 — Thrust/CUB could sort atoms into a uniform grid,
+but the teaching version stays all-pairs for clarity.)
 
 ```
-TODO(theory): an ASCII or Mermaid diagram of the grid/block decomposition.
+            grid (ceil(n/128) blocks)
+   ┌──────────────┬──────────────┬───────────────┐
+   │  block 0     │  block 1     │      ...       │   each thread = one ATOM
+   │ 128 threads  │ 128 threads  │                │
+   └──────────────┴──────────────┴───────────────┘
+            │ inner loop sweeps neighbour TILES through shared memory
+            ▼
+   global atoms  ──load tile──►  __shared__ s_atoms[128]  ──reused by all 128 threads──►
+   (n × 32 B)                    (4 KB, ~100× faster)        test each point vs the tile
 ```
+
+Loop order is **points outer, neighbour-tiles inner**: the tile is reused across
+*threads* (the real bandwidth win), so per-thread register state stays tiny (no
+96-wide local arrays that would spill to slow local memory).
 
 ## 5. Numerical considerations
 
-TODO(theory): Precision (FP32 vs FP64) and why. Stability. Race conditions and
-whether atomics are used. **Determinism**: does the parallel reduction reorder
-floating-point sums? If so, say so and quantify the caveat.
+- **Precision: FP64 throughout.** Coordinates, distances, and the per-point area
+  are doubles. We could use FP32 (faster, less memory), but the **burial decision**
+  is a strict inequality `d² < R²`: a test point grazing a neighbour's surface can
+  flip from exposed to buried under tiny rounding differences. FP64 keeps the CPU
+  and GPU bit-identical on those boundary cases. The trade-off is documented as an
+  exercise.
+- **The deterministic core is an integer.** Each atom's result is a **count**
+  `Eᵢ ∈ {0,…,P}`. Counting is order-independent and exact — there is no
+  floating-point sum *inside* an atom to reorder, so the GPU and CPU produce the
+  **same integer**. (Contrast with a naïve "atomicAdd the area" design, whose
+  float sum would depend on thread scheduling — see PATTERNS.md §3. We avoid that
+  entirely.)
+- **No atomics, no races.** Threads write disjoint outputs `Eᵢ`. The only shared
+  state is the read-only neighbour tile, guarded by `__syncthreads()`.
+- **Uniform control flow for the barrier.** Every thread in a block must reach each
+  `__syncthreads()` the same number of times, so the atom loop bound is rounded up
+  to a multiple of the grid stride; out-of-range threads still help load tiles but
+  compute nothing. A barrier that only some threads reach is undefined behaviour —
+  this is a common, subtle CUDA bug worth seeing handled.
+- **Identical math both sides.** `fib_point`, the squared-distance test, and the
+  area formula live once in `src/sasa_core.h` as `__host__ __device__` inlines, so
+  "the same arithmetic" is guaranteed by construction, not by hope.
 
 ## 6. How we verify correctness
 
-TODO(theory): The CPU reference (`src/reference_cpu.cpp`), the **tolerance** and
-why that value, and the edge cases checked. Explain why agreement between an
-independent serial implementation and the GPU implementation is convincing
-evidence of correctness.
+The CPU reference (`src/reference_cpu.cpp::sasa_cpu`) loops the **same** shared
+functions the kernel calls. `main.cu` then checks two things:
+
+1. **Exact integer agreement.** For every atom, the GPU's exposed-point count must
+   equal the CPU's — `count_mismatches == 0`. Because both sides run identical
+   integer logic, *any* mismatch is a real bug (a memory error, a barrier mistake),
+   not a rounding artefact. This is the strong check.
+2. **Area guard.** The derived per-atom areas must agree within `1e-9 Å²` — far
+   below any physical relevance and below double round-off at these magnitudes.
+   Since the area is one multiply from the (matching) integer, this passes at
+   `0.000e+00` in practice.
+
+Why is "an independent serial implementation agrees with the GPU" convincing? The
+two code paths share only the *math definition*, not the *execution strategy*
+(serial nested loops vs. tiled parallel sweep with barriers). A bug in the GPU's
+indexing, tiling, or synchronization would change a count and be caught
+immediately. The committed sample also embeds a **known answer** (central atom
+buried ≈ 0; lone atoms fully exposed = 96/96), so the demo validates the *science*,
+not merely CPU==GPU.
+
+**Edge cases handled:** the all-zero / isolated atom (every point exposed), the
+ragged last tile (`tile_count` clamps to the remaining atoms), unknown elements
+(fall back to carbon radius with a warning), and the self atom (never buries its
+own points).
 
 ## 7. Where this sits in the real world
 
-TODO(theory): How production tools (named in the catalog "Prior art") do this
-differently — what they add (scale, accuracy, features) that this teaching
-version omits. If this is a 🔴 frontier project shipped as a reduced-scope
-teaching version, describe the full approach here.
+Production SASA tools differ from this teaching version in scale and modelling:
+
+- **Neighbour lists, not all-pairs.** FreeSASA, MDTraj, and AMBER bound the burial
+  search with a spatial grid / cell list, turning the `O(n²)` sweep into ≈`O(n)`.
+  For a whole protein (thousands of atoms) this is essential; our all-pairs kernel
+  is fine for small/medium inputs and is clearer to learn from (Exercise 4 adds the
+  cell list).
+- **Lee–Richards / analytic surfaces.** Instead of sampling points, Lee–Richards
+  integrates accessible arcs analytically per slice; the **molecular** (solvent-
+  excluded) surface tracks the probe's contact, not its centre.
+- **LCPO.** AMBER's MM-GBSA uses the **Linear Combination of Pairwise Overlaps**
+  model: a smooth, **differentiable** analytic approximation `SASAᵢ ≈ P₁·S_i +
+  P₂·Σ overlaps + …`. Differentiability matters because SASA-based solvation needs
+  **forces** in MD — point sampling gives a noisy, non-differentiable area unfit
+  for that.
+- **Polar/non-polar decomposition, per-atom radii, hydrogens.** Real tools split
+  SASA by atom type, use united-atom vs. all-atom radius sets, and decide whether
+  to include hydrogens — all of which shift the absolute numbers.
+
+So this project teaches the **algorithm and its GPU parallelism faithfully**, with
+a clearly-labeled synthetic input, while pointing at the accuracy and scaling work
+that a research-grade implementation adds.
 
 ---
 
 ## References
 
-TODO(theory): Papers, docs, and the starter repos from the catalog, with one
-line each on what to learn from them.
+- **Shrake, A. & Rupley, J.A. (1973)**, *Environment and exposure to solvent of
+  protein atoms. Lysozyme and insulin*, J. Mol. Biol. 79:351 — the original
+  point-sampling algorithm this project implements.
+- **Lee, B. & Richards, F.M. (1971)**, *The interpretation of protein structures:
+  estimation of static accessibility*, J. Mol. Biol. 55:379 — defines SASA; the
+  analytic slice method.
+- **Weiser, Shenkin & Still (1999)**, *Approximate atomic surfaces from LCPO*,
+  J. Comput. Chem. 20:217 — the differentiable analytic model used in MM-GBSA.
+- **Bondi, A. (1964)**, *van der Waals Volumes and Radii*, J. Phys. Chem. 68:441 —
+  the radius set used here and by FreeSASA's defaults.
+- **FreeSASA** <https://github.com/mittinatten/freesasa> — read its Shrake–Rupley
+  and Lee–Richards implementations and default radii.
+- **MDTraj** <https://github.com/mdtraj/mdtraj> — `shrake_rupley`, a clean
+  vectorized reference to cross-check numbers.
+- **Biopython** <https://github.com/biopython/biopython> — `Bio.PDB.SASA`, a
+  readable pure-Python Shrake–Rupley.
+- **The Fibonacci sphere** — González (2010), *Measurement of areas on a sphere
+  using Fibonacci…*, Math. Geosci. 42:49 — the uniform point lattice we use.

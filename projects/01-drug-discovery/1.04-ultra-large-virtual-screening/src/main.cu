@@ -1,122 +1,137 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load library, screen, verify, report
 // ---------------------------------------------------------------------------
-// Project 1.4 -- Ultra-Large Virtual Screening   (template skeleton)
+// Project 1.4 : Ultra-Large Virtual Screening
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// The 5-step shape every project in this repo follows:
+//   1. Load the problem (a target + N library ligands from data/sample).
+//   2. CPU reference  (reference_cpu.cpp)  -> trusted per-ligand scores.
+//   3. GPU screen     (kernels.cu)         -> the thing being taught.
+//   4. VERIFY: GPU agrees with CPU EXACTLY (integer scores -> tolerance 0).
+//   5. REPORT: deterministic survivor count + top-K hits to stdout;
+//      timing + the run-varying detail to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// STDOUT is byte-for-byte deterministic (diffed by demo/run_demo against
+// demo/expected_output.txt); run-to-run timings go to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then screen_core.h (the shared math), kernels.cuh ->
+// kernels.cu (GPU), then reference_cpu.* (CPU baseline). See ../THEORY.md.
 // ===========================================================================
+#include <algorithm>
 #include <cstdio>
+#include <numeric>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // screen_gpu, LigandLibrary
+#include "reference_cpu.h"    // load_library, screen_cpu
+#include "screen_core.h"      // REJECTED sentinel
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "1.4";
 static const char* PROJECT_NAME = "Ultra-Large Virtual Screening";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Verification tolerance. Every score is an INTEGER produced by the identical
+// shared score_ligand() on both sides (filter cascade + integer surrogate dock),
+// so the CPU and GPU agree EXACTLY -- the strongest possible check, tolerance 0
+// (PATTERNS.md sec 4). We compare the score vectors element-for-element.
+static constexpr int TOP_K = 5;        // how many best hits to report
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
+// ---------------------------------------------------------------------------
+// count_mismatches: how many ligands got a different score on CPU vs GPU.
+//   This is our headline correctness number. It MUST be 0: the two paths run the
+//   same integer math, so any nonzero value signals a real bug (a layout error,
+//   a divergent code path), not floating-point noise. Returns the count.
+// ---------------------------------------------------------------------------
+static int count_mismatches(const std::vector<int>& a, const std::vector<int>& b) {
+    if (a.size() != b.size()) return -1;   // shape bug -> distinct, loud sentinel
+    int diff = 0;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (a[i] != b[i]) ++diff;
+    return diff;
 }
 
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// ---------------------------------------------------------------------------
+// top_k_hits: indices of the TOP_K highest-scoring ligands that PASSED the
+// cascade (score != REJECTED), ties broken by LOWER index so the ranking is
+// fully deterministic. We build an index list of survivors and partial_sort it.
+//   score : per-ligand scores (REJECTED == failed the filter cascade)
+//   k     : how many hits to return (clamped to the survivor count)
+// ---------------------------------------------------------------------------
+static std::vector<int> top_k_hits(const std::vector<int>& score, int k) {
+    // Collect only the survivors (rejected ligands are never "hits").
+    std::vector<int> idx;
+    idx.reserve(score.size());
+    for (int i = 0; i < static_cast<int>(score.size()); ++i)
+        if (score[i] != REJECTED) idx.push_back(i);
+
+    const int kk = std::min<int>(k, static_cast<int>(idx.size()));
+    std::partial_sort(idx.begin(), idx.begin() + kk, idx.end(),
+        [&](int a, int b) {
+            if (score[a] != score[b]) return score[a] > score[b];  // higher first
+            return a < b;                                          // tie -> lower idx
+        });
+    idx.resize(kk);
+    return idx;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1]
+                                        : "data/sample/ligands_sample.txt";
+    LigandLibrary lib;
+    try {
+        lib = load_library(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<int> score_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    screen_cpu(lib, score_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU screen (kernel timed inside the wrapper) ------------------
+    std::vector<int> score_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    screen_gpu(lib, score_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (exact integer agreement) ------------------------------
+    const int mism = count_mismatches(score_cpu, score_gpu);
+    const bool pass = (mism == 0);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // Count survivors (passed the cascade) using the verified GPU scores.
+    int survivors = 0;
+    for (int s : score_gpu) if (s != REJECTED) ++survivors;
+
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    const std::vector<int> best = top_k_hits(score_gpu, TOP_K);
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("screened %d ligands against 1 target (filter cascade + surrogate dock)\n",
+                lib.n());
+    std::printf("passed drug-likeness cascade: %d / %d\n", survivors, lib.n());
+    std::printf("top-%d hits (by surrogate score):\n", static_cast<int>(best.size()));
+    for (std::size_t r = 0; r < best.size(); ++r) {
+        const Ligand& L = lib.ligands[best[r]];
+        // Print the rank, the ligand index, its score, and the key descriptors so
+        // the learner can SEE why it scored well (good feature overlap, on-target
+        // size/logP). All integer -> byte-identical across runs.
+        std::printf("  #%zu  ligand[%d]  score=%d  MW=%d  logP=%.2f  feat=0x%08X\n",
+                    r + 1, best[r], score_gpu[best[r]],
+                    L.mw, L.logp_x100 / 100.0, L.feat);
+    }
+    std::printf("RESULT: %s (GPU matches CPU exactly)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (n=%d ligands)\n", path.c_str(), lib.n());
     std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- this tiny sample is dominated by "
+                         "launch/copy overhead; the GPU wins at campaign scale (billions).\n");
+    std::fprintf(stderr, "[verify] mismatches = %d  (must be 0; integer scores -> exact)\n", mism);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

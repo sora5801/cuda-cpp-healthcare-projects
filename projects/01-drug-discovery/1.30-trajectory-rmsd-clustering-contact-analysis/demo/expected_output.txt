@@ -1,5 +1,28 @@
 1.30 -- Trajectory RMSD, Clustering & Contact Analysis
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+frames=12  atoms=16  reference=frame 0
+per-frame RMSD (to reference, optimal superposition) and Q (native contacts):
+  frame  0   RMSD =   0.0000   Q = 1.0000
+  frame  1   RMSD =   0.4531   Q = 1.0000
+  frame  2   RMSD =   0.9061   Q = 1.0000
+  frame  3   RMSD =   1.1326   Q = 1.0000
+  frame  4   RMSD =   4.7572   Q = 0.5200
+  frame  5   RMSD =   5.0970   Q = 0.5200
+  frame  6   RMSD =   5.3235   Q = 0.0000
+  frame  7   RMSD =   5.5500   Q = 0.0000
+  frame  8   RMSD =   9.7410   Q = 0.0000
+  frame  9   RMSD =  10.0808   Q = 0.0000
+  frame 10   RMSD =  10.4207   Q = 0.0000
+  frame 11   RMSD =  10.7605   Q = 0.0000
+RMSD clustering (shell width = 1.0):
+  shell 0  [0.0, 1.0):  3 frame(s)
+  shell 1  [1.0, 2.0):  1 frame(s)
+  shell 2  [2.0, 3.0):  0 frame(s)
+  shell 3  [3.0, 4.0):  0 frame(s)
+  shell 4  [4.0, 5.0):  1 frame(s)
+  shell 5  [5.0, 6.0):  3 frame(s)
+  shell 6  [6.0, 7.0):  0 frame(s)
+  shell 7  [7.0, 8.0):  0 frame(s)
+  shell 8  [8.0, 9.0):  0 frame(s)
+  shell 9  [9.0, 10.0):  1 frame(s)
+  shell 10  [10.0, 11.0):  3 frame(s)
+RESULT: PASS (GPU matches CPU within tol=1.0e-09)

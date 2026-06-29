@@ -5,11 +5,15 @@
 Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on the committed `data/sample/molecule_sample.xyz` (27 synthetic
+   atoms with an engineered exposure pattern).
+3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`): the
+   per-atom **exposed-point counts must match exactly** (they are integers from
+   the *same* shared `__host__ __device__` function), and the derived areas agree
+   to ~1e-9 Å². Prints a clear `PASS`/`FAIL`.
+4. **Report** the total SASA and the **top-5 most exposed atoms**, and **time** the
+   kernel (CUDA events) vs. the CPU baseline — a *teaching artifact*, not a
+   benchmark claim.
 
 The program splits its output deliberately:
 
@@ -20,14 +24,14 @@ The program splits its output deliberately:
 
 ## Expected result
 
-```
-1.31 -- Solvent-Accessible Surface Area (SASA) on GPU
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
+See [`expected_output.txt`](expected_output.txt) for the exact stdout the demo
+asserts. A green `PASS` means the GPU's exposed-point counts matched the CPU
+reference **exactly**. What to notice in the output:
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+- the **central atom (atom[0]) is buried** — it does not appear in the most-exposed
+  ranking, and its SASA is ~0 Å²;
+- the **lone O/N atoms are fully exposed** (96/96 test points), which is the known
+  answer baked into the synthetic geometry.
+
+> The coordinates are **synthetic** (an engineered test geometry); the SASA values
+> are a geometric exercise only and carry no chemical meaning.

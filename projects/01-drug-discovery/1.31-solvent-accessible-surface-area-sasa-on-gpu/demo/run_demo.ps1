@@ -1,7 +1,7 @@
 # ===========================================================================
 # demo/run_demo.ps1  --  One command: build (if needed) + run + verify
 # ---------------------------------------------------------------------------
-# Project 1.31 -- Solvent-Accessible Surface Area (SASA) on GPU   (template skeleton)
+# Project 1.31 : Solvent-Accessible Surface Area (SASA) on GPU
 #
 # WHAT IT DOES (CLAUDE.md §6.3)
 #   1. Ensure the Release exe exists (build it with MSBuild if missing).
@@ -18,7 +18,7 @@ $ProjectRoot = Split-Path -Parent $Demo
 $Slug        = "solvent-accessible-surface-area-sasa-on-gpu"
 $Sln         = Join-Path $ProjectRoot "build\$Slug.sln"
 $Exe         = Join-Path $ProjectRoot "build\x64\Release\$Slug.exe"
-$Sample      = Join-Path $ProjectRoot "data\sample\saxpy_sample.txt"
+$Sample      = Join-Path $ProjectRoot "data\sample\molecule_sample.xyz"
 $Expected    = Join-Path $Demo "expected_output.txt"
 
 function Find-MSBuild {

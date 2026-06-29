@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.30 -- Trajectory RMSD, Clustering & Contact Analysis   (template skeleton)
+# Project 1.30 : Trajectory RMSD, Clustering & Contact Analysis
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/trajectory-rmsd-clustering-contact-analysis.sln (CLAUDE.md §5). Both

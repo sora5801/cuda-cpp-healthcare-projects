@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Fetch / point to the FULL dataset (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 1.13 -- Pharmacophore & 3D Shape Screening   (template skeleton)
+# Project 1.13 : Pharmacophore & 3D Shape Screening
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. The real 3D conformer libraries are large
+# and/or licensed and come as SDF/MOL2 (not this project's simple text format),
+# so this script PRINTS instructions + links rather than blindly downloading
+# gigabytes; for an offline run, the committed synthetic sample suffices.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,20 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.13 -- Pharmacophore & 3D Shape Screening"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    ZINC20 conformer libraries (https://zinc20.docking.org); DUD-E (https://dude.docking.org); Enamine REAL conformer sets (https://enamine.net); Directory of Useful Decoys-Enhanced including 3D conformers (verify URL)."
+echo "This project ships a tiny SYNTHETIC sample in data/sample/ that is enough"
+echo "to build and run the demo offline. No download is required."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "To screen REAL molecules, obtain 3D conformers from a public library:"
+echo "  * ZINC20 conformers : https://zinc20.docking.org   (free for research)"
+echo "  * DUD-E             : https://dude.docking.org      (actives + decoys, 3D)"
+echo "  * Enamine REAL      : https://enamine.net           (make-on-demand library)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Those come as SDF/MOL2. Convert to this project's 'x y z radius' text format"
+echo "with a short RDKit script (read 3D coordinates, map each element to its van"
+echo "der Waals radius), then run:"
+echo "    ./build/cmake/pharmacophore-3d-shape-screening <your_file.txt>"
+echo
+echo "For a larger SYNTHETIC problem with no downloads, regenerate the sample:"
+echo "    python scripts/make_synthetic.py"
+echo
+echo "Respect each source's license; none are redistributed in this repo."

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  How to get REAL structures for SASA (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 1.31 -- Solvent-Accessible Surface Area (SASA) on GPU   (template skeleton)
+# Project 1.31 : Solvent-Accessible Surface Area (SASA) on GPU
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# This project's "real data" is a molecular structure (a PDB file) converted to
+# the simple "<element> x y z" format the loader reads. This script prints the
+# recipe; it requires no credentials and downloads nothing on its own beyond an
+# OPTIONAL public PDB fetch you can uncomment. It defers to make_synthetic.py for
+# the fully-offline stand-in (CLAUDE.md §8).
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,19 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.31 -- Solvent-Accessible Surface Area (SASA) on GPU"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    PDB protein structures (https://www.rcsb.org); ASA benchmark set for validation (verify URL); MD trajectory ensembles for SASA time series."
+echo "Real SASA runs on an actual structure. To prepare one:"
+echo "  1) Pick a PDB id, e.g. 1CRN (crambin, a 46-residue test protein)."
+echo "  2) Download the structure (public, no login) from RCSB:"
+echo "       https://files.rcsb.org/download/1CRN.pdb"
+echo "     (Optional one-liner you can run yourself:)"
+echo "       curl -L https://files.rcsb.org/download/1CRN.pdb -o \"$DATA_DIR/1CRN.pdb\""
+echo "  3) Convert ATOM/HETATM records to '<element> x y z' (Angstrom). The"
+echo "     element is PDB columns 77-78; coords are columns 31-54. Tools that"
+echo "     do this cleanly: Biopython (Bio.PDB) or MDTraj."
+echo "  4) Validate your SASA against FreeSASA (https://github.com/mittinatten/freesasa)."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Offline stand-in (no download, fully reproducible):"
+echo "  python scripts/make_synthetic.py    # writes data/sample/molecule_sample.xyz"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Idempotency note: when wiring a real fetch, skip the download if the file"
+echo "already exists with the expected SHA256, and NEVER bypass any registration."
