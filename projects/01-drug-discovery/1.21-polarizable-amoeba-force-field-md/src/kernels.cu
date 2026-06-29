@@ -1,94 +1,100 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  GPU ensemble induced-dipole solver (one thread per system)
 // ---------------------------------------------------------------------------
-// Project 1.21 -- Polarizable / AMOEBA Force Field MD   (template skeleton)
+// Project 1.21 : Polarizable / AMOEBA Force Field MD
 //
 // WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
+//   The GPU twin of integrate_cpu(): each thread runs the SAME matrix-free
+//   conjugate-gradient solve (solve_induced_dipoles, amoeba.h) for one ensemble
+//   member and writes one PerSystemResult. The host wrapper handles the standard
+//   CUDA lifecycle (allocate, copy H2D, launch + time, copy D2H, free). main.cu
+//   compares the per-member results against the CPU reference.
 //
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
+//   This is the "custom CUDA conjugate-gradient solver for induced dipoles" the
+//   catalog calls for -- written by hand (no library) so nothing is a black box.
 //
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// READ THIS AFTER: kernels.cuh (the thread-mapping idea), amoeba.h (the physics).
 // ===========================================================================
 #include "kernels.cuh"
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// Threads per block. 128 is a good default here: each thread does a fair amount
+// of register-heavy work (the CG arrays are on-stack), so we keep the block
+// modest to leave registers for occupancy on sm_75..sm_89. A multiple of the
+// 32-lane warp keeps the scheduler happy. (Tune per GPU; see THEORY.md.)
+static constexpr int THREADS_PER_BLOCK = 128;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
+// dipole_ensemble_kernel: thread idx solves member idx.
+//   Launch config (set in solve_ensemble_gpu):
+//     grid  = ceil(M / THREADS_PER_BLOCK) blocks
 //     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+//   Thread-to-data map: idx = blockIdx.x * blockDim.x + threadIdx.x  ->  member idx.
+//
+//   Memory: reads systems[idx] from global memory (a struct load), keeps the
+//   entire CG working set (mu, r, p, Ap -- each AMOEBA_MAX_ATOMS x 3 doubles) in
+//   LOCAL memory / registers, writes out[idx]. No shared memory, no atomics, no
+//   cross-thread dependence: the cleanest possible "independent jobs" mapping.
+//
+//   Divergence is mild: members may take slightly different CG iteration counts,
+//   so threads in a warp finish their loops at different times. That is fine for
+//   a teaching ensemble; for tightly-matched workloads one would pad to a fixed
+//   iteration count.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void dipole_ensemble_kernel(const AtomSystem* __restrict__ systems,
+                                       int M, double tol, int max_iter,
+                                       PerSystemResult* __restrict__ out) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= M) return;                  // guard the ragged last block
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+    // Copy this thread's system into a local (register/stack) AtomSystem so the
+    // inner O(n^2) matvec reads from fast local memory rather than re-fetching
+    // global memory on every CG iteration. The struct is small (<= 32 atoms).
+    AtomSystem s = systems[idx];
+
+    double mu[AMOEBA_MAX_ATOMS][3];        // the converged dipoles (scratch)
+    out[idx] = solve_induced_dipoles(s, tol, max_iter, mu);
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// solve_ensemble_gpu: host wrapper. The canonical CUDA lifecycle:
+//   (1) allocate device buffers  (2) copy the ensemble H2D
+//   (3) launch + TIME the kernel (CUDA events)  (4) copy results D2H  (5) free.
+//   We time ONLY the kernel (step 3) so the figure reflects compute, not PCIe.
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void solve_ensemble_gpu(const EnsembleConfig& c,
+                        std::vector<PerSystemResult>& results,
+                        float* kernel_ms) {
+    const int M = ensemble_size(c);
+    results.assign(static_cast<std::size_t>(M), PerSystemResult{});
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    const std::size_t sys_bytes = static_cast<std::size_t>(M) * sizeof(AtomSystem);
+    const std::size_t res_bytes = static_cast<std::size_t>(M) * sizeof(PerSystemResult);
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // (1) Device buffers. d_ marks DEVICE pointers (dereferencing on host crashes).
+    AtomSystem*      d_sys = nullptr;      // the M input systems
+    PerSystemResult* d_out = nullptr;      // the M output summaries
+    CUDA_CHECK(cudaMalloc(&d_sys, sys_bytes));   // can fail: out of device memory
+    CUDA_CHECK(cudaMalloc(&d_out, res_bytes));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // (2) Copy the whole ensemble H2D in one contiguous transfer. AtomSystem is a
+    //     plain-old-data struct (fixed arrays, no pointers), so it is trivially
+    //     copyable -- a flat memcpy is correct, no per-atom marshalling needed.
+    CUDA_CHECK(cudaMemcpy(d_sys, c.systems.data(), sys_bytes, cudaMemcpyHostToDevice));
+
+    // (3) Launch one thread per member; ceil-divide so blocks cover all M.
+    const int blocks = (M + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
+    dipole_ensemble_kernel<<<blocks, THREADS_PER_BLOCK>>>(d_sys, M, c.tol, c.max_iter, d_out);
     *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    CUDA_CHECK_LAST("dipole_ensemble_kernel");   // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // (4) Bring the per-member results back.
+    CUDA_CHECK(cudaMemcpy(results.data(), d_out, res_bytes, cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
+    // (5) Free device memory (no GPU garbage collector exists).
+    CUDA_CHECK(cudaFree(d_sys));
     CUDA_CHECK(cudaFree(d_out));
 }

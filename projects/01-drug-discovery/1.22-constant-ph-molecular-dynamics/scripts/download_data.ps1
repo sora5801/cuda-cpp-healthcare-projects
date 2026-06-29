@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 1.22 -- Constant-pH Molecular Dynamics   (template skeleton)
+# Project 1.22 : Constant-pH Molecular Dynamics (reduced-scope teaching model)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL, and
+# NEVER bypasses credentials/registration. This project ships a committed
+# SYNTHETIC sample (data/sample/cph_system.txt) that is sufficient for the demo,
+# so there is nothing to auto-download; this script prints where to obtain the
+# real titration benchmarks and defers to make_synthetic.py for offline use.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,20 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.22 -- Constant-pH Molecular Dynamics"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    pKa databases: PKAD (https://compbio.clemson.edu/pkad/), PHMD reference pKa values; Benchmark pKa sets for Asp/Glu/His/Cys/Lys residues; DrugBank compounds with ionizable groups (https://go.drugbank.com)."
+Write-Host "This project runs entirely on the committed SYNTHETIC sample:"
+Write-Host "    data/sample/cph_system.txt   (regenerate: python scripts/make_synthetic.py)"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "There is NO automatic download. To extend the project with real"
+Write-Host "experimental pKa values, obtain them yourself from:"
+Write-Host "  * PKAD  -- experimental protein-residue pKa database:"
+Write-Host "      https://compbio.clemson.edu/pkad/"
+Write-Host "  * PHMD / benchmark pKa sets for Asp/Glu/His/Cys/Lys residues"
+Write-Host "      (see the constant-pH MD literature, e.g. AMBER CpHMD papers)."
+Write-Host "  * DrugBank -- ionizable-group compounds (registration required):"
+Write-Host "      https://go.drugbank.com"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Respect each source's license. For credentialed sets, register on the"
+Write-Host "site -- this script will NOT bypass authentication. Map a real residue"
+Write-Host "into the toy by editing pKa_intrinsic / charges / positions in the"
+Write-Host "sample file (field meanings are in data/README.md)."

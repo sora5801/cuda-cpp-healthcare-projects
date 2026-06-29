@@ -14,7 +14,7 @@ set -euo pipefail
 DEMO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$DEMO")"
 SLUG="polarizable-amoeba-force-field-md"
-SAMPLE="$ROOT/data/sample/saxpy_sample.txt"
+SAMPLE="$ROOT/data/sample/amoeba_ensemble.txt"
 EXPECTED="$DEMO/expected_output.txt"
 BUILD="$ROOT/build/cmake"
 EXE="$BUILD/$SLUG"

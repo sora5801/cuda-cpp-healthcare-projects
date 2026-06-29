@@ -153,6 +153,10 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- gamd.h: the shared __host__ __device__ physics core (potential, boost,
+         RNG, run_walker, reweighting) included by BOTH reference_cpu.cpp (host)
+         and kernels.cu/main.cu (device) so CPU and GPU run identical math. -->
+    <ClInclude Include="..\src\gamd.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

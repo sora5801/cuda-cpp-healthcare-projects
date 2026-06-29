@@ -1,52 +1,52 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU ensemble-integration interface
 // ---------------------------------------------------------------------------
-// Project 1.23 -- QM/MM Molecular Dynamics   (template skeleton)
+// Project 1.23 : QM/MM Molecular Dynamics   (reduced-scope teaching version)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (ENSEMBLE QM/MM TRAJECTORIES, one thread per trajectory)
+//   A QM/MM simulation is sequential in time -- each MD step needs the previous
+//   step's geometry to evaluate the next quantum force. So a SINGLE trajectory
+//   is not data-parallel. What IS parallel is running MANY trajectories at once:
+//   a sweep over the MM electrostatic-embedding field and the initial proton
+//   position. Each (field, x0) pair is an independent run, so we give each its
+//   own GPU thread; the thread executes the full velocity-Verlet loop in
+//   registers and writes one TrajResult. This is exactly the ensemble pattern
+//   used by the 9.02 (SEIR) and 13.02 (PBPK) flagships (PATTERNS.md §1).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Why this is the right teaching mapping for QM/MM: real reactive-event
+//   sampling (e.g. proton-transfer free energies, committor analysis) launches
+//   THOUSANDS of trajectories from perturbed initial conditions -- an ensemble
+//   over starting states is precisely how production QM/MM gathers statistics.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   The per-step physics + Verlet integrator are shared with the CPU via qmmm.h,
+//   so the GPU results match the reference to round-off. kernels.cu defines the
+//   kernel and the host wrapper.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, qmmm.h, reference_cpu.h.
+// Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // EnsembleConfig, member_params (pure C++, safe in .cu)
+#include "qmmm.h"            // qmmm::TrajResult, integrate_trajectory
 
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ensemble_kernel: thread `idx` integrates ensemble member idx and writes its
+//   TrajResult. It reads its (field, x0) from the sweep via member_params(), then
+//   runs the entire Verlet time loop (qmmm::integrate_trajectory) in registers.
+//   Launch config (set in integrate_gpu): grid = ceil(M / block), block = 128.
+//   Thread-to-data map: idx = blockIdx.x*blockDim.x + threadIdx.x owns member idx.
+//   Memory: reads the small EnsembleConfig (passed by value), writes one struct to
+//   global `out[idx]`; no shared memory or atomics (members are independent).
+__global__ void ensemble_kernel(EnsembleConfig c, qmmm::TrajResult* __restrict__ out);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// integrate_gpu: launch one thread per member, copy the results back, and report
+//   the measured KERNEL time (CUDA events) via *kernel_ms. main.cu calls exactly
+//   this; all CUDA bookkeeping (malloc / launch / memcpy / free) is hidden here.
+//     c         : the ensemble configuration (sweep grid + integration settings)
+//     results   : host output, resized to nf*nx (output parameter)
+//     kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
+void integrate_gpu(const EnsembleConfig& c, std::vector<qmmm::TrajResult>& results,
+                   float* kernel_ms);

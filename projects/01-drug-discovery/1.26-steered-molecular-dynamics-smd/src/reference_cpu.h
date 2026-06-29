@@ -1,31 +1,35 @@
 // ===========================================================================
-// src/reference_cpu.h  --  Prototype of the CPU reference computation
+// src/reference_cpu.h  --  SMD config loader + serial CPU reference
 // ---------------------------------------------------------------------------
-// Project 1.26 -- Steered Molecular Dynamics (SMD)   (template skeleton)
+// Project 1.26 : Steered Molecular Dynamics (SMD)
 //
-// WHY A SEPARATE HEADER
-//   The CPU reference (reference_cpu.cpp) is compiled by the plain C++ compiler
-//   and must NOT see any CUDA/__global__ syntax, so its prototype cannot live in
-//   kernels.cuh. Both main.cu and reference_cpu.cpp include THIS pure-C++ header
-//   so they agree on the function signature.
+// The "ensemble" is a set of n_traj INDEPENDENT constant-velocity SMD pulls of
+// the same system, each with its own random thermal history. The config struct
+// (SmdParams) and the per-trajectory physics live in smd_core.h, shared with the
+// GPU. This header adds the host-only pieces: parse the data file, and run all
+// trajectories serially as the trusted baseline the GPU is checked against.
+// Pure C++ (no CUDA), so it compiles under cl.exe / g++; kernels.cu reuses
+// SmdParams and run_trajectory() too.
 //
-// THE CONTRACT (this template's placeholder computation):
-//   SAXPY -- "Single-precision A*X Plus Y":  out[i] = a * x[i] + y[i].
-//   This is the canonical first GPU kernel; here it stands in as a buildable
-//   placeholder. TODO(impl): replace saxpy_cpu with this project's real
-//   reference computation, and update the prototype + callers accordingly.
-//
-//   The CPU reference exists for two reasons (CLAUDE.md section 5):
-//     (a) it is the readable baseline that makes the GPU speed-up legible, and
-//     (b) the demo runs BOTH and asserts they agree within tolerance.
+// READ THIS AFTER: smd_core.h (the physics).  READ BEFORE: kernels.cuh, main.cu.
 // ===========================================================================
 #pragma once
 
+#include <string>
 #include <vector>
 
-// Compute out = a*x + y on the CPU, element by element.
-//   x, y : input vectors of equal length n
-//   a    : the scalar multiplier
-//   out  : resized to n and filled with the result (output parameter)
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out);
+#include "smd_core.h"   // SmdParams, run_trajectory, jarzynski_dg, SMD_HD
+
+// Load an SmdParams from the whitespace-separated text format (data/README.md):
+//   xi0 xi_end n_traj steps dt k_spring v_pull gamma kT pmf_A pmf_xa pmf_xb
+//   pmf_slope seed
+// Throws std::runtime_error on a missing file or malformed/invalid values so a
+// demo fails loudly instead of silently simulating garbage.
+SmdParams load_params(const std::string& path);
+
+// CPU reference: run every trajectory serially and fill `work` (size n_traj)
+// with each trajectory's external work W_i. This is the trusted baseline; the
+// GPU kernel computes the same vector and main.cu asserts they agree exactly.
+// (The Jarzynski reduction over `work` is then done once, identically, by
+// jarzynski_dg() in smd_core.h -- see main.cu.)
+void run_cpu(const SmdParams& p, std::vector<double>& work);

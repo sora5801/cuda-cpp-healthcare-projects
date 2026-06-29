@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  SMD data pointers (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 1.26 -- Steered Molecular Dynamics (SMD)   (template skeleton)
+# Project 1.26 : Steered Molecular Dynamics (SMD)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, and NEVER bypasses
+# credentials/registration. For THIS project there is nothing to fetch -- the
+# reduced 1-D model is fully specified by the 14 numbers in
+# data/sample/smd_config.txt. This script prints where to find REAL full-atom SMD
+# material and defers to scripts/make_synthetic.py for larger offline ensembles.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,17 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.26 -- Steered Molecular Dynamics (SMD)"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    NAMD SMD tutorials (https://www.ks.uiuc.edu/Training/Tutorials/); BindingDB residence time data (https://www.bindingdb.org); PDB force-probe simulation benchmark cases; published SMD studies on ion channels and motor proteins."
+echo "There is NO file to download: the 1-D teaching model is fully defined by"
+echo "data/sample/smd_config.txt (14 numbers; see data/README.md)."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "For REAL full-atom SMD (pull a ligand out of a pocket in a true MD field):"
+echo "  NAMD SMD tutorials : https://www.ks.uiuc.edu/Training/Tutorials/"
+echo "                       (constant-velocity / constant-force SMD walkthroughs)"
+echo "  GROMACS pull code  : https://github.com/gromacs/gromacs   (GPU pull-coord)"
+echo "  OpenMM             : https://github.com/openmm/openmm     (CustomExternalForce)"
+echo "  alchemlyb          : https://github.com/alchemistry/alchemlyb (Jarzynski post-proc)"
+echo "  BindingDB          : https://www.bindingdb.org           (residence-time data)"
+echo "  PDB                : https://www.rcsb.org                 (force-probe structures)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Bigger SYNTHETIC ensemble for this project (no download, tighter Jarzynski):"
+echo "  python scripts/make_synthetic.py --n-traj 65536"

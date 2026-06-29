@@ -153,6 +153,10 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- smd_core.h: the shared __host__ __device__ SMD physics (RNG, Langevin
+         integrator, PMF, Jarzynski). Included by reference_cpu.cpp (host) AND by
+         kernels.cu / main.cu (nvcc) so CPU and GPU run identical math. -->
+    <ClInclude Include="..\src\smd_core.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

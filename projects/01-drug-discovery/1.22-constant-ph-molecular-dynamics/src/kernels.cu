@@ -1,94 +1,144 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Ensemble Monte Carlo titration kernel + host wrapper
 // ---------------------------------------------------------------------------
-// Project 1.22 -- Constant-pH Molecular Dynamics   (template skeleton)
+// Project 1.22 : Constant-pH Molecular Dynamics (reduced-scope teaching model)
 //
 // WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
+//   Implements the device kernel (titrate_kernel) -- one thread per Monte Carlo
+//   chain -- and the host-side glue (titrate_gpu) that allocates the device
+//   tally, launches the chains, times the kernel, and brings the integer counts
+//   back. This is the GPU twin of titrate_cpu() in reference_cpu.cpp; both call
+//   the SAME shared physics (cph_core.h run_chain), so their integer protonation
+//   tallies must match exactly. main.cu runs both and verifies that.
 //
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
+//   The interesting CUDA content is NOT arithmetic-heavy kernels but the MAPPING:
+//   an embarrassingly-parallel ensemble of independent stochastic chains, scored
+//   with integer atomics so the parallel reduction is deterministic.
 //
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// READ THIS AFTER: kernels.cuh (the thread-mapping idea) and cph_core.h.
 // ===========================================================================
 #include "kernels.cuh"
+#include "cph_core.h"            // CphSystem, run_chain, rng_seed, chain_id
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
+// Threads per block. 256 is a solid default on sm_75..sm_89: a multiple of the
+// 32-lane warp, eight warps to hide latency, and many blocks resident for
+// occupancy. Each thread's work (a whole MC chain) is heavy and register-bound,
+// so the exact value matters little here -- the ensemble is far larger than the
+// machine and we are compute/divergence-bound, not occupancy-bound.
 static constexpr int THREADS_PER_BLOCK = 256;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// titrate_kernel: ONE THREAD RUNS ONE (pH, replica) CHAIN.
+//
+//   Launch config (set in titrate_gpu):
+//     total chains  N = n_pH * replicas
+//     grid          = a fixed number of blocks; a grid-stride loop lets that
+//                     fixed grid cover any N (robust + simple).
+//     block         = THREADS_PER_BLOCK threads.
+//
+//   Thread-to-data map: global id g = blockIdx.x*blockDim.x + threadIdx.x is
+//   decoded into a (pH index k, replica r) pair by
+//        k = g / replicas ;  r = g % replicas
+//   so consecutive threads in a warp mostly share a pH (k) and differ by replica
+//   -- they run structurally similar chains, which keeps warp divergence modest.
+//
+//   Memory spaces:
+//     * `sys` is passed BY VALUE -> it lands in constant/parameter memory and is
+//       broadcast to every thread (read-only, never changes during the launch).
+//     * the per-chain state[] and chain_counts[] live in registers/local memory
+//       (n_res <= 16), so the chain runs without touching global memory at all...
+//     * ...until the very end, when the thread ATOMICALLY adds its integer counts
+//       into the shared global tally d_prot. Integer atomics commute, so the sum
+//       is order-independent and reproduces the CPU's exactly (PATTERNS.md §3).
+//
+//   Divergence note (the classic Monte-Carlo GPU lesson): different chains accept
+//   different moves, so threads in a warp take different branches each step. We
+//   accept that here for clarity; production CpHMD reduces it with replica
+//   batching and sorting. See ../THEORY.md "GPU mapping".
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void titrate_kernel(CphSystem sys, double pH_min, double pH_max,
+                               int n_pH, int replicas, unsigned long long seed,
+                               unsigned long long* __restrict__ d_prot) {
+    const int n_res = sys.n_res;
+    const long long N = static_cast<long long>(n_pH) * replicas;  // total chains
+    const long long stride =
+        static_cast<long long>(blockDim.x) * gridDim.x;           // grid-stride
+    const long long start =
+        static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x;
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
+    // Per-chain protonation tally, register/local resident (tiny n_res).
+    int chain_counts[CPH_MAX_RESIDUES];
+
+    for (long long g = start; g < N; g += stride) {
+        // Decode this chain's (pH index, replica) from its flat id.
+        const int k = static_cast<int>(g / replicas);   // pH grid index
+        const int r = static_cast<int>(g % replicas);   // replica index
+        // The k-th pH on the linear grid (n_pH >= 2 guaranteed by the loader).
+        const double pH = pH_min + (pH_max - pH_min) * k / (n_pH - 1);
+
+        // Seed this chain identically to the CPU (same chain_id packing), so the
+        // random decisions match move-for-move and the tally is bit-identical.
+        Rng rng = rng_seed(seed, chain_id(k, r));
+        for (int i = 0; i < n_res; ++i) chain_counts[i] = 0;
+
+        // Run the SHARED Monte Carlo chain (same code path as the CPU).
+        run_chain(sys, pH, rng, chain_counts);
+
+        // Score: atomically fold this chain's integer counts into the per-pH
+        // tally. Many replica-threads target the same (k,i) slot; integer adds
+        // make the order irrelevant -> deterministic, CPU-matching result.
+        for (int i = 0; i < n_res; ++i) {
+            const unsigned long long add =
+                static_cast<unsigned long long>(chain_counts[i]);
+            atomicAdd(&d_prot[static_cast<size_t>(k) * n_res + i], add);
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// titrate_gpu: host wrapper. The canonical CUDA steps, specialised for an
+// ensemble that produces a small integer tally (no big input arrays to copy --
+// the "input" is just the parameter struct passed by value):
+//   (1) allocate + zero the device tally d_prot ([n_pH * n_res] uint64)
+//   (2) launch one thread per chain (grid-stride), timed with CUDA events
+//   (3) copy the integer tally device->host
+//   (4) free device memory
+// We time ONLY the kernel (step 2) so the reported figure is compute, not the
+// trivial copy of a few hundred integers.
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void titrate_gpu(const CphProblem& prob, CphResult& out, float* kernel_ms) {
+    const int n_res = prob.sys.n_res;
+    const size_t n_slots = static_cast<size_t>(prob.n_pH) * n_res;
+    const size_t bytes = n_slots * sizeof(unsigned long long);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // Size the host result and set the denominator (same for every chain).
+    out.prot_count.assign(n_slots, 0ULL);
+    out.tallied_per_pH = static_cast<uint64_t>(prob.replicas) *
+                         (prob.sys.sweeps - prob.sys.burn_in);
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // (1) Device tally. d_ prefix = DEVICE pointer (deref on host would crash).
+    unsigned long long* d_prot = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_prot, bytes));        // can fail: out of device mem
+    CUDA_CHECK(cudaMemset(d_prot, 0, bytes));      // start every counter at zero
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // (2) Launch. A fixed grid of `blocks` blocks; the kernel's grid-stride loop
+    //     covers all n_pH*replicas chains regardless of how many that is. 1024
+    //     blocks gives the GPU plenty of resident warps to hide the divergence.
+    const int blocks = 1024;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    titrate_kernel<<<blocks, THREADS_PER_BLOCK>>>(
+        prob.sys, prob.pH_min, prob.pH_max, prob.n_pH, prob.replicas,
+        static_cast<unsigned long long>(prob.seed), d_prot);
+    *kernel_ms = timer.stop_ms();                  // GPU-measured kernel time
+    CUDA_CHECK_LAST("titrate_kernel");             // catch launch + run errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // (3) Bring the integer tally back to the host result vector.
+    CUDA_CHECK(cudaMemcpy(out.prot_count.data(), d_prot, bytes,
+                          cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    // (4) Always free (no GPU garbage collector).
+    CUDA_CHECK(cudaFree(d_prot));
 }

@@ -1,37 +1,77 @@
 # Data — 1.22 Constant-pH Molecular Dynamics
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/cph_system.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
-| License | Public domain (CC0) — it is synthetic |
+| File | `sample/cph_system.txt` |
+| Origin | **SYNTHETIC** — hand-authored 3-residue toy, **not a real protein** |
+| License | Public domain (CC0) — it is synthetic, invented for teaching |
 | Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Regenerate | `python scripts/make_synthetic.py` (writes this exact file) |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+This tiny file lets `demo/run_demo` run **offline, with zero downloads** — a hard
+requirement for every project (CLAUDE.md §8). It is **synthetic**: the residues,
+positions, charges, and intrinsic pKa values are stylised teaching values, not
+measurements of any real molecule. **No clinical or experimental meaning.**
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+### Why this particular toy
 
-## Full dataset
+The system is engineered so the result is *interpretable*: an acid (ASP) flanked
+on a line by two bases (HIS, LYS). Because the electrostatic coupling is switched
+**on**, each residue's apparent pKa visibly **shifts** away from its intrinsic
+value — which is exactly the effect constant-pH simulation exists to capture:
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+- **ASP** (acid) sits next to two cations → its negative (deprotonated) form is
+  stabilised → its pKa shifts **down** (~−1.9 in the demo).
+- **LYS** (base) sits next to ASP's negative charge → its positive (protonated)
+  form is stabilised → its pKa shifts **up** (~+0.7).
+- **HIS** (in the middle) feels an acid on one side and a base on the other; the
+  shifts roughly cancel (~0).
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+### File format (consumed by `src/reference_cpu.cpp` `load_cph_problem`)
 
-Catalog dataset notes (verbatim):
+`#` starts a comment to end of line. Tokens are whitespace/newline separated.
 
-> pKa databases: PKAD (https://compbio.clemson.edu/pkad/), PHMD reference pKa values; Benchmark pKa sets for Asp/Glu/His/Cys/Lys residues; DrugBank compounds with ionizable groups (https://go.drugbank.com).
+```
+line 1:  n_res  coulomb_k  kT       sweeps  burn_in
+line 2:  pH_min pH_max     n_pH     replicas seed
+then n_res lines:  pKa_intrinsic  q_prot  q_deprot   x   y   z
+```
 
-## Provenance & field meanings
+| Field | Meaning | Units |
+|---|---|---|
+| `n_res` | number of titratable residues | count (≤ 16) |
+| `coulomb_k` | Coulomb prefactor `332.06/epsilon`; **set 0 to disable coupling** | kcal·Å·mol⁻¹·e⁻² |
+| `kT` | thermal energy `k_B·T` (≈ 0.593 at 298 K) | kcal/mol |
+| `sweeps` | Monte Carlo sweeps per chain (1 sweep = `n_res` attempted flips) | count |
+| `burn_in` | leading sweeps discarded before tallying (equilibration) | count |
+| `pH_min`,`pH_max`,`n_pH` | the pH grid the titration curve is sampled on | pH units / count |
+| `replicas` | independent chains averaged per pH (Monte Carlo noise reduction) | count |
+| `seed` | base RNG seed (chain `(k,r)` seeds from `(seed, chain_id(k,r))`) | integer |
+| `pKa_intrinsic` | the residue's model pKa in isolation (Asp≈4, His≈6.5, Lys≈10.5) | dimensionless |
+| `q_prot` / `q_deprot` | net charge of the protonated / deprotonated form | units of `e` |
+| `x`,`y`,`z` | fixed residue position (frozen — see THEORY.md) | Ångström |
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+## Full / real datasets (pointers only — not redistributed here)
+
+The catalog points at real titration benchmarks. We do **not** commit them: they
+are tied to specific PDB structures and curated reference values whose
+redistribution terms vary. Study them to extend this project (see Exercises):
+
+- **PKAD** — experimental pKa database for protein residues:
+  <https://compbio.clemson.edu/pkad/>
+- **PHMD / benchmark pKa sets** for Asp/Glu/His/Cys/Lys residues (used to validate
+  CpHMD methods in the literature).
+- **DrugBank** — compounds with ionizable groups (for ligand pKa work):
+  <https://go.drugbank.com> (registration required).
+
+`scripts/download_data.ps1` / `.sh` print these links and instructions; they do
+**not** attempt to bypass any registration or license (CLAUDE.md §8). If you map a
+real residue into this toy, replace `pKa_intrinsic`, charges, and positions
+accordingly and **keep labeling derived inputs honestly**.
+
+## Honesty
+
+Everything in `sample/` is synthetic and labeled synthetic. Nothing here is a
+measurement, and no output may be used for any real chemical or medical decision.

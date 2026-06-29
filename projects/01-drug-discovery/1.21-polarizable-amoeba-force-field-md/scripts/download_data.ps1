@@ -1,12 +1,12 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 1.21 -- Polarizable / AMOEBA Force Field MD   (template skeleton)
+# Project 1.21 : Polarizable / AMOEBA Force Field MD
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The committed tiny SYNTHETIC sample is
+# enough to run the demo offline; this script only points you at the real AMOEBA
+# parameter sets and reference data so you can study them yourself.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,20 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.21 -- Polarizable / AMOEBA Force Field MD"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    AMOEBA protein force field parameter files (https://github.com/TinkerTools/tinker); WaterMap/hydration site datasets (Schrodinger, verify URL); BindingDB experimental affinities (https://www.bindingdb.org); NIST thermophysical properties (https://webbook.nist.gov)."
+Write-Host "This project ships a tiny SYNTHETIC ensemble (data/sample/amoeba_ensemble.txt)"
+Write-Host "that fully exercises the induced-dipole CG solver offline. No download is"
+Write-Host "required to build, run, or verify the demo."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "To study REAL AMOEBA force-field data and validation targets:"
+Write-Host "  * AMOEBA / AMOEBA+ parameter files (Tinker .prm/.key):"
+Write-Host "      https://github.com/TinkerTools/tinker        (params/ directory)"
+Write-Host "      https://github.com/TinkerTools/poltype2      (AMOEBA+ parameterization)"
+Write-Host "  * NIST thermophysical properties (water dielectric / dipole benchmarks):"
+Write-Host "      https://webbook.nist.gov"
+Write-Host "  * BindingDB experimental affinities (for FEP validation):"
+Write-Host "      https://www.bindingdb.org"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "These are large and/or license-restricted, so we do NOT redistribute them."
+Write-Host "Respect each source's license. For a larger SYNTHETIC ensemble instead, run:"
+Write-Host "    python scripts/make_synthetic.py --members 256"

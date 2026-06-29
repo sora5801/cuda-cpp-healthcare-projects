@@ -5,13 +5,17 @@
 Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
+2. **Run** it on the committed `data/sample/covalent_sample.txt` input.
 3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
    print a clear `PASS`/`FAIL`.
 4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
    not a benchmark claim.
 
-The program splits its output deliberately:
+The program scores all `36³ = 46 656` ligand torsion conformations — one GPU
+thread each — and reports the lowest-energy (best) docked pose. The CPU does the
+same serial scan; both then `argmin` to the same pose.
+
+The output is split deliberately:
 
 - **stdout** is byte-for-byte deterministic and is diffed against
   [`expected_output.txt`](expected_output.txt).
@@ -22,12 +26,29 @@ The program splits its output deliberately:
 
 ```
 1.28 -- Covalent Docking
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+covalent docking: 46656 conformations (3 torsions x 36 samples)
+best pose: id=46401  energy=-2.347011 kcal/mol
+best torsions (deg): 330.0 280.0 350.0
+warhead-Sgamma bond = 1.810 A (ideal 1.810)
+ligand atom[0] = (-0.500, 1.414, 0.000) A
+RESULT: PASS (GPU matches CPU within tol=1.0e-06)
 ```
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+### How to read it
+
+- **best pose: id / energy** — the winning conformation's flat index and its total
+  energy (covalent constraint + ligand–pocket interaction). Lower is better; the
+  negative value means a favorable fit.
+- **best torsions (deg)** — the three rotatable-bond angles of the docked pose.
+- **warhead-Sgamma bond** — the covalent bond length actually achieved vs the
+  ideal 1.81 Å (a chemistry sanity check; here it sits exactly at the ideal).
+- **ligand atom[0]** — coordinates of the first ligand atom of the best pose.
+- **RESULT: PASS** — the GPU energy array matched the CPU array to within
+  `1e-6 kcal/mol` (the stderr line shows the actual error, ~`2e-15`, i.e. machine
+  precision: the CPU and GPU run the *same* double-precision math).
+
+The timing line on **stderr** (e.g. `CPU 15 ms / GPU 1 ms`) is illustrative only —
+the GPU's edge grows as the number of torsions (and thus conformations) rises.
+
+> **Not for clinical use.** The geometry, force field, and pocket are synthetic
+> and didactic.

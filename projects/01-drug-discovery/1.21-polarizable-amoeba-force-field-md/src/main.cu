@@ -1,122 +1,122 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: solve AMOEBA induced-dipole ensemble, verify
 // ---------------------------------------------------------------------------
-// Project 1.21 -- Polarizable / AMOEBA Force Field MD   (template skeleton)
+// Project 1.21 : Polarizable / AMOEBA Force Field MD
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// THE 5-STEP SHAPE (every project in this repo follows it)
+//   1. Load the ensemble of polarization systems (from data/sample, or build a
+//      built-in synthetic fallback).
+//   2. CPU reference: solve every member's induced dipoles serially with CG.
+//   3. GPU: one thread per member, the SAME CG solve each (kernels.cu).
+//   4. VERIFY: per-member results agree (same CG -> same numbers to round-off).
+//   5. REPORT: a deterministic table + ensemble summary to STDOUT; timing and
+//      run-varying detail to STDERR (so demo/run_demo can diff stdout only).
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
-//
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then amoeba.h (the physics + CG), kernels.cuh/.cu (the
+// GPU mapping), reference_cpu.cpp (the serial baseline). See ../THEORY.md.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // solve_ensemble_gpu, EnsembleConfig, PerSystemResult
+#include "reference_cpu.h"    // load_ensemble, make_synthetic_ensemble, integrate_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "1.21";
 static const char* PROJECT_NAME = "Polarizable / AMOEBA Force Field MD";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Verification tolerance. CPU and GPU run the IDENTICAL double-precision CG loop
+// (amoeba.h, shared host+device), so the only difference is the GPU's fused
+// multiply-add (FMA) contraction. Over a few dozen CG iterations that diverges by
+// ~1e-12 at most; we verify the per-member energy and net dipole to 1e-9, which
+// is far below any physically meaningful scale. (PATTERNS.md section 4.)
+static constexpr double TOLERANCE = 1.0e-9;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// Pretty-print one member row deterministically. We print fixed-width, fixed-
+// precision fields so the bytes never vary run-to-run.
+static void print_member(int idx, const AtomSystem& s, const PerSystemResult& r) {
+    // Distance between the two partner atoms (atoms 1 and 2 in the synthetic
+    // geometry sit at +/- d on x), reported as the swept control variable.
+    const double dx = s.pos[1][0] - s.pos[2][0];
+    const double dy = s.pos[1][1] - s.pos[2][1];
+    const double dz = s.pos[1][2] - s.pos[2][2];
+    const double sep = std::sqrt(dx*dx + dy*dy + dz*dz) * 0.5;  // half-separation
+    std::printf("  m%-4d n=%d sep=%.3f  iters=%2d  Upol=%+.6f  mu_x=%+.6f  max|mu|=%.6f\n",
+                idx, s.n, sep, r.iters, r.upol, r.mu_total[0], r.max_mu);
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
+    // ---- 1. Load (or synthesize) the ensemble ------------------------------
+    EnsembleConfig c;
+    const char* source = nullptr;
+    if (argc > 1) {
+        try {
+            c = load_ensemble(argv[1]);
+            source = argv[1];
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[error] %s\n", e.what());
+            return 2;
+        }
     } else {
-        make_synthetic(n, a, x, y);
+        c = make_synthetic_ensemble(8);     // built-in fallback (clearly synthetic)
+        source = "synthetic (built-in, 8 members)";
     }
+    const int M = ensemble_size(c);
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<PerSystemResult> res_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    integrate_cpu(c, res_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU ensemble (kernel timed inside the wrapper) -----------------
+    std::vector<PerSystemResult> res_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    solve_ensemble_gpu(c, res_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify: worst per-member disagreement on energy + net dipole ----
+    double worst = 0.0;
+    for (int i = 0; i < M; ++i) {
+        worst = std::fmax(worst, std::fabs(res_cpu[i].upol - res_gpu[i].upol));
+        for (int k = 0; k < 3; ++k)
+            worst = std::fmax(worst,
+                              std::fabs(res_cpu[i].mu_total[k] - res_gpu[i].mu_total[k]));
+    }
+    const bool pass = worst <= TOLERANCE;
 
     // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("AMOEBA induced-dipole SCF via matrix-free conjugate gradient\n");
+    std::printf("ensemble: %d members, CG tol=%.1e, max_iter=%d\n", M, c.tol, c.max_iter);
+    std::printf("per-member (idx, atoms, half-sep, CG iters, polarization energy, net dipole_x, peak |mu|):\n");
+    for (int i = 0; i < M; ++i)
+        print_member(i, c.systems[i], res_gpu[i]);
+
+    // Ensemble summary: a single deterministic line capturing the trend. As the
+    // partner atoms approach (later members), coupling strengthens -> the
+    // polarization energy becomes more negative (more stabilizing). We report the
+    // strongest (most negative) Upol and the largest induced dipole seen.
+    double min_upol = res_gpu[0].upol, max_mu = res_gpu[0].max_mu;
+    int    total_iters = 0;
+    for (int i = 0; i < M; ++i) {
+        if (res_gpu[i].upol < min_upol) min_upol = res_gpu[i].upol;
+        if (res_gpu[i].max_mu > max_mu) max_mu  = res_gpu[i].max_mu;
+        total_iters += res_gpu[i].iters;
+    }
+    std::printf("summary: strongest Upol=%+.6f  largest |mu|=%.6f  total CG iters=%d\n",
+                min_upol, max_mu, total_iters);
+    std::printf("RESULT: %s (GPU ensemble matches CPU within tol=%.1e)\n",
+                pass ? "PASS" : "FAIL", TOLERANCE);
 
     // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[data]   source: %s  (%d members)\n", source, M);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernel: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact only -- tiny ensembles are launch/copy "
+                         "bound; the GPU's edge grows with member count (real MD: 10^5+ atoms).\n");
+    std::fprintf(stderr, "[verify] worst per-member diff = %.3e  (tolerance %.1e)\n", worst, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

@@ -1,0 +1,23 @@
+# =====================================================================
+# data/sample/cph_system.txt  --  SYNTHETIC constant-pH titration system
+# Project 1.22 : Constant-pH Molecular Dynamics (reduced-scope teaching model)
+#
+# THIS DATA IS SYNTHETIC (hand-authored, not from any real protein). It is a
+# 3-residue toy designed so the result is interpretable: an acid (ASP) flanked
+# by two bases (HIS, LYS) on a line, 5 A apart, with electrostatic coupling ON
+# so the printed pKa values shift away from the intrinsic inputs. See data/README.md.
+#
+# FORMAT ('#' starts a comment to end of line; whitespace/newlines separate):
+#   line 1:  n_res  coulomb_k  kT       sweeps  burn_in
+#   line 2:  pH_min pH_max     n_pH     replicas seed
+#   then n_res lines:  pKa_intrinsic  q_prot  q_deprot   x    y    z
+#
+# coulomb_k = 332.06/epsilon (kcal*A/mol/e^2); set to 0 to switch coupling OFF
+# and recover the intrinsic pKa of each residue (Henderson-Hasselbalch check).
+# =====================================================================
+3   12.0   0.593   6000   1000
+0.0 14.0   15      8      20260628
+#  pKa   q_prot  q_deprot    x     y     z      residue
+   4.0    0.0    -1.0       0.0   0.0   0.0   # ASP (acid: neutral when protonated)
+   6.5    1.0     0.0       7.0   0.0   0.0   # HIS (base: +1 when protonated)
+  10.5    1.0     0.0      14.0   0.0   0.0   # LYS (base: +1 when protonated)

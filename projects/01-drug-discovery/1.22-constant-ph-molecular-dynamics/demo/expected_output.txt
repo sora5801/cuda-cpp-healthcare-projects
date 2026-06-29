@@ -1,5 +1,17 @@
 1.22 -- Constant-pH Molecular Dynamics
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+reduced-scope teaching model: ensemble Metropolis MC titration
+residues = 3, pH grid = 0.0..14.0 in 15 steps, replicas = 8
+coupling k = 12.0 kcal*A/mol/e^2, kT = 0.593 kcal/mol, sweeps = 6000 (burn-in 1000)
+
+fraction protonated (%), rows = residue, cols = pH:
+         pH 0.0 pH 1.0 pH 2.0 pH 3.0 pH 4.0 pH 5.0 pH 6.0 pH 7.0 pH 8.0 pH 9.0 pH10.0 pH11.0 pH12.0 pH13.0 pH14.0
+ASP         99    93    57    11     1     0     0     0     0     0     0     0     0     0     0
+HIS        100   100   100   100   100    97    76    24     3     0     0     0     0     0     0
+LYS        100   100   100   100   100   100   100   100   100    99    93    57    12     1     0
+
+predicted pKa (curve crosses 50%) vs intrinsic:
+  ASP  intrinsic  4.00  ->  pKa  2.15  (shift -1.85)
+  HIS  intrinsic  6.50  ->  pKa  6.50  (shift -0.00)
+  LYS  intrinsic 10.50  ->  pKa 11.16  (shift +0.66)
+
+RESULT: PASS (GPU protonation tally matches CPU exactly)

@@ -1,11 +1,12 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.23 -- QM/MM Molecular Dynamics   (template skeleton)
+# Project 1.23 -- QM/MM Molecular Dynamics   (reduced-scope teaching version)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/qm-mm-molecular-dynamics.sln (CLAUDE.md §5). Both
-# compile the SAME src/ files, so they stay in lockstep.
+# compile the SAME src/ files, so they stay in lockstep. Only the CUDA runtime is
+# needed -- the quantum step is an analytic 2x2 solve, so no cuSOLVER/cuBLAS link.
 #
 #   cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build/cmake

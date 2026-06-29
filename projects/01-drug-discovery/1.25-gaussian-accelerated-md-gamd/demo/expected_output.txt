@@ -1,5 +1,16 @@
 1.25 -- Gaussian-Accelerated MD (GaMD)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+model: double-well U(x)=3.0*(x^2-1)^2  kT=1.00  walkers=512  steps=8000 (equil 2000)
+GaMD boost: E=3.00  k0=0.15  k=0.0500  (dV=0.5*k*(E-U)^2 for U<E)
+reweighted PMF (2nd-order cumulant), F(x) in kT, min shifted to 0:
+  x=-1.95 : F_sim=  n/a  F_true= 23.56
+  x=-1.55 : F_sim=  5.44  F_true=  5.90
+  x=-1.05 : F_sim=  0.03  F_true=  0.03
+  x=-0.55 : F_sim=  1.62  F_true=  1.46
+  x=-0.05 : F_sim=  3.27  F_true=  2.99
+  x=+0.45 : F_sim=  2.15  F_true=  1.91
+  x=+0.95 : F_sim=  0.03  F_true=  0.03
+  x=+1.45 : F_sim=  3.66  F_true=  3.65
+  x=+1.95 : F_sim=  n/a  F_true= 23.56
+recovered barrier height = 3.26 kT  (true = 3.00 kT)
+enhanced sampling: 18 left-well + 18 right-well bins visited (both wells: yes)
+RESULT: PASS (GPU tally == CPU exactly; barrier recovered; both wells sampled)

@@ -1,33 +1,37 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real QM/MM data + tool pointers (Windows)
 # ---------------------------------------------------------------------------
-# Project 1.23 -- QM/MM Molecular Dynamics   (template skeleton)
+# Project 1.23 : QM/MM Molecular Dynamics   (reduced-scope teaching version)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. THERE IS NOTHING TO DOWNLOAD for this demo:
+# the ensemble is generated from data/sample/ensemble_params.txt by the program.
+# This script just points at the real datasets and production QM/MM engines a
+# learner would graduate to.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.23 -- QM/MM Molecular Dynamics"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    QM/MM benchmark from SAMPL challenges (verify URL); enzyme reaction databases (BRENDA, https://www.brenda-enzymes.org); crystal structures of enzyme-drug complexes from PDB (https://www.rcsb.org); RCSB ligand validation data (https://www.rcsb.org)."
+Write-Host "There is NO file to download: the program derives every trajectory's"
+Write-Host "(field, x0) from the sweep in data/sample/ensemble_params.txt, and the"
+Write-Host "model potential-energy surface is built analytically in src/qmmm.h."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "For REAL QM/MM (enzyme reactions, covalent inhibitors, proton wires):"
+Write-Host "  Enzyme-drug complexes (PDB) : https://www.rcsb.org"
+Write-Host "  Enzyme reaction database    : https://www.brenda-enzymes.org"
+Write-Host "  SAMPL blind-challenge sets  : https://github.com/samplchallenges"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Production GPU QM/MM engines to graduate to:"
+Write-Host "  AMBER + QUICK (GPU DFT) : https://github.com/merzlab/QUICK"
+Write-Host "  TeraChem (GPU DFT)      : https://www.petachem.com"
+Write-Host "  OpenMM + PySCF QM/MM    : https://github.com/openmm/openmm"
+Write-Host "  CP2K (periodic QM/MM)   : https://github.com/cp2k/cp2k"
+Write-Host ""
+Write-Host "Bigger SYNTHETIC ensemble (no download):"
+Write-Host "  python scripts/make_synthetic.py --nf 64 --nx 64"
+Write-Host ""
+Write-Host "Target data dir: $ProjectRoot\data"

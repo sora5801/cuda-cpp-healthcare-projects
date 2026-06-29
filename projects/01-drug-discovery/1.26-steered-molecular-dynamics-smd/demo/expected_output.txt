@@ -1,5 +1,13 @@
 1.26 -- Steered Molecular Dynamics (SMD)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+constant-velocity SMD: 8192 trajectories x 25000 steps, pull 0.00->1.00 nm
+spring k=2000.0 kJ/mol/nm^2  v=0.020 nm/ps  gamma=500.0  kT=2.4943 kJ/mol
+sample work W_i (kJ/mol):
+  traj 0    :    6.0356
+  traj 2048 :  -12.1780
+  traj 4096 :    0.8249
+  traj 6144 :  -17.3072
+  traj 8191 :    0.8089
+work distribution: min=-26.8374  mean=-1.8871  max=23.7679 kJ/mol
+free energy (kJ/mol): naive <W>=-1.8871  Jarzynski dG=-11.3200  true dG=-12.0000
+Jarzynski error = 0.6800 kJ/mol (tol 1.50); dissipation <W>-dG = 10.1129
+RESULT: PASS (GPU==CPU work to ~1e-12; Jarzynski recovers true dG within tol)

@@ -2,11 +2,12 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 1.22 -- Constant-pH Molecular Dynamics   (template skeleton)
+# Project 1.22 : Constant-pH Molecular Dynamics (reduced-scope teaching model)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. This project ships a committed SYNTHETIC
+# sample (data/sample/cph_system.txt) that is enough for the demo, so there is
+# nothing to auto-download; this script only points at the real benchmarks.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,19 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.22 -- Constant-pH Molecular Dynamics"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    pKa databases: PKAD (https://compbio.clemson.edu/pkad/), PHMD reference pKa values; Benchmark pKa sets for Asp/Glu/His/Cys/Lys residues; DrugBank compounds with ionizable groups (https://go.drugbank.com)."
+echo "This project runs entirely on the committed SYNTHETIC sample:"
+echo "    data/sample/cph_system.txt   (regenerate: python scripts/make_synthetic.py)"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "There is NO automatic download. To extend the project with real"
+echo "experimental pKa values, obtain them yourself from:"
+echo "  * PKAD  -- experimental protein-residue pKa database:"
+echo "      https://compbio.clemson.edu/pkad/"
+echo "  * PHMD / benchmark pKa sets for Asp/Glu/His/Cys/Lys residues"
+echo "      (see the constant-pH MD literature, e.g. AMBER CpHMD papers)."
+echo "  * DrugBank -- ionizable-group compounds (registration required):"
+echo "      https://go.drugbank.com"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Respect each source's license. For credentialed sets, register on the"
+echo "site -- this script will NOT bypass authentication. Map a real residue into"
+echo "the toy by editing pKa_intrinsic / charges / positions in the sample file"
+echo "(field meanings are in data/README.md)."

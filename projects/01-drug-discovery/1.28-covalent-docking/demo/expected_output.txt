@@ -1,5 +1,7 @@
 1.28 -- Covalent Docking
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+covalent docking: 46656 conformations (3 torsions x 36 samples)
+best pose: id=46401  energy=-2.347011 kcal/mol
+best torsions (deg): 330.0 280.0 350.0
+warhead-Sgamma bond = 1.810 A (ideal 1.810)
+ligand atom[0] = (-0.500, 1.414, 0.000) A
+RESULT: PASS (GPU matches CPU within tol=1.0e-06)

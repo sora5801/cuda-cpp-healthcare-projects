@@ -1,0 +1,21 @@
+# SYNTHETIC covalent-docking problem (NOT real data; teaching only).
+# Project 1.28 -- field order matches load_problem() in src/reference_cpu.cpp.
+# Lines beginning with '#' are comments stripped by the loader.
+#
+# anchor (warhead carbon, bonded to cysteine S-gamma)  x y z [A]
+0.0 0.0 0.0
+# cysteine S-gamma position  x y z [A]
+1.81 0.0 0.0
+# covalent constraint: bond_len_ideal[A]  angle_ideal[rad]  k_bond  k_angle
+1.81 1.910633 300.0 100.0
+# ligand chain: seg_len[A]  bond_angle[rad]  first_dir(x y z)
+1.50 1.910633 -0.333333 0.942809 0.000000
+# ligand-atom nonbonded: lig_sigma[A]  lig_epsilon[kcal/mol]  lig_charge[e]
+3.40 0.10 -0.10
+# pocket atoms (6): x y z sigma[A] epsilon[kcal/mol] charge[e]
+0.382 -3.497 4.476 3.4 0.2 0.1
+5.194 6.384 0.686 3.4 0.2 -0.1
+-3.293 -0.819 6.642 3.4 0.2 0.1
+0.17 0.809 -7.523 3.4 0.2 -0.1
+-7.918 1.226 -1.574 3.4 0.2 0.05
+-2.702 7.121 -4.19 3.4 0.2 -0.05

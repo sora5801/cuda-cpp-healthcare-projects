@@ -1,5 +1,13 @@
 1.23 -- QM/MM Molecular Dynamics
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Reduced-scope teaching model: proton transfer on a 2-state QM surface
+  with classical (MM) electrostatic embedding + velocity-Verlet MD.
+QM/MM ensemble: 256 trajectories (16 field x 16 x0), 5000 Verlet steps @ dt=0.004
+electronic coupling beta=2.000  well minima x=[-0.60,0.60]  proton mass=8.00
+sample trajectories (field x0 -> final_x final_E min_gap %product transferred):
+  t0    : +0.000 -0.700 -> -0.57210  +0.14656 14.98452   0.00 0
+  t64   : -6.400 -0.700 -> +1.14519  -1.65603  4.00000  53.36 1
+  t128  : -12.800 -0.700 -> +2.04336  +9.21546  4.00000  58.88 1
+  t192  : -19.200 -0.700 -> -0.55553 +10.80633  4.00001  64.18 0
+  t255  : -24.000 -0.500 -> -0.32359  +8.68316  4.00000  66.60 0
+ensemble: 90/256 trajectories transferred; mean final E = +2.62828; overall min gap = 4.00000
+RESULT: PASS (GPU ensemble matches CPU within tol=1.0e-09)

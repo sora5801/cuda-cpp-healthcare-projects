@@ -1,5 +1,6 @@
 # Changelog — newest first; each entry links to its push-note in `push-notes/`.
 
+- 2026-06-29 #13 -- [phase2 batch2d drug-discovery advanced-md](push-notes/2026-06-29-13-phase2-batch2d-drug-discovery-advanced-md.md)
 - 2026-06-29 #12 -- [phase2 batch2c drug-discovery intermediate](push-notes/2026-06-29-12-phase2-batch2c-drug-discovery-intermediate.md)
 - 2026-06-29 #11 -- [phase2 batch2b drug-discovery](push-notes/2026-06-29-11-phase2-batch2b-drug-discovery.md)
 - 2026-06-29 #10 -- [phase2 batch2a drug-discovery](push-notes/2026-06-29-10-phase2-batch2a-drug-discovery.md)

@@ -2,15 +2,15 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 37/301 projects done (12.3%) | todo 264 | in-progress 0 | missing 0
+**Progress:** 43/301 projects done (14.3%) | todo 258 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 23 | 0 | 44 |
-| 🟡 Intermediate | 206 | 13 | 0 | 193 |
+| 🟡 Intermediate | 206 | 19 | 0 | 187 |
 | 🔴 Advanced | 28 | 1 | 0 | 27 |
 
-## 1. Drug Discovery & Molecular Design  (24/35 done)
+## 1. Drug Discovery & Molecular Design  (30/35 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -34,14 +34,14 @@
 | 1.18 | Fragment / Combinatorial Library Enumeration | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.19 | Network / Polypharmacology Modeling | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.20 | Reaction Yield / Retrosynthesis Scoring | 🟡 Intermediate | Active R&D | [x] done | - | - |
-| 1.21 | Polarizable / AMOEBA Force Field MD | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 1.22 | Constant-pH Molecular Dynamics | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 1.23 | QM/MM Molecular Dynamics | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 1.21 | Polarizable / AMOEBA Force Field MD | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 1.22 | Constant-pH Molecular Dynamics | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 1.23 | QM/MM Molecular Dynamics | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.24 | Umbrella Sampling / WHAM Free Energy Profiles | 🟢 Beginner | Established | [x] done | - | - |
-| 1.25 | Gaussian-Accelerated MD (GaMD) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 1.26 | Steered Molecular Dynamics (SMD) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 1.25 | Gaussian-Accelerated MD (GaMD) | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 1.26 | Steered Molecular Dynamics (SMD) | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.27 | MM-GBSA / MM-PBSA Rescoring | 🟢 Beginner | Established | [x] done | - | - |
-| 1.28 | Covalent Docking | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 1.28 | Covalent Docking | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.29 | Kinase Selectivity Panel Scoring | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 1.30 | Trajectory RMSD, Clustering & Contact Analysis | 🟢 Beginner | Established | [x] done | worker | main |
 | 1.31 | Solvent-Accessible Surface Area (SASA) on GPU | 🟢 Beginner | Established | [x] done | worker | main |

@@ -1,52 +1,57 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for covalent docking
 // ---------------------------------------------------------------------------
-// Project 1.28 -- Covalent Docking   (template skeleton)
+// Project 1.28 : Covalent Docking
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
+//   The "what the GPU offers" header. main.cu calls score_all_gpu(); kernels.cu
 //   implements both the host wrapper and the device kernel. Included only by
 //   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   C++ compiler must never see it -- that is why the CPU reference and the
+//   shared physics live in separate pure-C++ headers, reference_cpu.h/docking.h).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+// THE BIG IDEA
+//   The covalent search evaluates one energy per torsion-grid conformation, and
+//   every conformation is INDEPENDENT (it only reads the shared, read-only
+//   DockProblem). So we give each conformation its OWN GPU THREAD: thread
+//   global-index `id` scores conformation `id` by calling the very same
+//   score_conformation() (docking.h) the CPU reference uses. A grid-stride loop
+//   lets a modest grid cover the exponentially many conformations.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   This is the canonical "score N independent candidates" pattern (cf. project
+//   1.12 Tanimoto). The GPU pays off because the conformation count grows like
+//   GRID_PER_DOF^N_TORSIONS -- the curse of dimensionality that makes flexible
+//   docking expensive on a CPU. See ../THEORY.md "GPU mapping".
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+//   We deliberately do the final argmin on the HOST (after copying the energy
+//   array back), not with a device atomic. A floating-point atomicMin race is
+//   nondeterministic in the tie case; copying the array and reducing on the host
+//   keeps stdout byte-identical run to run (docs/PATTERNS.md section 3).
+//
+// READ THIS AFTER: docking.h, reference_cpu.h, util/cuda_check.cuh,
+// util/timer.cuh. Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
+#include "reference_cpu.h"   // DockProblem, DockResult, n_conformations (pure C++)
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// score_kernel: one logical thread per conformation, via a grid-stride loop so
+// a fixed-size grid covers any number of conformations.
+//   p   : the docking problem, passed BY VALUE (small POD -> copied into each
+//         thread's parameter space; read-only, identical for all threads).
+//   M   : total number of conformations (guards the grid-stride bound).
+//   out : device pointer to M doubles; out[id] = energy of conformation id.
+__global__ void score_kernel(DockProblem p, long long M, double* __restrict__ out);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
+// score_all_gpu: the host-callable "score every conformation on the GPU".
+//   Allocates the device energy buffer, launches score_kernel, times ONLY the
+//   kernel (CUDA events, not the copies), copies the energies back, and frees.
+//   p         : the docking problem (host-side; copied to the kernel by value)
+//   energies  : host output, resized to n_conformations(); one energy per id
 //   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+void score_all_gpu(const DockProblem& p, std::vector<double>& energies,
+                   float* kernel_ms);

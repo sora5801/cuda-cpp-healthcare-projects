@@ -1,52 +1,39 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU SMD-ensemble interface
 // ---------------------------------------------------------------------------
-// Project 1.26 -- Steered Molecular Dynamics (SMD)   (template skeleton)
+// Project 1.26 : Steered Molecular Dynamics (SMD)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (pattern: ENSEMBLE of independent stochastic trajectories)
+//   Jarzynski's free-energy estimate needs MANY independent constant-velocity
+//   SMD pulls of the same system, each with a different random thermal history.
+//   A single pull is sequential in time (step n+1 depends on step n) but totally
+//   independent of the other pulls -- so we give each trajectory its OWN GPU
+//   thread. The thread runs the full Langevin time loop in registers and writes
+//   one number: that trajectory's external work W_i. This is the same
+//   thread-per-trajectory mapping the SEIR ensemble (9.02) and PBPK (13.02) use,
+//   combined with a per-thread reproducible RNG (5.01) for the thermal noise.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The trajectory integrator is shared with the CPU (smd_core.h), so the GPU's
+//   W_i match the reference EXACTLY. The Jarzynski reduction over the work array
+//   is done once on the host (main.cu), identical for both sides. kernels.cu
+//   defines the kernel and its host launcher.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: smd_core.h, util/cuda_check.cuh, util/timer.cuh.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // SmdParams (pure C++, safe to include in a .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Device kernel: thread `i` runs SMD trajectory i and writes its work W_i.
+//   grid  : ceil(n_traj / THREADS_PER_BLOCK) blocks
+//   block : THREADS_PER_BLOCK threads
+//   thread (blockIdx.x, threadIdx.x) -> trajectory index i -> work[i]
+__global__ void smd_kernel(SmdParams p, double* __restrict__ work);
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Host wrapper: allocate device output, launch one thread per trajectory, copy
+// the work array back, and report the GPU kernel time (CUDA-event measured).
+//   p         : the SMD configuration (passed by value into the kernel)
+//   work      : resized to n_traj and filled with the GPU's per-trajectory work
+//   kernel_ms : out-param, milliseconds the kernel took (teaching artifact)
+void run_gpu(const SmdParams& p, std::vector<double>& work, float* kernel_ms);

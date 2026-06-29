@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.25 -- Gaussian-Accelerated MD (GaMD)   (template skeleton)
+# Project 1.25 : Gaussian-Accelerated MD (GaMD)   (reduced-scope teaching version)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/gaussian-accelerated-md-gamd.sln (CLAUDE.md §5). Both

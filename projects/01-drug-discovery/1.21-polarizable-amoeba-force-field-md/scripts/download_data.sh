@@ -2,11 +2,12 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 1.21 -- Polarizable / AMOEBA Force Field MD   (template skeleton)
+# Project 1.21 : Polarizable / AMOEBA Force Field MD
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. The committed tiny SYNTHETIC sample is enough
+# to run the demo offline; this script only points you at the real AMOEBA
+# parameter sets and reference data.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,19 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.21 -- Polarizable / AMOEBA Force Field MD"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    AMOEBA protein force field parameter files (https://github.com/TinkerTools/tinker); WaterMap/hydration site datasets (Schrodinger, verify URL); BindingDB experimental affinities (https://www.bindingdb.org); NIST thermophysical properties (https://webbook.nist.gov)."
+echo "This project ships a tiny SYNTHETIC ensemble (data/sample/amoeba_ensemble.txt)"
+echo "that fully exercises the induced-dipole CG solver offline. No download is"
+echo "required to build, run, or verify the demo."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "To study REAL AMOEBA force-field data and validation targets:"
+echo "  * AMOEBA / AMOEBA+ parameter files (Tinker .prm/.key):"
+echo "      https://github.com/TinkerTools/tinker        (params/ directory)"
+echo "      https://github.com/TinkerTools/poltype2      (AMOEBA+ parameterization)"
+echo "  * NIST thermophysical properties (water dielectric / dipole benchmarks):"
+echo "      https://webbook.nist.gov"
+echo "  * BindingDB experimental affinities (for FEP validation):"
+echo "      https://www.bindingdb.org"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "These are large and/or license-restricted, so we do NOT redistribute them."
+echo "Respect each source's license. For a larger SYNTHETIC ensemble instead, run:"
+echo "    python scripts/make_synthetic.py --members 256"

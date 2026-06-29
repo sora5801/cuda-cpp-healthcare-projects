@@ -1,12 +1,13 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  SMD data pointers (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 1.26 -- Steered Molecular Dynamics (SMD)   (template skeleton)
+# Project 1.26 : Steered Molecular Dynamics (SMD)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, and NEVER bypasses
+# credentials/registration. For THIS project there is nothing to fetch -- the
+# reduced 1-D model is fully specified by the 14 numbers in
+# data/sample/smd_config.txt. This script prints where to find REAL full-atom SMD
+# material and defers to scripts/make_synthetic.py for larger offline ensembles.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,18 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.26 -- Steered Molecular Dynamics (SMD)"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    NAMD SMD tutorials (https://www.ks.uiuc.edu/Training/Tutorials/); BindingDB residence time data (https://www.bindingdb.org); PDB force-probe simulation benchmark cases; published SMD studies on ion channels and motor proteins."
+Write-Host "There is NO file to download: the 1-D teaching model is fully defined by"
+Write-Host "data/sample/smd_config.txt (14 numbers; see data/README.md)."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "For REAL full-atom SMD (pull a ligand out of a pocket in a true MD field):"
+Write-Host "  NAMD SMD tutorials : https://www.ks.uiuc.edu/Training/Tutorials/"
+Write-Host "                       (constant-velocity / constant-force SMD walkthroughs)"
+Write-Host "  GROMACS pull code  : https://github.com/gromacs/gromacs   (GPU pull-coord)"
+Write-Host "  OpenMM             : https://github.com/openmm/openmm     (CustomExternalForce)"
+Write-Host "  alchemlyb          : https://github.com/alchemistry/alchemlyb (Jarzynski post-proc)"
+Write-Host "  BindingDB          : https://www.bindingdb.org           (residence-time data)"
+Write-Host "  PDB                : https://www.rcsb.org                 (force-probe structures)"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Bigger SYNTHETIC ensemble for this project (no download, tighter Jarzynski):"
+Write-Host "  python scripts/make_synthetic.py --n-traj 65536"

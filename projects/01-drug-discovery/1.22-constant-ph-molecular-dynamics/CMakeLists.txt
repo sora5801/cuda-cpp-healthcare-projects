@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.22 -- Constant-pH Molecular Dynamics   (template skeleton)
+# Project 1.22 : Constant-pH Molecular Dynamics (reduced-scope teaching model)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/constant-ph-molecular-dynamics.sln (CLAUDE.md §5). Both

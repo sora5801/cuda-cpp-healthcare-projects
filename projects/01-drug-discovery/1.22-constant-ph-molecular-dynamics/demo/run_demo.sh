@@ -2,7 +2,7 @@
 # ===========================================================================
 # demo/run_demo.sh  --  One command: build (if needed) + run + verify (Linux)
 # ---------------------------------------------------------------------------
-# Project 1.22 -- Constant-pH Molecular Dynamics   (template skeleton)
+# Project 1.22 : Constant-pH Molecular Dynamics (reduced-scope teaching model)
 #
 # Uses the OPTIONAL CMake build (the required deliverable is the VS solution).
 # Mirrors run_demo.ps1: deterministic stdout is diffed against
@@ -14,7 +14,7 @@ set -euo pipefail
 DEMO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$DEMO")"
 SLUG="constant-ph-molecular-dynamics"
-SAMPLE="$ROOT/data/sample/saxpy_sample.txt"
+SAMPLE="$ROOT/data/sample/cph_system.txt"
 EXPECTED="$DEMO/expected_output.txt"
 BUILD="$ROOT/build/cmake"
 EXE="$BUILD/$SLUG"

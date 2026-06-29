@@ -1,33 +1,36 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real QM/MM data + tool pointers (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 1.23 -- QM/MM Molecular Dynamics   (template skeleton)
+# Project 1.23 : QM/MM Molecular Dynamics   (reduced-scope teaching version)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. THERE IS NOTHING TO DOWNLOAD for this demo:
+# the ensemble is generated from data/sample/ensemble_params.txt by the program.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
 echo "[download_data] Project 1.23 -- QM/MM Molecular Dynamics"
-echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    QM/MM benchmark from SAMPL challenges (verify URL); enzyme reaction databases (BRENDA, https://www.brenda-enzymes.org); crystal structures of enzyme-drug complexes from PDB (https://www.rcsb.org); RCSB ligand validation data (https://www.rcsb.org)."
+echo "There is NO file to download: the program derives every trajectory's"
+echo "(field, x0) from the sweep in data/sample/ensemble_params.txt, and the"
+echo "model potential-energy surface is built analytically in src/qmmm.h."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "For REAL QM/MM (enzyme reactions, covalent inhibitors, proton wires):"
+echo "  Enzyme-drug complexes (PDB) : https://www.rcsb.org"
+echo "  Enzyme reaction database    : https://www.brenda-enzymes.org"
+echo "  SAMPL blind-challenge sets  : https://github.com/samplchallenges"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Production GPU QM/MM engines to graduate to:"
+echo "  AMBER + QUICK (GPU DFT) : https://github.com/merzlab/QUICK"
+echo "  TeraChem (GPU DFT)      : https://www.petachem.com"
+echo "  OpenMM + PySCF QM/MM    : https://github.com/openmm/openmm"
+echo "  CP2K (periodic QM/MM)   : https://github.com/cp2k/cp2k"
+echo
+echo "Bigger SYNTHETIC ensemble (no download):"
+echo "  python scripts/make_synthetic.py --nf 64 --nx 64"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"
