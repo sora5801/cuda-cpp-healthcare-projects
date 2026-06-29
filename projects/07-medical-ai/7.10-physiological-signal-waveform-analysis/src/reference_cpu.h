@@ -1,31 +1,44 @@
 // ===========================================================================
-// src/reference_cpu.h  --  Prototype of the CPU reference computation
+// src/reference_cpu.h  --  Signal model + FIR filter + CPU convolution
 // ---------------------------------------------------------------------------
-// Project 7.10 -- Physiological Signal & Waveform Analysis   (template skeleton)
+// Project 7.10 : Physiological Signal & Waveform Analysis
 //
-// WHY A SEPARATE HEADER
-//   The CPU reference (reference_cpu.cpp) is compiled by the plain C++ compiler
-//   and must NOT see any CUDA/__global__ syntax, so its prototype cannot live in
-//   kernels.cuh. Both main.cu and reference_cpu.cpp include THIS pure-C++ header
-//   so they agree on the function signature.
+// WHAT THIS PROJECT COMPUTES
+//   A 1-D CONVOLUTION of a physiological waveform (ECG/EEG-like) with an FIR
+//   filter -- the operation at the heart of waveform analysis. The same 1-D
+//   convolution is (a) classical signal filtering (denoising, band-pass) and
+//   (b) the conv layer of every 1-D waveform CNN (ResNet/TCN/WaveNet). Here we
+//   low-pass-filter a noisy synthetic ECG with a Gaussian FIR kernel.
 //
-// THE CONTRACT (this template's placeholder computation):
-//   SAXPY -- "Single-precision A*X Plus Y":  out[i] = a * x[i] + y[i].
-//   This is the canonical first GPU kernel; here it stands in as a buildable
-//   placeholder. TODO(impl): replace saxpy_cpu with this project's real
-//   reference computation, and update the prototype + callers accordingly.
+//   y[n] = sum_{k=0}^{K-1} h[k] * x[n - HALO + k] ,  HALO = (K-1)/2  (zero-padded)
 //
-//   The CPU reference exists for two reasons (CLAUDE.md section 5):
-//     (a) it is the readable baseline that makes the GPU speed-up legible, and
-//     (b) the demo runs BOTH and asserts they agree within tolerance.
+// WHY A GPU
+//   Each output sample is independent -> one thread per sample. The naive kernel
+//   re-reads the input K times per output from global memory; the optimized
+//   kernel TILES a block of the signal into SHARED MEMORY once and reads from
+//   there -- the canonical shared-memory-tiling lesson (kernels.cu). Clinical
+//   pipelines filter thousands of multi-hour recordings, which is GPU-bound.
+//
+//   Pure C++ header (no CUDA). kernels.cu reuses Signal.
 // ===========================================================================
 #pragma once
 
+#include <string>
 #include <vector>
 
-// Compute out = a*x + y on the CPU, element by element.
-//   x, y : input vectors of equal length n
-//   a    : the scalar multiplier
-//   out  : resized to n and filled with the result (output parameter)
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out);
+// A loaded waveform: n samples (uniformly sampled in time).
+struct Signal {
+    int n = 0;
+    std::vector<float> x;   // [n] samples
+};
+
+// Load a signal from the text format (data/README.md): "n" then n float samples.
+Signal load_signal(const std::string& path);
+
+// Build a normalized Gaussian low-pass FIR kernel of length K (odd), std sigma.
+// Returns h with sum(h)=1 (so a flat signal passes through unchanged).
+std::vector<float> make_gaussian_filter(int K, double sigma);
+
+// CPU reference: 1-D convolution y = x (*) h, zero-padded at the boundaries.
+// The trusted baseline the GPU tiled kernel is checked against. y sized to n.
+void conv1d_cpu(const Signal& s, const std::vector<float>& h, std::vector<float>& y);

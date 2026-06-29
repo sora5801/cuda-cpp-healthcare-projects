@@ -6,103 +6,108 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Filter a physiological waveform (ECG/EEG-like) with a **1-D convolution** — the
+single most important operation in waveform analysis. It is both classical signal
+filtering (denoising, band-pass) *and* the conv layer at the core of every 1-D
+waveform CNN (ResNet/TCN/WaveNet). The GPU lesson here is **shared-memory
+tiling**: stage a block of the signal in fast on-chip memory once, then reuse it
+across the overlapping output windows. Sixth distinct GPU pattern in the flagships.
 
 ## What this computes & why the GPU helps
 
-Processes continuous high-frequency physiological waveforms — ECG (500–2000 Hz), EEG (256–2048 Hz), arterial blood pressure, photoplethysmography — for automated diagnosis, anomaly detection, and prognostication. Long waveform segments (minutes to hours) require 1D temporal convolutions or transformer attention over thousands of time steps; both operations are GPU-bound. Processing multi-lead ECG simultaneously (12 leads × 5000 samples) as a 2D image enables CNN classification with no waveform-specific code. Batch processing of thousands of 24-hour Holter monitors in parallel on GPU is the primary throughput bottleneck in clinical annotation pipelines.
+Continuous high-frequency waveforms (ECG 500–2000 Hz, EEG 256–2048 Hz, ABP, PPG)
+are processed for denoising, feature extraction, and classification. The workhorse
+is the **1-D temporal convolution** over thousands of time steps. Each output
+sample is independent, but adjacent outputs share most of their inputs — so the
+naive kernel re-reads each input ~K times from global memory. Tiling into shared
+memory removes that redundancy. Clinical pipelines filter **thousands of 24-hour
+recordings** in parallel — squarely GPU-bound.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck** is the convolution itself; we use one thread per
+output sample with a shared-memory tile of the input (+halo) and the filter in
+constant memory.
 
 ## The algorithm in brief
 
-1D ResNet / Inception, temporal convolutional networks (TCN), WaveNet, Bidirectional LSTM, self-supervised waveform pretraining (wav2vec 2.0 for ECG), Short-Time Fourier Transform (STFT) + CNN, multi-scale attention, event detection with anchor-free detection heads.
+- **FIR filter** `h` (here a 31-tap Gaussian low-pass, unity DC gain).
+- **Convolution:** `y[n] = Σ_k h[k]·x[n − HALO + k]`, zero-padded at the ends.
+- **Tiling:** each block loads `BLOCK + (K−1)` inputs into shared memory, then
+  every thread reads its `K`-wide window from there.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+See [THEORY.md](THEORY.md) for the signal processing and the tiling analysis.
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145) + **CUDA 13.3** ([docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
 
-1. Open `build/physiological-signal-waveform-analysis.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/physiological-signal-waveform-analysis.exe`.
+1. Open `build/physiological-signal-waveform-analysis.sln`.
+2. **`Release|x64`** → **Build** → `build/x64/Release/physiological-signal-waveform-analysis.exe`.
 
-Command-line alternative (Developer PowerShell):
-
-```powershell
-msbuild build\physiological-signal-waveform-analysis.sln /p:Configuration=Release /p:Platform=x64
-```
+CLI: `msbuild build\physiological-signal-waveform-analysis.sln /p:Configuration=Release /p:Platform=x64`
 
 ## Run the demo
 
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.ps1
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+Filters the committed waveform on CPU + GPU and verifies they match.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: PhysioNet Computing in Cardiology Challenge 2021 — 12-lead ECG from multiple cohorts (https://physionet.org/content/challenge-2021/) MIMIC-IV-ECG — 800k+ ECGs from MIMIC patients (https://physionet.org/content/mimic-iv-ecg/) PTB-XL — 21,837 12-lead ECGs with cardiologist labels (https://physionet.org/content/ptb-xl/) Temple University EEG Corpus (TUEG) — 20k+ hours of clinical EEG (https://isip.piconepress.com/projects/tuh_eeg/)
+- **Sample (committed):** `data/sample/ecg_sample.txt` — a noisy **synthetic** ECG (2048 samples).
+- **Real waveforms:** PhysioNet / MIMIC-IV Waveform / MNE — see
+  `scripts/download_data.ps1` and [data/README.md](data/README.md).
+- Longer synthetic: `python scripts/make_synthetic.py --n 8192`.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+`demo/expected_output.txt` holds the deterministic filtered samples. The GPU
+tiled kernel (`src/kernels.cu`) and CPU reference (`src/reference_cpu.cpp`)
+convolve in the same order, so they agree to ~`1e-7` (well within the `1e-4`
+tolerance).
 
 ## Code tour
 
-Read in this order:
-
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — load, build filter, CPU + GPU convolve, verify, print.
+2. [`src/kernels.cuh`](src/kernels.cuh) — the tiled-kernel interface + the tiling idea.
+3. [`src/kernels.cu`](src/kernels.cu) — the shared-memory tiled kernel (the star) + host wrapper.
+4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the Gaussian filter + serial convolution.
 
 ## Prior art & further reading
 
-ECG-FM (https://github.com/bowang-lab/ecg-fm) — wav2vec-based ECG foundation model, 90M params, GPU-pretrained ESI (https://github.com/comp-well-org/ESI) — multimodal ECG + text contrastive pretraining foundation model CLEF ECG (https://github.com/Nokia-Bell-Labs/ecg-foundation-model) — single-lead ECG foundation model pretrained on 161k MIMIC patients MNE-Python (https://github.com/mne-tools/mne-python) — EEG/MEG processing; GPU via deep learning backends
+- **MNE-Python** (<https://github.com/mne-tools/mne-python>) — EEG/MEG processing & filtering.
+- **ECG-FM** (<https://github.com/bowang-lab/ecg-fm>) — wav2vec-style ECG foundation model (1-D convs at scale).
+- **PhysioNet / WFDB** (<https://github.com/MIT-LCP/wfdb-python>) — waveform I/O and toolkits.
+- **cuDNN / PyTorch `conv1d`** — the production 1-D convolution primitives this mirrors.
 
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
+Study these for the production approach; reimplement didactically (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-cuFFT for Fourier-domain convolutions on waveforms, cuDNN for 1D temporal convolutions, Flash Attention for long-sequence transformers; pattern: data-parallel batch processing across thousands of waveform windows, streaming input pipeline from waveform database. --
+**Shared-memory tiling** (block loads input tile + halo once) · filter in
+**constant memory** (warp broadcast) · one thread per output sample · dynamic
+shared memory sized to the tile. This is exactly the inner loop of a 1-D conv
+layer.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Naive vs tiled.** Write the naive kernel (read K inputs from global memory
+   per output) and compare its time to the tiled one as `K` grows.
+2. **Band-pass for ECG.** Replace the Gaussian low-pass with a band-pass FIR
+   (~0.5–40 Hz) that preserves the QRS complex; design it with a windowed sinc.
+3. **Batched multi-lead.** Filter 12 leads × many records at once (a 2-D launch),
+   the real clinical throughput case.
+4. **Separable 2-D.** Extend to a 2-D separable convolution (filter rows then
+   columns) — the bridge to image filtering.
+5. **`__restrict__` & unroll.** Measure the effect of `#pragma unroll` on the tap
+   loop and of marking pointers `__restrict__`.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- The filter is a **generic Gaussian low-pass**; a real ECG pipeline uses a
+  band-pass that preserves QRS (this one smooths the narrow R peak — see the demo).
+- Single signal, single precision; production batches thousands of records.
+- No learned filters here — but this *is* the 1-D conv that a waveform CNN learns.

@@ -1,34 +1,53 @@
 // ===========================================================================
-// src/reference_cpu.cpp  --  The plain-C++ baseline we trust
+// src/reference_cpu.cpp  --  Loader, Gaussian FIR, serial 1-D convolution
 // ---------------------------------------------------------------------------
-// Project 7.10 -- Physiological Signal & Waveform Analysis   (template skeleton)
-//
-// ROLE IN THE PROJECT
-//   This is the "ground truth" the GPU result is checked against. It is written
-//   to be OBVIOUSLY correct -- a single readable loop, no parallelism, no
-//   cleverness -- so that when the GPU and CPU agree, we believe the GPU.
-//
-//   Compiled by the host C++ compiler only (no CUDA here). See reference_cpu.h.
-//
-// TODO(impl): replace the SAXPY placeholder below with this project's real
-//             reference algorithm (keep it simple and readable on purpose).
-//
-// READ THIS AFTER: reference_cpu.h. Compare against kernels.cu (the GPU twin).
+// Project 7.10 : Physiological Signal & Waveform Analysis
+// Compiled by the host compiler only. See reference_cpu.h.
 // ===========================================================================
 #include "reference_cpu.h"
 
-// out[i] = a * x[i] + y[i], computed serially on the CPU.
-//   Complexity: O(n) time, O(1) extra space. This is the baseline whose wall
-//   time (timed in main.cu via util::CpuTimer) we compare with the GPU kernel.
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);  // allocate + zero n outputs
+#include <cmath>
+#include <fstream>
+#include <stdexcept>
+
+Signal load_signal(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) throw std::runtime_error("cannot open signal file: " + path);
+    Signal s;
+    if (!(in >> s.n) || s.n <= 0)
+        throw std::runtime_error("bad header (expected sample count n) in " + path);
+    s.x.resize(s.n);
+    for (int i = 0; i < s.n; ++i)
+        if (!(in >> s.x[i])) throw std::runtime_error("signal truncated in " + path);
+    return s;
+}
+
+std::vector<float> make_gaussian_filter(int K, double sigma) {
+    std::vector<float> h(K);
+    const double c = 0.5 * (K - 1);          // center tap
+    double sum = 0.0;
+    for (int k = 0; k < K; ++k) {
+        const double d = (k - c) / sigma;
+        h[k] = static_cast<float>(std::exp(-0.5 * d * d));
+        sum += h[k];
+    }
+    // Normalize so the taps sum to 1 (unity DC gain -> denoises without scaling).
+    for (int k = 0; k < K; ++k) h[k] = static_cast<float>(h[k] / sum);
+    return h;
+}
+
+void conv1d_cpu(const Signal& s, const std::vector<float>& h, std::vector<float>& y) {
+    const int n = s.n;
+    const int K = static_cast<int>(h.size());
+    const int halo = (K - 1) / 2;            // taps reach +/- halo around n
+    y.assign(n, 0.0f);
     for (int i = 0; i < n; ++i) {
-        // The whole computation in one line. Each output element depends only
-        // on its own inputs -> no data dependencies between iterations, which
-        // is exactly WHY this maps perfectly onto independent GPU threads
-        // (one thread per i) in kernels.cu.
-        out[static_cast<std::size_t>(i)] = a * x[static_cast<std::size_t>(i)]
-                                             + y[static_cast<std::size_t>(i)];
+        float acc = 0.0f;
+        // Centered convolution; samples outside [0,n) are treated as zero.
+        for (int k = 0; k < K; ++k) {
+            const int j = i - halo + k;
+            if (j >= 0 && j < n) acc += h[k] * s.x[j];
+        }
+        y[i] = acc;
     }
 }

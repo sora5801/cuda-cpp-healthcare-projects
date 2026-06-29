@@ -1,94 +1,90 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Shared-memory tiled 1-D convolution kernel + wrapper
 // ---------------------------------------------------------------------------
-// Project 7.10 -- Physiological Signal & Waveform Analysis   (template skeleton)
+// Project 7.10 : Physiological Signal & Waveform Analysis
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of conv1d_cpu(): same math, but each block stages its input window
+// in shared memory once. main.cu runs both and checks they agree.
+// See ../THEORY.md "GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
-#include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "util/cuda_check.cuh"
+#include "util/timer.cuh"
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+#include <cstdio>
+#include <cstdlib>
+
+// Filter taps in CONSTANT memory: tiny, read by every thread, never change
+// during the launch -> the constant cache broadcasts a tap to a whole warp.
+__constant__ float c_h[CONV_K_MAX];
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// conv1d_kernel: one thread per output sample, reading from a shared tile.
+//   Tile layout: tile[j] holds input x[blockStart - halo + j]. The block loads
+//   blockDim.x "main" samples plus `halo` extra on each side (the HALO), with
+//   zeros past the signal ends. After __syncthreads, thread t computes
+//   y = sum_k h[k] * tile[t + k]  (which equals sum_k h[k] * x[n - halo + k]).
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void conv1d_kernel(const float* __restrict__ x, int n, int K, int halo,
+                              float* __restrict__ y) {
+    extern __shared__ float tile[];          // size = blockDim.x + 2*halo
+    const int t = threadIdx.x;
+    const int start = blockIdx.x * blockDim.x;
+    const int gi = start + t;                 // this thread's output index
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
+    // 1) Load the "main" sample for this thread into the tile interior.
+    tile[t + halo] = (gi < n) ? x[gi] : 0.0f;
+
+    // 2) The first `halo` threads also load the left and right halo samples.
+    //    (Requires halo <= blockDim.x, which the host wrapper guarantees.)
+    if (t < halo) {
+        const int li = start - halo + t;                 // left halo source
+        tile[t] = (li >= 0 && li < n) ? x[li] : 0.0f;
+        const int ri = start + blockDim.x + t;           // right halo source
+        tile[blockDim.x + halo + t] = (ri < n) ? x[ri] : 0.0f;
+    }
+    __syncthreads();                          // tile fully loaded before reads
+
+    // 3) Convolve from shared memory (filter from constant memory).
+    if (gi < n) {
+        float acc = 0.0f;
+        for (int k = 0; k < K; ++k) acc += c_h[k] * tile[t + k];
+        y[gi] = acc;
     }
 }
 
-// ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
-// ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void conv1d_gpu(const Signal& s, const std::vector<float>& h,
+                std::vector<float>& y, float* kernel_ms) {
+    const int n = s.n;
+    const int K = static_cast<int>(h.size());
+    const int halo = (K - 1) / 2;
+    y.assign(n, 0.0f);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // Sanity: the constant buffer and the halo-loading scheme have fixed limits.
+    if (K > CONV_K_MAX || halo > CONV_BLOCK) {
+        std::fprintf(stderr, "[conv1d_gpu] filter too long (K=%d): max %d, halo<=%d\n",
+                     K, CONV_K_MAX, CONV_BLOCK);
+        std::exit(EXIT_FAILURE);
+    }
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpyToSymbol(c_h, h.data(), K * sizeof(float)));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    float *d_x = nullptr, *d_y = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_x, n * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_y, n * sizeof(float)));
+    CUDA_CHECK(cudaMemcpy(d_x, s.x.data(), n * sizeof(float), cudaMemcpyHostToDevice));
+
+    const int block = CONV_BLOCK;
+    const int grid = (n + block - 1) / block;
+    const std::size_t shmem = static_cast<std::size_t>(block + 2 * halo) * sizeof(float);
+
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    conv1d_kernel<<<grid, block, shmem>>>(d_x, n, K, halo, d_y);
+    *kernel_ms = timer.stop_ms();
+    CUDA_CHECK_LAST("conv1d_kernel");
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
+    CUDA_CHECK(cudaMemcpy(y.data(), d_y, n * sizeof(float), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaFree(d_x));
     CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
 }

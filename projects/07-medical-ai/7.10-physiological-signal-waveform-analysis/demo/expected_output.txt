@@ -1,5 +1,6 @@
 7.10 -- Physiological Signal & Waveform Analysis
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+1-D FIR low-pass: n=2048 samples, K=31 taps, sigma=5.0
+filtered peak = 0.507864 at sample 1664
+removed (RMS of x - filtered) = 0.090716
+filtered samples (8 evenly spaced): 0.010393 0.078043 0.035379 0.027641 -0.090904 0.232422 0.131579 -0.036028
+RESULT: PASS (GPU matches CPU within tol=1.0e-04)

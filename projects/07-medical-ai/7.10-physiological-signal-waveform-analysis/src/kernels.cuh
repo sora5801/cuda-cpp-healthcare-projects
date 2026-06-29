@@ -1,52 +1,41 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU 1-D convolution interface (shared-memory tiled)
 // ---------------------------------------------------------------------------
-// Project 7.10 -- Physiological Signal & Waveform Analysis   (template skeleton)
+// Project 7.10 : Physiological Signal & Waveform Analysis
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (sixth flagship pattern: SHARED-MEMORY TILING)
+//   Each output sample y[n] needs K neighbouring inputs. Adjacent output
+//   samples share almost all of those inputs, so the naive "one thread per
+//   output, read K inputs from global memory" re-reads each input ~K times. The
+//   optimized kernel loads a BLOCK of inputs (plus a HALO of K-1 extra samples)
+//   into fast on-chip SHARED MEMORY once, then every thread reads its window
+//   from there -- the canonical tiling optimization. The small filter lives in
+//   CONSTANT memory (broadcast to all threads).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   kernels.cu defines the kernel. main.cu calls conv1d_gpu().
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // Signal (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Threads per block (= output samples per block / tile width).
+static constexpr int CONV_BLOCK = 256;
+// Maximum supported filter length (sets the constant-memory buffer size).
+static constexpr int CONV_K_MAX = 64;
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Device kernel: thread computes one output sample from a shared-memory tile.
+//   x    : [n] device input signal
+//   K    : filter length ; halo = (K-1)/2
+//   y    : [n] device output (filtered signal)
+// The filter taps are read from a __constant__ array defined in kernels.cu.
+// Launched with dynamic shared memory of (blockDim.x + 2*halo) floats.
+__global__ void conv1d_kernel(const float* __restrict__ x, int n, int K, int halo,
+                              float* __restrict__ y);
+
+// Host wrapper: upload filter (to constant memory) + signal, launch the tiled
+// kernel, copy the result back, report kernel time.
+void conv1d_gpu(const Signal& s, const std::vector<float>& h,
+                std::vector<float>& y, float* kernel_ms);

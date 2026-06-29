@@ -1,95 +1,101 @@
 # THEORY — 7.10 Physiological Signal & Waveform Analysis
 
-> The deep didactic explanation (the "why"). Written for a sharp student who
-> knows C++ but is new to CUDA and new to this domain. Diagrams in Mermaid/ASCII
-> are welcome. See [README.md](README.md) for the quick tour and build steps.
->
-> _Educational only — not for clinical use._
-
-<!-- =======================================================================
-     The block below is the verbatim catalog deep-dive for this project,
-     stamped in by scaffold.py as raw material. Use it to write the sections
-     that follow, then DELETE it (or fold it into "The science"). Every
-     TODO(theory) below must be completed before the project is "done".
-     ======================================================================= -->
-
-<details>
-<summary>Catalog deep-dive (raw source material — fold into the sections below, then remove)</summary>
-
-### 7.10 Physiological Signal & Waveform Analysis 🟡 · Active R&D
-
-- **Deep dive:** Processes continuous high-frequency physiological waveforms — ECG (500–2000 Hz), EEG (256–2048 Hz), arterial blood pressure, photoplethysmography — for automated diagnosis, anomaly detection, and prognostication. Long waveform segments (minutes to hours) require 1D temporal convolutions or transformer attention over thousands of time steps; both operations are GPU-bound. Processing multi-lead ECG simultaneously (12 leads × 5000 samples) as a 2D image enables CNN classification with no waveform-specific code. Batch processing of thousands of 24-hour Holter monitors in parallel on GPU is the primary throughput bottleneck in clinical annotation pipelines.
-- **Key algorithms:** 1D ResNet / Inception, temporal convolutional networks (TCN), WaveNet, Bidirectional LSTM, self-supervised waveform pretraining (wav2vec 2.0 for ECG), Short-Time Fourier Transform (STFT) + CNN, multi-scale attention, event detection with anchor-free detection heads.
-- **Datasets:**
-  - PhysioNet Computing in Cardiology Challenge 2021 — 12-lead ECG from multiple cohorts (https://physionet.org/content/challenge-2021/)
-  - MIMIC-IV-ECG — 800k+ ECGs from MIMIC patients (https://physionet.org/content/mimic-iv-ecg/)
-  - PTB-XL — 21,837 12-lead ECGs with cardiologist labels (https://physionet.org/content/ptb-xl/)
-  - Temple University EEG Corpus (TUEG) — 20k+ hours of clinical EEG (https://isip.piconepress.com/projects/tuh_eeg/)
-- **Starter repos/tools:**
-  - ECG-FM (https://github.com/bowang-lab/ecg-fm) — wav2vec-based ECG foundation model, 90M params, GPU-pretrained
-  - ESI (https://github.com/comp-well-org/ESI) — multimodal ECG + text contrastive pretraining foundation model
-  - CLEF ECG (https://github.com/Nokia-Bell-Labs/ecg-foundation-model) — single-lead ECG foundation model pretrained on 161k MIMIC patients
-  - MNE-Python (https://github.com/mne-tools/mne-python) — EEG/MEG processing; GPU via deep learning backends
-- **CUDA libraries & GPU pattern:** cuFFT for Fourier-domain convolutions on waveforms, cuDNN for 1D temporal convolutions, Flash Attention for long-sequence transformers; pattern: data-parallel batch processing across thousands of waveform windows, streaming input pipeline from waveform database.
-
-</details>
-
----
+> For a reader who knows C++ but is new to CUDA and to signal processing.
+> See [README.md](README.md) for the tour and build. _Educational only._
 
 ## 1. The science
 
-TODO(theory): The biology / medicine / physics being modeled — enough for a
-reader to understand the *problem* before any math. What real-world question
-does computing this answer?
+Physiological waveforms — ECG (heart), EEG (brain), arterial blood pressure,
+photoplethysmography — are continuous, high-frequency time series. Clinicians and
+algorithms denoise them, extract features (R-peaks, QRS width, frequency bands),
+and classify them (arrhythmia, seizure). The foundational operation for all of
+this is **convolution** with a filter: low-pass to remove noise, band-pass to
+isolate a rhythm, or — in modern systems — a *learned* convolution kernel inside a
+1-D CNN (ResNet/TCN/WaveNet). This project implements that 1-D convolution and the
+GPU optimization that makes it fast.
 
 ## 2. The math
 
-TODO(theory): The governing equations / formal problem statement, with **every
-symbol defined** (units, ranges). State inputs, outputs, and the objective.
+A finite-impulse-response (FIR) filter convolves the signal `x` with taps `h`:
+
+```
+y[n] = Σ_{k=0}^{K-1} h[k] · x[n − HALO + k],   HALO = (K−1)/2
+```
+
+(centered; samples outside the signal are treated as zero). For a low-pass
+filter, `h` is a smooth, positive, normalized kernel (we use a **Gaussian**,
+`h[k] ∝ exp(−½((k−c)/σ)²)`, normalized so `Σ h = 1` ⇒ unity DC gain). Convolution
+in time is multiplication in frequency, so a smooth `h` whose Fourier transform
+rolls off at high frequency **attenuates noise** while preserving slow structure.
 
 ## 3. The algorithm
 
-TODO(theory): Step-by-step. Include **complexity analysis**: serial cost vs. the
-parallel work/depth. Where is the arithmetic intensity? What is the data-access
-pattern?
+```
+build h (K taps)
+for each output index n:        # INDEPENDENT -> parallel
+    y[n] = sum_k h[k] * x[n - HALO + k]   # zero-padded
+```
+
+**Complexity.** `Θ(n·K)` multiply-adds. The naive memory traffic is `n·K` input
+reads, but consecutive outputs reuse `K−1` of their inputs, so the *unique* data
+is only `n`. That reuse is exactly what shared-memory tiling captures.
 
 ## 4. The GPU mapping
 
-TODO(theory): How the algorithm becomes **threads / blocks / grids**.
-- Thread-to-data mapping (which thread owns which element).
-- Launch configuration and the reasoning (block size, grid size).
-- Memory hierarchy used and **why**: global / shared / registers / constant /
-  texture. Where is the bandwidth bottleneck? What is the occupancy story?
-- Which CUDA library (cuBLAS / cuFFT / cuRAND / cuSOLVER / Thrust) does what,
-  and what it would take to write that step by hand (no black boxes — §6.1.6).
+**Decomposition.** One thread per output sample; a 1-D grid of `BLOCK`-thread
+blocks. The naive kernel would read `K` inputs per thread from global memory —
+`K×` redundant. Instead each block **tiles**:
 
 ```
-TODO(theory): an ASCII or Mermaid diagram of the grid/block decomposition.
+shared tile[ BLOCK + 2*HALO ]            # the block's inputs + a halo each side
+  thread t loads tile[t + HALO] = x[blockStart + t]      # the "main" sample
+  first HALO threads also load the left & right halo samples (zero past the ends)
+  __syncthreads()                         # tile complete before anyone reads
+  y[n] = sum_k h[k] * tile[t + k]         # all reads now hit fast shared memory
 ```
+
+- **Shared memory** (on-chip, ~100× faster than global) holds the reused window;
+  each input is read from global memory **once** per block instead of `K` times.
+- **Constant memory** holds the filter taps `h`: read by every thread, never
+  written → the constant cache broadcasts a tap to a whole warp.
+- **`__syncthreads()`** is essential: a thread must not read the tile until all
+  threads (including the halo loaders) have finished writing it — the one place
+  this project needs a barrier.
+- **Dynamic shared memory:** the tile size depends on `K`, so it is sized at
+  launch (`<<<grid, block, shmemBytes>>>`).
+
+**CPU/GPU parity.** Both sum the taps in the same order, so the results match to
+~`1e-7` (only float rounding / FMA differ).
 
 ## 5. Numerical considerations
 
-TODO(theory): Precision (FP32 vs FP64) and why. Stability. Race conditions and
-whether atomics are used. **Determinism**: does the parallel reduction reorder
-floating-point sums? If so, say so and quantify the caveat.
+- **Precision.** Single precision is standard for waveform DSP and CNN inference.
+- **Determinism.** No cross-thread reduction (each thread writes its own `y[n]`),
+  so the result is reproducible and matches the CPU.
+- **Boundaries.** Zero-padding is the simplest choice; reflect/replicate padding
+  avoids edge artifacts and is a one-line change.
 
 ## 6. How we verify correctness
 
-TODO(theory): The CPU reference (`src/reference_cpu.cpp`), the **tolerance** and
-why that value, and the edge cases checked. Explain why agreement between an
-independent serial implementation and the GPU implementation is convincing
-evidence of correctness.
+`main.cu` convolves with `conv1d_cpu` (a plain double loop) and `conv1d_gpu` (the
+tiled kernel) and compares the outputs (`max_abs_err ≈ 1e-7`). As a physical
+sanity check it also reports the RMS of `x − filtered` (the energy removed): it is
+non-zero, confirming the low-pass actually attenuates the injected noise.
 
 ## 7. Where this sits in the real world
 
-TODO(theory): How production tools (named in the catalog "Prior art") do this
-differently — what they add (scale, accuracy, features) that this teaching
-version omits. If this is a 🔴 frontier project shipped as a reduced-scope
-teaching version, describe the full approach here.
-
----
+The exact tiled convolution here is what **cuDNN** / **PyTorch `conv1d`** execute
+(with many more optimizations: vectorized loads, register blocking, im2col or
+implicit-GEMM formulations, Tensor Cores for low precision). The difference
+between this FIR filter and a waveform **CNN** is only that the CNN *learns* the
+taps and stacks many such convolutions with nonlinearities. Foundation models like
+ECG-FM pretrain these 1-D convolutional/transformer stacks on hundreds of
+thousands of patients; the inner loop is still the tiled 1-D convolution you see
+here.
 
 ## References
 
-TODO(theory): Papers, docs, and the starter repos from the catalog, with one
-line each on what to learn from them.
+- Oppenheim & Schafer, *Discrete-Time Signal Processing* — FIR filtering fundamentals.
+- Bai, Kolter & Koltun (2018), *Temporal Convolutional Networks* — 1-D conv for sequences.
+- NVIDIA CUDA C++ Programming Guide — shared memory, constant memory, `__syncthreads`.
+- cuDNN documentation — production convolution primitives.

@@ -1,37 +1,38 @@
 # Data — 7.10 Physiological Signal & Waveform Analysis
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/ecg_sample.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
-| License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Origin | **Synthetic** ECG (`scripts/make_synthetic.py`, seed 3) |
+| License | Public domain (CC0) — synthetic |
+| Contents | 2048 samples, ~8 heartbeats, with noise + baseline wander |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+### File format
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+```
+<n>                 # number of samples
+<sample 0>          # one float per line
+<sample 1>
+...
+```
+
+The signal is a sum of Gaussian P/Q/R/S/T waves per beat, plus additive
+high-frequency noise and slow baseline wander — a deliberately simple stand-in
+for a real ECG so the low-pass filter has something to remove.
 
 ## Full dataset
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+Real physiological waveforms come from open clinical archives:
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+- **PhysioNet** (<https://physionet.org>) — ECG/EEG/ABP/PPG databases (MIT-BIH, PTB-XL, ...).
+- **MIMIC-IV Waveform** (<https://physionet.org/content/mimic4wdb/>) — ICU waveforms (credentialed).
+- **MNE-Python sample data** (<https://mne.tools>) — EEG/MEG recordings.
 
-Catalog dataset notes (verbatim):
+`scripts/download_data.ps1` / `.sh` point to these (credentialed sets are **not**
+bypassed). For a longer synthetic signal: `python scripts/make_synthetic.py --n 8192`.
 
-> PhysioNet Computing in Cardiology Challenge 2021 — 12-lead ECG from multiple cohorts (https://physionet.org/content/challenge-2021/) MIMIC-IV-ECG — 800k+ ECGs from MIMIC patients (https://physionet.org/content/mimic-iv-ecg/) PTB-XL — 21,837 12-lead ECGs with cardiologist labels (https://physionet.org/content/ptb-xl/) Temple University EEG Corpus (TUEG) — 20k+ hours of clinical EEG (https://isip.piconepress.com/projects/tuh_eeg/)
+## Provenance & honesty
 
-## Provenance & field meanings
-
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+The sample is **synthetic** and labeled as such; it is not a real ECG and carries
+no diagnostic meaning. The point is to exercise and verify the 1-D convolution.

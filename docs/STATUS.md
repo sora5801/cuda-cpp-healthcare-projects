@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 5/301 projects done (1.7%) | todo 296 | in-progress 0 | missing 0
+**Progress:** 6/301 projects done (2.0%) | todo 295 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 3 | 0 | 64 |
-| 🟡 Intermediate | 206 | 2 | 0 | 204 |
+| 🟡 Intermediate | 206 | 3 | 0 | 203 |
 | 🔴 Advanced | 28 | 0 | 0 | 28 |
 
 ## 1. Drug Discovery & Molecular Design  (1/35 done)
@@ -215,7 +215,7 @@
 | 6.26 | Virtual Population Generation & Sensitivity Analysis | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 6.27 | Parameter Estimation & Data Assimilation for Physiological Models | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 
-## 7. Medical AI & Clinical Deep Learning  (0/19 done)
+## 7. Medical AI & Clinical Deep Learning  (1/19 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -228,7 +228,7 @@
 | 7.07 | Multi-Omics Integration | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 7.08 | Reinforcement Learning for Treatment Policies | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 7.09 | Real-Time Edge Inference for Medical Devices | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 7.10 | Physiological Signal & Waveform Analysis | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 7.10 | Physiological Signal & Waveform Analysis | 🟡 Intermediate | Active R&D | [x] done | lead | main |
 | 7.11 | Medical Foundation-Model Pretraining & Inference | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 7.12 | Sepsis Early Warning System | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 7.13 | Radiology Report Generation (Vision-Language) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
