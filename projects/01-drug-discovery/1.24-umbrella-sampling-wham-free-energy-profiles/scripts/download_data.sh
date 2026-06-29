@@ -1,33 +1,31 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real umbrella-sampling pointers (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 1.24 -- Umbrella Sampling / WHAM Free Energy Profiles   (template skeleton)
+# Project 1.24 : Umbrella Sampling / WHAM Free Energy Profiles
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# There is NOTHING to download for this project: the "data" is the synthetic
+# experiment configuration in data/sample/umbrella.txt, which the program turns
+# into biased trajectories on the fly. This script just points at the real-world
+# datasets/tools and never bypasses any registration (CLAUDE.md §8).
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
 echo "[download_data] Project 1.24 -- Umbrella Sampling / WHAM Free Energy Profiles"
-echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    Ion channel permeation benchmark sets; SAMPL binding free energy challenges (https://github.com/samplchallenges/SAMPL); BindingDB (https://www.bindingdb.org); GROMACS umbrella sampling tutorials (https://tutorials.gromacs.org)."
+echo "There is no file to download: the program derives every window's"
+echo "biased trajectory from data/sample/umbrella.txt (a synthetic double-well)."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "For REAL umbrella sampling (all-atom MD per window, then WHAM):"
+echo "  GROMACS tutorial : https://tutorials.gromacs.org        (gmx wham worked example)"
+echo "  SAMPL challenges : https://github.com/samplchallenges/SAMPL  (binding free energy)"
+echo "  BindingDB        : https://www.bindingdb.org           (measured affinities)"
+echo "  PLUMED           : https://github.com/plumed/plumed2    (collective variables + restraints)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Bigger SYNTHETIC experiment (no download):"
+echo "  python scripts/make_synthetic.py --n-windows 51 --n-sample 200000"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

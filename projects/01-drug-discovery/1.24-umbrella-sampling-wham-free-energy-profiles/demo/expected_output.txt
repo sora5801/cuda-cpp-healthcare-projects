@@ -1,5 +1,15 @@
 1.24 -- Umbrella Sampling / WHAM Free Energy Profiles
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+double-well U(x) = A (x^2 - b^2)^2 / b^4   [A=4.00 kT, b=1.00]
+27 windows over x0 in [-1.30, 1.30], k_spring=12.00 kT; 60000 sample steps/window
+grid: 32 bins over [-1.60, 1.60]; sampled bins = 32
+WHAM PMF (kT) vs analytic U at sampled bin centers:
+  x=-1.150 : WHAM  0.454   U  0.378
+  x=-0.750 : WHAM  0.781   U  0.728
+  x=-0.350 : WHAM  3.150   U  3.042
+  x=+0.050 : WHAM  3.926   U  3.942
+  x=+0.450 : WHAM  2.447   U  2.506
+  x=+0.850 : WHAM  0.284   U  0.270
+  x=+1.250 : WHAM  1.154   U  1.228
+barrier: PMF max 4.003 kT at x=-0.050 (true A=4.000 kT)
+histograms: 1620000 total counts; GPU==CPU bins: YES
+RESULT: PASS (GPU histograms == CPU exactly; WHAM PMF within 0.30 kT of U)

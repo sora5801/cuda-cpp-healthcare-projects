@@ -2,7 +2,7 @@
 # ===========================================================================
 # demo/run_demo.sh  --  One command: build (if needed) + run + verify (Linux)
 # ---------------------------------------------------------------------------
-# Project 1.24 -- Umbrella Sampling / WHAM Free Energy Profiles   (template skeleton)
+# Project 1.24 : Umbrella Sampling / WHAM Free Energy Profiles
 #
 # Uses the OPTIONAL CMake build (the required deliverable is the VS solution).
 # Mirrors run_demo.ps1: deterministic stdout is diffed against
@@ -14,7 +14,7 @@ set -euo pipefail
 DEMO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$DEMO")"
 SLUG="umbrella-sampling-wham-free-energy-profiles"
-SAMPLE="$ROOT/data/sample/saxpy_sample.txt"
+SAMPLE="$ROOT/data/sample/umbrella.txt"
 EXPECTED="$DEMO/expected_output.txt"
 BUILD="$ROOT/build/cmake"
 EXE="$BUILD/$SLUG"

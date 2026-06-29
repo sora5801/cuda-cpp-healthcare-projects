@@ -112,6 +112,16 @@
       <!-- fast math is OFF by default; enable per-project only where the
            numerics tolerate it, and document it (CLAUDE.md section 5). -->
       <FastMath>false</FastMath>
+      <!-- AdditionalOptions below passes nvcc's fmad=false flag: compute a*b+c as
+           a SEPARATE multiply then add (no fused multiply add), bringing the
+           device closer to the host MSVC compiler. It SHRINKS but does NOT remove
+           the CPU/GPU drift, because these Langevin trajectories are CHAOTIC and
+           the device vs host transcendental libraries (exp/log/sin/cos) still
+           differ by about 1 ULP, which amplifies to O(1) over thousands of steps.
+           That is exactly why we verify the ENSEMBLE free energy surface (a robust
+           statistical observable), not individual trajectories. See THEORY.md
+           "Numerical considerations". -->
+      <AdditionalOptions>--fmad=false %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
 
@@ -142,6 +152,11 @@
       <!-- -lineinfo: source mapping for Nsight profiling without the -G slowdown. -->
       <GenerateLineInfo>true</GenerateLineInfo>
       <FastMath>false</FastMath>
+      <!-- nvcc fmad=false (see AdditionalOptions): separate multiply then add (no
+           FMA) to track the host more closely. It reduces but does not erase the
+           chaotic CPU/GPU drift; we therefore verify the ensemble FES, not
+           individual trajectories. See the Debug block note and THEORY.md. -->
+      <AdditionalOptions>--fmad=false %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
 
@@ -153,6 +168,7 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <ClInclude Include="..\src\metad.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

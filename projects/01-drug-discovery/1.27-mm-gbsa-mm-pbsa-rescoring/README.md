@@ -6,25 +6,33 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+**MM-GBSA rescoring** estimates how tightly a drug-like **ligand** binds a
+**protein** by averaging a binding-energy formula over many **snapshots** of a
+molecular-dynamics trajectory. This project implements a compact, heavily
+commented **teaching version**: for each snapshot it sums the van der Waals,
+Coulomb, and **Generalized-Born** solvation energies over all receptor–ligand
+atom pairs, then averages the per-snapshot ΔG into one binding free-energy
+estimate. The snapshots are completely independent, so the GPU evaluates them in
+parallel — **one thread per snapshot** — calling the *exact same* energy function
+the CPU reference uses, which makes the GPU result verifiable to machine
+precision. The committed input is **synthetic** (a small charged pocket and a
+ligand that drifts out of it), engineered so the energy visibly climbs toward the
+unbound limit — a built-in sanity check. It is study material, **not** a tool for
+real affinity prediction.
 
 ## What this computes & why the GPU helps
 
 MM-GB(PB)SA computes binding free energies as the MM interaction energy plus solvation free energy (implicit solvent GB or PB), minus entropic terms, from snapshots along an MD trajectory. It is the standard high-throughput rescoring step after docking, offering >10× better accuracy than scoring functions with ~1000× less cost than FEP. GPU-accelerated MD (pmemd.cuda) generates the required trajectory snapshots rapidly; gmx_MMPBSA post-processes GROMACS trajectories. The solvation GB/PB solvers can also be GPU-accelerated.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** evaluating the per-snapshot energy. Each snapshot's
+energy is an `O(R·L)` sum over receptor–ligand atom pairs, and the snapshots are
+**mutually independent** — no frame needs any other. With thousands of frames
+(times many candidate ligands in real work), that pair-sum evaluation dominates
+the post-MD runtime. The GPU assigns **one thread per snapshot** so all frames are
+rescored at once (docs/PATTERNS.md §1, the "independent jobs" pattern). The tiny
+ensemble-mean reduction stays on the host.
 
 ## The algorithm in brief
 
@@ -70,10 +78,25 @@ Catalog dataset notes: PDB-bind (http://www.pdbbind.org.cn); CASF-2016 (http://w
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like `demo/expected_output.txt`:
+
+```
+1.27 -- MM-GBSA / MM-PBSA Rescoring
+Rescoring 1 complex: receptor=3 atoms, ligand=2 atoms, snapshots=6
+per-snapshot dG (kcal/mol):
+  frame  0 : dG =     7.2021
+  ...
+  frame  5 : dG =     7.9640
+MM-GBSA dG_bind (ensemble mean) = 7.7731 kcal/mol
+RESULT: PASS (GPU matches CPU within tol=1.0e-06)
+```
+
+The program computes the per-snapshot ΔG and the ensemble mean on both the
+**GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`) and
+asserts they agree within `1e-6` kcal/mol — that agreement (printed to stderr as
+`max_abs_err`) is the correctness guarantee. On the synthetic sample the ligand
+unbinds frame by frame, so ΔG climbs toward the bare entropy term (`8.0`); see
+[`demo/README.md`](demo/README.md) for how to read it.
 
 ## Code tour
 
@@ -94,15 +117,49 @@ reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-GPU MD for trajectory generation (pmemd.cuda); CPU MMPBSA.py for post-processing (GPU PB solver possible via custom CUDA); GPU-parallel evaluation of snapshots via embarrassingly parallel CUDA stream array. --
+**Independent jobs / one-thread-per-snapshot** (docs/PATTERNS.md §1, exemplified
+by flagship `1.12`). Every MD snapshot is rescored by its own GPU thread via a
+grid-stride loop; the per-element physics lives in one shared
+`__host__ __device__` function (`snapshot_dg()`) so the CPU reference and the GPU
+kernel run identical arithmetic (PATTERNS.md §2). No shared memory, no atomics —
+each thread writes one independent result. (Production pipelines additionally run
+the MD itself on the GPU via `pmemd.cuda`, and can offload the GB/PB solvation
+solver to custom CUDA; here we focus on the rescoring step.)
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Scale the trajectory.** Run `python scripts/make_synthetic.py --snapshots
+   4096`, rerun, and watch the stderr timing: at what `S` does the GPU kernel beat
+   the CPU reference? (Regenerate `expected_output.txt` afterward — the per-frame
+   values change.)
+2. **Move the receptor into `__constant__` memory.** It is read by every thread
+   and never written (THEORY §4). Add a fixed-size `__constant__ Atom c_receptor[]`
+   path for small receptors and measure the difference. Where does it stop fitting?
+3. **Add the nonpolar SA term.** Real MM-GBSA adds `γ·SASA + b`. Approximate each
+   atom's exposed surface and add the term; compare the ranking of the frames.
+4. **Per-residue decomposition.** Instead of one ΔG scalar, accumulate the pair
+   energies into a per-receptor-atom array to find the "hot-spot" atom that
+   contributes most to binding.
+5. **Block-size sweep.** Try `THREADS_PER_BLOCK` ∈ {64, 128, 256, 512} and plot
+   the kernel time; relate what you see to register pressure and occupancy.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+This is a **reduced-scope teaching version** (CLAUDE.md §13), not a real
+affinity predictor. Be explicit about what is simplified:
+
+- **Synthetic data.** The committed complex is generated, not a real structure;
+  its energies are **not** measured affinities and have **no** predictive or
+  clinical validity. It is labeled synthetic everywhere.
+- **Rigid receptor, single end-point.** Real MM-GBSA computes
+  `ΔG = G_complex − G_receptor − G_ligand` with both partners flexible; we hold
+  the receptor rigid and compute only the receptor–ligand cross interaction.
+- **GB only, no SA, constant entropy.** We implement the GB polar cross term but
+  omit the nonpolar surface-area term, use simple fixed Born radii (not OBC/GBn2),
+  do not offer the Poisson-Boltzmann solver, and fold `−T·ΔS` into one constant
+  instead of a normal-mode/quasi-harmonic estimate. See [THEORY.md](THEORY.md) §7
+  for how production tools (`MMPBSA.py`, `gmx_MMPBSA`, NAMD, OpenMM) do each of
+  these properly.
+- **Teaching timings, not benchmarks.** The printed millisecond figures are a
+  didactic artifact; on this tiny sample the GPU is launch/copy-bound and slower
+  than the CPU — the parallel advantage only appears as snapshots scale (§4).

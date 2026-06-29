@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 1.27 -- MM-GBSA / MM-PBSA Rescoring   (template skeleton)
+# Project 1.27 : MM-GBSA / MM-PBSA Rescoring
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs +
+# notes, and NEVER bypasses credentials/registration. The committed tiny sample
+# in data/sample/ already lets the demo run offline; this script only points at
+# the real, credentialed datasets and defers to make_synthetic.py for a larger
+# offline stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,19 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.27 -- MM-GBSA / MM-PBSA Rescoring"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    PDB-bind (http://www.pdbbind.org.cn); CASF-2016 (http://www.pdbbind.org.cn/casf.php); ChEMBL activity data (https://www.ebi.ac.uk/chembl/); AMBER MM-GBSA tutorial datasets (https://ambermd.org/tutorials/)."
+Write-Host "This project's REAL inputs are MD trajectories of protein-ligand complexes"
+Write-Host "plus a force field (charges, LJ params, Born radii). Those sources require"
+Write-Host "registration and carry licenses, so this script does NOT auto-download them."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  * PDBbind (complexes + measured affinities) : http://www.pdbbind.org.cn"
+Write-Host "  * CASF-2016 (scoring benchmark / core set)   : http://www.pdbbind.org.cn/casf.php"
+Write-Host "  * ChEMBL (bioactivity data)                  : https://www.ebi.ac.uk/chembl/"
+Write-Host "  * AMBER MM-GBSA tutorials (ready trajectories): https://ambermd.org/tutorials/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  Respect each dataset's license; for credentialed sets, register at the URL"
+Write-Host "  above -- this script will not bypass any login."
+Write-Host ""
+Write-Host "  The committed sample (data/sample/complex_sample.txt) runs the demo offline."
+Write-Host "  For a LARGER synthetic problem (e.g. 64 snapshots), run:"
+Write-Host "    python scripts/make_synthetic.py --snapshots 64"

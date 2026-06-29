@@ -1,5 +1,11 @@
 1.9 -- ML Interatomic Potentials (Neural Network Potentials)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Behler-Parrinello NNP: 24 atoms, 8 radial descriptors, MLP 8->16->16->1
+per-atom energy E_i (GPU), first 6 atom(s):
+  atom  0  E = +0.880908
+  atom  1  E = +0.697670
+  atom  2  E = +0.722885
+  atom  3  E = +0.863988
+  atom  4  E = +0.724925
+  atom  5  E = +0.706800
+total energy E = +17.647320
+RESULT: PASS (GPU matches CPU within tol=1.0e-09)

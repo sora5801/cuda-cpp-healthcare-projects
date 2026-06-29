@@ -1,52 +1,62 @@
 // ===========================================================================
 // src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 1.27 -- MM-GBSA / MM-PBSA Rescoring   (template skeleton)
+// Project 1.27 : MM-GBSA / MM-PBSA Rescoring
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
+//   The "what the GPU offers" header. main.cu calls rescore_gpu(); kernels.cu
 //   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   .cu translation units (it declares a __global__ kernel, so the plain C++
+//   compiler must never see it -- the CPU reference lives in reference_cpu.h).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+// THE BIG IDEA -- "embarrassingly parallel over snapshots" (PATTERNS.md §1)
+//   MM-GBSA rescoring evaluates the SAME energy function on EACH of S MD
+//   snapshots, and the snapshots are completely INDEPENDENT (no snapshot needs
+//   any other). That is the textbook GPU job: assign ONE THREAD PER SNAPSHOT.
+//   Thread t computes dg[t] = snapshot_dg(receptor, ligand_snapshot_t) -- the
+//   exact same shared function the CPU reference calls, so verification is
+//   bit-near exact. A grid-stride loop lets a modest grid cover thousands of
+//   frames. No atomics, no shared memory, no inter-thread communication: each
+//   thread owns one output and writes it once.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   The ensemble average (mean over snapshots) is done on the host AFTER the
+//   per-snapshot energies come back -- a tiny O(S) reduction not worth a GPU
+//   pass, and doing it on the host keeps the summation order identical to the
+//   CPU reference (determinism, PATTERNS.md §3).
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, reference_cpu.h.
+// Then read kernels.cu. The science/GPU-mapping is in ../THEORY.md.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
+#include "reference_cpu.h"   // Atom, Complex, snapshot_dg (the shared HD core)
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// rescore_kernel: one thread evaluates one snapshot's binding-energy estimate.
+//   receptor   : [R] receptor atoms in device global memory (read by every
+//                thread, never written -- a natural constant-memory candidate;
+//                see kernels.cu for why we keep it in global memory here).
+//   R          : receptor atom count.
+//   ligand     : [S*L] ligand atoms, row-major by snapshot, in device memory.
+//   L          : ligand atom count per snapshot.
+//   S          : number of snapshots (= number of logical threads / outputs).
+//   minus_TdS  : constant entropy term passed by value into every thread.
+//   dg         : [S] output per-snapshot binding-energy estimates (kcal/mol).
+// The kernel body is a grid-stride loop that calls the shared snapshot_dg().
+__global__ void rescore_kernel(const Atom* __restrict__ receptor, int R,
+                               const Atom* __restrict__ ligand,   int L,
+                               int S, double minus_TdS,
+                               double* __restrict__ dg);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// rescore_gpu: the host-callable "do the whole GPU rescoring" function.
+//   Uploads the receptor and all ligand snapshots, launches rescore_kernel,
+//   times ONLY the kernel (CUDA events), copies the per-snapshot energies back.
+//   main.cu calls exactly this; all CUDA bookkeeping is hidden here.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   cx        : the loaded problem (receptor + S ligand snapshots + entropy).
+//   dg        : host output, resized to cx.S, filled with per-snapshot dG.
+//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies).
+void rescore_gpu(const Complex& cx, std::vector<double>& dg, float* kernel_ms);

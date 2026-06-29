@@ -1,0 +1,50 @@
+# SYNTHETIC tight-binding (Huckel) molecule batch -- project 1.8
+# Each molecule is an idealised pi-system CONNECTIVITY graph (no real
+# coordinates). Format: NUM_MOL, then per molecule 'NAME N NBONDS'
+# followed by NBONDS '<i> <j>' 0-based pi-atom bonds. SYNTHETIC DATA.
+8
+ethylene 2 1
+0 1
+allyl 3 2
+0 1
+1 2
+butadiene 4 3
+0 1
+1 2
+2 3
+benzene 6 6
+0 1
+1 2
+2 3
+3 4
+4 5
+5 0
+cyclobutadiene 4 4
+0 1
+1 2
+2 3
+3 0
+hexatriene 6 5
+0 1
+1 2
+2 3
+3 4
+4 5
+cyclopentadienyl 5 5
+0 1
+1 2
+2 3
+3 4
+4 0
+naphthalene 10 11
+0 1
+1 2
+2 3
+3 4
+4 5
+5 0
+0 6
+6 7
+7 8
+8 9
+9 5

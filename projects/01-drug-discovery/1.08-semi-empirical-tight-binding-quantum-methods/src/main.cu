@@ -1,122 +1,137 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load batch, run CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 1.8 -- Semi-Empirical & Tight-Binding Quantum Methods   (template skeleton)
+// Project 1.8 : Semi-Empirical & Tight-Binding Quantum Methods
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// The 5-step shape every project in this repo follows:
+//   1. Load the problem (a batch of conjugated molecules from data/sample).
+//   2. CPU reference  (reference_cpu.cpp): build each Huckel matrix, diagonalise
+//      with Jacobi, fill electrons -> trusted MO energies / HOMO-LUMO gaps.
+//   3. GPU batch      (kernels.cu): build ALL matrices on-device, diagonalise
+//      the WHOLE batch in one cuSOLVER call -> the thing being taught.
+//   4. VERIFY: per-molecule, the GPU eigenvalues match the CPU within tolerance.
+//   5. REPORT: a deterministic per-molecule table to stdout; timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// STDOUT is byte-for-byte deterministic (diffed by demo/run_demo against
+// demo/expected_output.txt); run-to-run timings go to STDERR (PATTERNS.md §3).
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then tight_binding.h (the shared physics), then
+// reference_cpu.cpp (CPU pipeline) and kernels.cu (GPU pipeline).
 // ===========================================================================
+#include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // tb_solve_batch_gpu
+#include "reference_cpu.h"    // load_batch, build_hamiltonian, jacobi_eigen, analyze_molecule
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "1.8";
 static const char* PROJECT_NAME = "Semi-Empirical & Tight-Binding Quantum Methods";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Tolerance: both sides diagonalise the SAME symmetric matrix with Jacobi-family
+// solvers in double precision, so eigenvalues agree to ~machine precision. 1e-9
+// is a comfortable margin above the ~1e-13 we actually observe (PATTERNS.md §4).
+static constexpr double TOLERANCE = 1.0e-9;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// clean_zero: snap values within PRINT_EPS of zero to +0.0 before printing.
+//   WHY (determinism, PATTERNS.md §3): several molecules here have eigenvalues
+//   that are EXACTLY zero by symmetry (allyl's non-bonding MO, cyclobutadiene's
+//   degenerate pair). Two different eigensolvers can return that zero as +1e-16
+//   or -1e-16, which "%.6f" would render as "0.000000" vs "-0.000000" -- a
+//   spurious stdout difference. Snapping tiny magnitudes to +0 makes the printed
+//   table byte-identical regardless of the sign of the floating-point noise. The
+//   snap is far below any physically meaningful energy, so it changes nothing
+//   chemical; it only stabilises the display.
+static double clean_zero(double x) {
+    const double PRINT_EPS = 5.0e-7;   // half a ulp of the printed 6th decimal
+    return (std::fabs(x) < PRINT_EPS) ? 0.0 : x;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load the batch -------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/molecules_sample.txt";
+    MoleculeBatch batch;
+    try {
+        batch = load_batch(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const int M = batch.num_mol;     // molecules in the batch
+    const int N = batch.max_n;       // padded matrix dimension
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference: per-molecule build + Jacobi + analyse (timed) --
+    std::vector<MoleculeResult> res_cpu(M);
+    std::vector<std::vector<double>> eval_cpu(M);   // keep eigenvalues for verify
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    for (int m = 0; m < M; ++m) {
+        std::vector<double> H, evec;
+        build_hamiltonian(batch, m, H);
+        jacobi_eigen(H, N, eval_cpu[m], evec);
+        res_cpu[m] = analyze_molecule(eval_cpu[m], batch.n[m]);
+    }
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
-    float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    // ---- 3. GPU: build all matrices + batched eigensolve ------------------
+    std::vector<double> eval_gpu_flat;               // [M*N] ascending per block
+    float build_ms = 0.0f, solve_ms = 0.0f;
+    tb_solve_batch_gpu(batch.adj, batch.n, M, N, eval_gpu_flat, &build_ms, &solve_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // Run the SAME chemistry post-processing on the GPU eigenvalues so the two
+    // reports are produced by identical code paths above the eigensolver.
+    std::vector<MoleculeResult> res_gpu(M);
+    for (int m = 0; m < M; ++m) {
+        std::vector<double> ev(eval_gpu_flat.begin() + (std::size_t)m * N,
+                               eval_gpu_flat.begin() + (std::size_t)(m + 1) * N);
+        res_gpu[m] = analyze_molecule(ev, batch.n[m]);
+    }
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 4. Verify: GPU eigenvalues match CPU per molecule ----------------
+    double worst = 0.0;
+    for (int m = 0; m < M; ++m)
+        for (int k = 0; k < batch.n[m]; ++k)
+            worst = std::fmax(worst,
+                std::fabs(eval_cpu[m][k] - eval_gpu_flat[(std::size_t)m * N + k]));
+    const bool pass = worst <= TOLERANCE;
+
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    // All printed numbers come from the GPU path (verified == CPU). Energies are
+    // in units of |beta| relative to alpha (Huckel convention; see THEORY.md).
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("Huckel tight-binding on %d molecules (padded dim N=%d)\n", M, N);
+    std::printf("energies in units of |beta| (alpha=0, beta=-1)\n");
+    std::printf("%-16s %5s %14s %10s %10s %10s\n",
+                "molecule", "atoms", "E_pi", "HOMO", "LUMO", "gap");
+    for (int m = 0; m < M; ++m) {
+        const MoleculeResult& r = res_gpu[m];
+        std::printf("%-16s %5d %14.6f %10.6f %10.6f %10.6f\n",
+                    batch.name[m].c_str(), r.n_atoms,
+                    clean_zero(r.total_pi_energy), clean_zero(r.homo_energy),
+                    clean_zero(r.lumo_energy), clean_zero(r.homo_lumo_gap));
+    }
+    // A single interpretable headline: the most reactive molecule = smallest gap.
+    int min_gap_mol = 0;
+    for (int m = 1; m < M; ++m)
+        if (res_gpu[m].homo_lumo_gap < res_gpu[min_gap_mol].homo_lumo_gap)
+            min_gap_mol = m;
+    std::printf("smallest HOMO-LUMO gap: %s (gap=%.6f |beta|) -- most reactive/polarizable\n",
+                batch.name[min_gap_mol].c_str(), clean_zero(res_gpu[min_gap_mol].homo_lumo_gap));
+    std::printf("RESULT: %s (GPU batched eigensolve matches CPU Jacobi within tol=1.0e-09)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d molecules, padded N=%d)\n",
+                 path.c_str(), M, N);
+    std::fprintf(stderr, "[timing] CPU (build+Jacobi+fill, all molecules): %.3f ms\n", cpu_ms);
+    std::fprintf(stderr, "[timing] GPU build kernel: %.3f ms   GPU cuSOLVER batched solve: %.3f ms\n",
+                 build_ms, solve_ms);
+    std::fprintf(stderr, "[timing] teaching artifact only -- this tiny batch is dominated by launch/"
+                         "setup overhead; the batched solver's edge grows with thousands of molecules.\n");
+    std::fprintf(stderr, "[verify] worst eigenvalue diff = %.3e  (tolerance %.1e)\n", worst, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

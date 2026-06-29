@@ -2,11 +2,12 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 1.27 -- MM-GBSA / MM-PBSA Rescoring   (template skeleton)
+# Project 1.27 : MM-GBSA / MM-PBSA Rescoring
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs + notes,
+# and NEVER bypasses credentials/registration. The committed tiny sample already
+# lets the demo run offline; this script points at the real, credentialed
+# datasets and defers to make_synthetic.py for a larger offline stand-in.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,18 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.27 -- MM-GBSA / MM-PBSA Rescoring"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    PDB-bind (http://www.pdbbind.org.cn); CASF-2016 (http://www.pdbbind.org.cn/casf.php); ChEMBL activity data (https://www.ebi.ac.uk/chembl/); AMBER MM-GBSA tutorial datasets (https://ambermd.org/tutorials/)."
+echo "This project's REAL inputs are MD trajectories of protein-ligand complexes"
+echo "plus a force field (charges, LJ params, Born radii). Those sources require"
+echo "registration and carry licenses, so this script does NOT auto-download them."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  * PDBbind (complexes + measured affinities) : http://www.pdbbind.org.cn"
+echo "  * CASF-2016 (scoring benchmark / core set)   : http://www.pdbbind.org.cn/casf.php"
+echo "  * ChEMBL (bioactivity data)                  : https://www.ebi.ac.uk/chembl/"
+echo "  * AMBER MM-GBSA tutorials (ready trajectories): https://ambermd.org/tutorials/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "  Respect each dataset's license; for credentialed sets, register at the URL"
+echo "  above -- this script will not bypass any login."
+echo
+echo "  The committed sample (data/sample/complex_sample.txt) runs the demo offline."
+echo "  For a LARGER synthetic problem (e.g. 64 snapshots), run:"
+echo "    python scripts/make_synthetic.py --snapshots 64"

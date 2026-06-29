@@ -1,0 +1,21 @@
+# SYNTHETIC MM-GBSA complex -- NOT real structural data (Project 1.27).
+# Format: header 'R L S minus_TdS', then R receptor atoms, then S*L
+# ligand atoms grouped by snapshot. Fields: x y z  q  sigma eps  born.
+3 2 6 8
+# --- receptor atoms (rigid across snapshots) ---
+  0.000  0.000  0.000  -0.6000  3.400 0.100  2.000   # receptor atom 0
+  3.000  0.000  0.000   0.4750  3.400 0.100  2.000   # receptor atom 1
+  6.000  0.000  0.000  -0.5400  3.400 0.100  2.000   # receptor atom 2
+# --- ligand snapshots (S frames x L atoms), ligand drifts +z (unbinds) ---
+  1.500  0.000   3.000   0.5500  3.250 0.120  1.800   # frame 0 ligand atom 0
+  4.500  0.000   4.000  -0.4500  3.250 0.120  1.800   # frame 0 ligand atom 1
+  1.500  0.000   4.500   0.5500  3.250 0.120  1.800   # frame 1 ligand atom 0
+  4.500  0.000   5.500  -0.4500  3.250 0.120  1.800   # frame 1 ligand atom 1
+  1.500  0.000   6.000   0.5500  3.250 0.120  1.800   # frame 2 ligand atom 0
+  4.500  0.000   7.000  -0.4500  3.250 0.120  1.800   # frame 2 ligand atom 1
+  1.500  0.000   7.500   0.5500  3.250 0.120  1.800   # frame 3 ligand atom 0
+  4.500  0.000   8.500  -0.4500  3.250 0.120  1.800   # frame 3 ligand atom 1
+  1.500  0.000   9.000   0.5500  3.250 0.120  1.800   # frame 4 ligand atom 0
+  4.500  0.000  10.000  -0.4500  3.250 0.120  1.800   # frame 4 ligand atom 1
+  1.500  0.000  10.500   0.5500  3.250 0.120  1.800   # frame 5 ligand atom 0
+  4.500  0.000  11.500  -0.4500  3.250 0.120  1.800   # frame 5 ligand atom 1

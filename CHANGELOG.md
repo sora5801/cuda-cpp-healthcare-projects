@@ -1,5 +1,6 @@
 # Changelog — newest first; each entry links to its push-note in `push-notes/`.
 
+- 2026-06-29 #11 -- [phase2 batch2b drug-discovery](push-notes/2026-06-29-11-phase2-batch2b-drug-discovery.md)
 - 2026-06-29 #10 -- [phase2 batch2a drug-discovery](push-notes/2026-06-29-10-phase2-batch2a-drug-discovery.md)
 - 2026-06-29 #09 -- [phase2 batch1 drug-discovery pilot](push-notes/2026-06-29-09-phase2-batch1-drug-discovery-pilot.md)
 - 2026-06-29 #08 -- [phase1 standards review patterns-cookbook](push-notes/2026-06-29-08-phase1-standards-review-patterns-cookbook.md)

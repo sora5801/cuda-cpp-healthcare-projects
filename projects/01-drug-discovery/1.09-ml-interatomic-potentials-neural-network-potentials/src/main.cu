@@ -1,121 +1,113 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load structure, run CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 1.9 -- ML Interatomic Potentials (Neural Network Potentials)   (template skeleton)
+// Project 1.9 : ML Interatomic Potentials (Neural Network Potentials)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// THE 5-STEP SHAPE every project in this repo follows:
+//   1. Load the problem (a molecular structure from data/sample, or via argv[1]).
+//   2. CPU reference  (reference_cpu.cpp)  -> trusted per-atom + total energy.
+//   3. GPU compute    (kernels.cu)         -> the thing being taught.
+//   4. VERIFY: GPU agrees with CPU within a documented tolerance.
+//   5. REPORT: deterministic energies to stdout; timing + error to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic (demo/run_demo diffs it against
+//   demo/expected_output.txt); run-to-run timings go to STDERR (shown, not
+//   diffed). We print energies at fixed precision so the text never wobbles.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then nnp.h (the shared physics), then kernels.cuh ->
+//   kernels.cu (the GPU path), then reference_cpu.* (the baseline).
 // ===========================================================================
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // nnp_energy_gpu, Structure, AcsfParams, AtomicNet
+#include "reference_cpu.h"    // load_structure, build_*, nnp_energy_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "1.9";
 static const char* PROJECT_NAME = "ML Interatomic Potentials (Neural Network Potentials)";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Verification tolerance (absolute, on energy).
+//   The CPU and GPU call the IDENTICAL atomic_energy() from nnp.h in double
+//   precision, so the only possible difference is the GPU's fused-multiply-add
+//   (FMA) contracting "a*b+c" where the host does two rounded steps. Over a short
+//   descriptor + a 2-hidden-layer MLP that divergence is ~1e-13 at most, so we
+//   verify to 1e-9 -- comfortably tight yet honest about FMA (PATTERNS.md sec 4).
+static constexpr double TOLERANCE = 1.0e-9;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
+// How many per-atom energies to print (kept small so the demo output is compact;
+// the FULL structure is still summed for the total).
+static constexpr int SHOW_ATOMS = 6;
 
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
+// max |a[i] - b[i]| over two equal-length double arrays (our headline metric).
+static double max_abs_err(const std::vector<double>& a, const std::vector<double>& b) {
+    if (a.size() != b.size()) return 1e300;   // shape mismatch -> never "agree"
+    double worst = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const double d = a[i] - b[i];
+        const double ad = d < 0 ? -d : d;
+        if (ad > worst) worst = ad;
     }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+    return worst;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load the structure --------------------------------------------
+    const std::string path = (argc > 1) ? argv[1]
+                                        : "data/sample/water_cluster.xyzc";
+    Structure s;
+    try {
+        s = load_structure(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // Build the (deterministic) model: descriptor hyperparameters + MLP weights.
+    // Both CPU and GPU use these exact same objects -> identical math.
+    const AcsfParams params = build_acsf_params();
+    const AtomicNet  net    = build_atomic_net();
+
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<double> e_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    const double E_cpu = nnp_energy_cpu(s, params, net, e_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU compute (kernel timed inside the wrapper) -----------------
+    std::vector<double> e_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    const double E_gpu = nnp_energy_gpu(s, params, net, e_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify ---------------------------------------------------------
+    const double atom_err  = max_abs_err(e_cpu, e_gpu);          // worst per-atom diff
+    const double total_err = (E_cpu > E_gpu ? E_cpu - E_gpu : E_gpu - E_cpu);
+    const bool pass = (atom_err <= TOLERANCE) && (total_err <= TOLERANCE);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) ----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("Behler-Parrinello NNP: %d atoms, %d radial descriptors, "
+                "MLP %d->%d->%d->1\n", s.n, N_DESC, N_DESC, N_HID, N_HID);
+    const int show = s.n < SHOW_ATOMS ? s.n : SHOW_ATOMS;
+    std::printf("per-atom energy E_i (GPU), first %d atom(s):\n", show);
+    for (int i = 0; i < show; ++i)
+        std::printf("  atom %2d  E = %+.6f\n", i, e_gpu[static_cast<std::size_t>(i)]);
+    std::printf("total energy E = %+.6f\n", E_gpu);
+    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-09)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
+    std::fprintf(stderr, "[data]   source: %s  (n=%d atoms, Rc=%.1f A)\n",
+                 path.c_str(), s.n, params.Rc);
     std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- this tiny cluster is "
+                         "dominated by launch/copy overhead; the GPU wins at protein "
+                         "scale (thousands of atoms x many MD steps).\n");
+    std::fprintf(stderr, "[verify] max per-atom err = %.3e   total err = %.3e   "
+                         "(tolerance %.1e)\n", atom_err, total_err, TOLERANCE);
 
     // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;

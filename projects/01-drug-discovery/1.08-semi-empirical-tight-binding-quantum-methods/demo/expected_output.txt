@@ -1,5 +1,14 @@
 1.8 -- Semi-Empirical & Tight-Binding Quantum Methods
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Huckel tight-binding on 8 molecules (padded dim N=10)
+energies in units of |beta| (alpha=0, beta=-1)
+molecule         atoms           E_pi       HOMO       LUMO        gap
+ethylene             2      -2.000000  -1.000000   1.000000   2.000000
+allyl                3      -2.828427   0.000000   1.414214   1.414214
+butadiene            4      -4.472136  -0.618034   0.618034   1.236068
+benzene              6      -8.000000  -1.000000   1.000000   2.000000
+cyclobutadiene       4      -4.000000   0.000000   0.000000   0.000000
+hexatriene           6      -6.987918  -0.445042   0.445042   0.890084
+cyclopentadienyl     5      -5.854102  -0.618034   1.618034   2.236068
+naphthalene         10     -13.683239  -0.618034   0.618034   1.236068
+smallest HOMO-LUMO gap: cyclobutadiene (gap=0.000000 |beta|) -- most reactive/polarizable
+RESULT: PASS (GPU batched eigensolve matches CPU Jacobi within tol=1.0e-09)

@@ -2,15 +2,15 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 26/301 projects done (8.6%) | todo 275 | in-progress 0 | missing 0
+**Progress:** 31/301 projects done (10.3%) | todo 270 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
-| 🟢 Beginner | 67 | 18 | 0 | 49 |
+| 🟢 Beginner | 67 | 23 | 0 | 44 |
 | 🟡 Intermediate | 206 | 7 | 0 | 199 |
 | 🔴 Advanced | 28 | 1 | 0 | 27 |
 
-## 1. Drug Discovery & Molecular Design  (13/35 done)
+## 1. Drug Discovery & Molecular Design  (18/35 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -19,10 +19,10 @@
 | 1.03 | Molecular Docking Engine | 🟢 Beginner | Established | [x] done | - | - |
 | 1.04 | Ultra-Large Virtual Screening | 🟢 Beginner | Established | [x] done | worker | main |
 | 1.05 | Free Energy Perturbation / Thermodynamic Integration | 🟢 Beginner | Established | [x] done | - | - |
-| 1.06 | Enhanced Sampling — Metadynamics & Replica Exchange | 🟢 Beginner | Established | [ ] todo | - | - |
+| 1.06 | Enhanced Sampling — Metadynamics & Replica Exchange | 🟢 Beginner | Established | [x] done | - | - |
 | 1.07 | Quantum Chemistry / DFT | 🟢 Beginner | Established | [x] done | - | - |
-| 1.08 | Semi-Empirical & Tight-Binding Quantum Methods | 🟢 Beginner | Established | [ ] todo | - | - |
-| 1.09 | ML Interatomic Potentials (Neural Network Potentials) | 🟢 Beginner | Established | [ ] todo | - | - |
+| 1.08 | Semi-Empirical & Tight-Binding Quantum Methods | 🟢 Beginner | Established | [x] done | - | - |
+| 1.09 | ML Interatomic Potentials (Neural Network Potentials) | 🟢 Beginner | Established | [x] done | worker | - |
 | 1.10 | De Novo Generative Molecular Design | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 1.11 | QSAR / Property Prediction | 🟢 Beginner | Established | [x] done | - | - |
 | 1.12 | Molecular Fingerprint Similarity Search | 🟢 Beginner | Established | [x] done | lead | main |
@@ -37,10 +37,10 @@
 | 1.21 | Polarizable / AMOEBA Force Field MD | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 1.22 | Constant-pH Molecular Dynamics | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 1.23 | QM/MM Molecular Dynamics | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 1.24 | Umbrella Sampling / WHAM Free Energy Profiles | 🟢 Beginner | Established | [ ] todo | - | - |
+| 1.24 | Umbrella Sampling / WHAM Free Energy Profiles | 🟢 Beginner | Established | [x] done | - | - |
 | 1.25 | Gaussian-Accelerated MD (GaMD) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 1.26 | Steered Molecular Dynamics (SMD) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 1.27 | MM-GBSA / MM-PBSA Rescoring | 🟢 Beginner | Established | [ ] todo | - | - |
+| 1.27 | MM-GBSA / MM-PBSA Rescoring | 🟢 Beginner | Established | [x] done | - | - |
 | 1.28 | Covalent Docking | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 1.29 | Kinase Selectivity Panel Scoring | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 1.30 | Trajectory RMSD, Clustering & Contact Analysis | 🟢 Beginner | Established | [x] done | worker | main |

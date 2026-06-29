@@ -1,52 +1,44 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU NNP interface (one thread per atom)
 // ---------------------------------------------------------------------------
-// Project 1.9 -- ML Interatomic Potentials (Neural Network Potentials)   (template skeleton)
+// Project 1.9 : ML Interatomic Potentials (Neural Network Potentials)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (pattern: INDEPENDENT JOBS + CONSTANT-MEMORY MODEL)
+//   The total energy is a sum of per-atom energies E_i, and each E_i depends only
+//   on neighbors within a cutoff. So the n atoms are independent jobs: give each
+//   atom its OWN GPU thread. Every thread reads the same model (descriptor
+//   hyperparameters + MLP weights) but never writes it -> the model lives in
+//   CONSTANT memory, whose broadcast cache serves an entire warp from one
+//   address in a single transaction (exactly like the query fingerprint in the
+//   1.12 Tanimoto flagship). This is the closest cookbook row in PATTERNS.md:
+//   "score one query vs N items, each independent + constant-memory query".
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The per-atom math (descriptor + MLP) is the SHARED __host__ __device__ core
+//   in nnp.h, so the kernel and the CPU reference compute identical values.
+//   kernels.cu defines the kernel and the host wrapper.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: nnp.h, reference_cpu.h, util/cuda_check.cuh, util/timer.cuh.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // Structure, AcsfParams, AtomicNet (pure C++, safe in .cu)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// ---------------------------------------------------------------------------
+// nnp_energy_gpu: the host-callable wrapper around the GPU energy kernel.
+//   Inputs:
+//     s         : the molecular structure (n atoms, flat coordinates)
+//     p         : ACSF hyperparameters (uploaded to constant memory)
+//     net       : the per-atom MLP weights (uploaded to constant memory)
+//   Outputs:
+//     e_atom    : resized to s.n; e_atom[i] = E_i computed on the GPU
+//     kernel_ms : the kernel's on-device time in milliseconds (CUDA events)
+//   Returns: the total energy E = sum_i E_i (summed on the host in atom order so
+//            it is deterministic and matches the CPU reference exactly).
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   It performs the canonical CUDA steps: upload coords (global) + model
+//   (constant), launch one-thread-per-atom, copy per-atom energies back, sum.
+// ---------------------------------------------------------------------------
+double nnp_energy_gpu(const Structure& s, const AcsfParams& p, const AtomicNet& net,
+                      std::vector<double>& e_atom, float* kernel_ms);

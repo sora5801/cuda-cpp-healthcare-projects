@@ -31,3 +31,13 @@ add_executable(enhanced-sampling-metadynamics-replica-exchange
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(enhanced-sampling-metadynamics-replica-exchange PRIVATE src)
+
+# --fmad=false: compute a*b+c as a separate multiply then add (no fused multiply-
+# add), tracking the host compiler more closely. It SHRINKS but does not remove
+# the CPU/GPU drift: these Langevin trajectories are chaotic and the device vs
+# host transcendental libraries still differ by ~1 ULP. That is why we verify the
+# ENSEMBLE free-energy surface (a robust statistical observable) rather than
+# individual trajectories. (Mirrors --fmad=false in the VS .vcxproj. See THEORY.md
+# "Numerical considerations".)
+target_compile_options(enhanced-sampling-metadynamics-replica-exchange
+  PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)

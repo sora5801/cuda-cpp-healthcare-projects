@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.8 -- Semi-Empirical & Tight-Binding Quantum Methods   (template skeleton)
+# Project 1.8 -- Semi-Empirical & Tight-Binding Quantum Methods
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/semi-empirical-tight-binding-quantum-methods.sln (CLAUDE.md §5). Both
@@ -31,3 +31,8 @@ add_executable(semi-empirical-tight-binding-quantum-methods
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(semi-empirical-tight-binding-quantum-methods PRIVATE src)
+
+# This project links cuSOLVER (batched symmetric eigensolver in src/kernels.cu).
+# cuSOLVER pulls in cuBLAS, so we link both (CUDA::cublas) to match the VS .vcxproj.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(semi-empirical-tight-binding-quantum-methods PRIVATE CUDA::cusolver CUDA::cublas)
