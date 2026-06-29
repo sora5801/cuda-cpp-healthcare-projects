@@ -2,8 +2,8 @@
   "id": "10.2",
   "id_padded": "10.02",
   "project": "Real-Time Soft-Tissue Deformation for Surgical Simulation",
-  "status": "todo",
-  "owner": "",
-  "branch": "",
+  "status": "done",
+  "owner": "lead",
+  "branch": "main",
   "skeleton": true
 }

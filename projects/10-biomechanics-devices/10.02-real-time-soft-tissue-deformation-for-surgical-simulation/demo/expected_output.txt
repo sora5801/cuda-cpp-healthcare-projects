@@ -1,5 +1,7 @@
-10.2 -- Real-Time Soft-Tissue Deformation for Surgical Simulation
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+10.2 -- Real-Time Soft-Tissue Deformation (PBD)
+PBD mesh: 24x24 particles (top row pinned), 300 steps, 20 iters, stiffness=1.00, gravity=10.0
+free corner (23,0)      = (0.5217, -11.8855, -16.7891)
+free corner (23,23)     = (22.4783, -11.8855, -16.7891)
+center      (12,12)     = (11.9944, -10.7050, -6.0514)
+drape depth (max sag)  = 12.6081
+RESULT: PASS (GPU mesh matches CPU within tol=1.0e-03)

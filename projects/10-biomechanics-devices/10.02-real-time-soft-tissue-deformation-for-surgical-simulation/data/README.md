@@ -1,37 +1,48 @@
-# Data — 10.2 Real-Time Soft-Tissue Deformation for Surgical Simulation
+# Data — 10.02 Real-Time Soft-Tissue Deformation (PBD)
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/cloth_params.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
-| License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Origin | **Synthetic** simulation parameters (`scripts/make_synthetic.py`) |
+| License | Public domain (CC0) |
+| Setup | 24×24 particle grid, top row pinned, draping under gravity via PBD |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+The "data" is the **simulation setup**; the mesh (particle positions, pinned top
+row, distance constraints) is built deterministically from these parameters.
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+### File format (one line)
 
-## Full dataset
+```
+R  C  spacing  dt  gravity  stiffness  omega  iters  steps
+```
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+| Field | Meaning |
+|---|---|
+| `R`, `C` | grid rows × columns of particles |
+| `spacing` | initial rest spacing (and structural-spring rest length) |
+| `dt` | timestep |
+| `gravity` | gravitational acceleration (applied in −y) |
+| `stiffness` | constraint stiffness in [0,1] |
+| `omega` | Jacobi relaxation factor (~1.0) |
+| `iters` | constraint-projection iterations per step |
+| `steps` | number of timesteps |
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+Default: `24 24 1 0.02 10 1 1 20 300` → a sheet that drapes ~12.6 units.
 
-Catalog dataset notes (verbatim):
+## "Full dataset" / realistic meshes
 
-> SOFA Framework benchmark scenes — laparoscopic and open-surgery deformable organ models (https://www.sofa-framework.org/); Kaggle Liver CT Segmentation — 3D liver meshes for deformation benchmarking (https://www.kaggle.com/datasets/andrewmvd/liver-tumor-segmentation); MRI Breast Tissue Segmentation (nnU-Net preprocessed) for biomechanical modeling (https://arxiv.org/abs/2411.18784); iMSTK Test Suite — pre-built surgical scenario meshes (https://www.imstk.org/).
+Real surgical simulators deform **organ meshes** (tens to hundreds of thousands
+of tetrahedral/surface elements) segmented from patient CT/MRI:
 
-## Provenance & field meanings
+- **SOFA** (<https://github.com/sofa-framework/sofa>) — physics engine, GPU PBD + haptics.
+- **iMSTK** (<https://github.com/Kitware/iMSTK>) — interactive medical simulation toolkit (CUDA).
+- **NVIDIA FleX** (<https://github.com/NVIDIAGameWorks/FleX>) — GPU PBD particle solver.
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+Bigger mesh: `python scripts/make_synthetic.py --R 128 --C 128 --steps 600`.
+
+## Provenance & honesty
+
+The mesh is a **synthetic grid sheet**, not a patient organ, and the material
+model is a simple distance-constraint network. It demonstrates the PBD/GPU
+pattern; it is **not** a validated biomechanical model and not for clinical use.

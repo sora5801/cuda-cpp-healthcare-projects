@@ -1,52 +1,40 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU PBD interface (one thread per particle)
 // ---------------------------------------------------------------------------
-// Project 10.2 -- Real-Time Soft-Tissue Deformation for Surgical Simulation   (template skeleton)
+// Project 10.02 : Real-Time Soft-Tissue Deformation for Surgical Simulation
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (ninth flagship pattern: PARALLEL CONSTRAINT PROJECTION)
+//   PBD is a stencil-like solver, but the interesting twist is the JACOBI
+//   constraint projection: each particle reads its neighbours' (read-only)
+//   positions and computes its own correction, so all particles update
+//   independently -> one thread per particle, double-buffered across iterations.
+//   The host drives three kernels per step: predict, project (x iters), finalize.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The per-particle math is shared with the CPU (pbd.h), so the final mesh
+//   matches the reference. kernels.cu defines the kernels.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, pbd.h, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // PbdParams, Vec3 (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Predict positions under gravity: pa[i] = predict(x[i], v[i]).
+__global__ void predict_kernel(PbdParams P, const Vec3* __restrict__ x,
+                               const Vec3* __restrict__ v, const double* __restrict__ w,
+                               Vec3* __restrict__ pa);
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// One Jacobi projection iteration: dst[i] = src[i] + correction(i, src).
+__global__ void constraint_kernel(PbdParams P, const Vec3* __restrict__ src,
+                                  const double* __restrict__ w, Vec3* __restrict__ dst);
+
+// Velocity update + commit: v[i] = (p[i]-x[i])/dt; x[i] = p[i].
+__global__ void finalize_kernel(PbdParams P, const Vec3* __restrict__ p,
+                                const double* __restrict__ w,
+                                Vec3* __restrict__ x, Vec3* __restrict__ v);
+
+// Host wrapper: run the full PBD time loop on the GPU; x and v are updated
+// in place to the final mesh state. Returns total GPU time of the loop.
+void simulate_gpu(const PbdParams& P, std::vector<Vec3>& x, std::vector<Vec3>& v,
+                  const std::vector<double>& w, float* kernel_ms);

@@ -1,94 +1,85 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  PBD kernels (predict / project / finalize) + time loop
 // ---------------------------------------------------------------------------
-// Project 10.2 -- Real-Time Soft-Tissue Deformation for Surgical Simulation   (template skeleton)
+// Project 10.02 : Real-Time Soft-Tissue Deformation for Surgical Simulation
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of simulate_cpu(): identical per-particle physics (pbd.h), one thread
+// per particle, double-buffered Jacobi projection. main.cu compares the final
+// mesh. See ../THEORY.md "GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
-#include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "util/cuda_check.cuh"
+#include "util/timer.cuh"
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
 static constexpr int THREADS_PER_BLOCK = 256;
 
-// ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
-// ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+__global__ void predict_kernel(PbdParams P, const Vec3* __restrict__ x,
+                               const Vec3* __restrict__ v, const double* __restrict__ w,
+                               Vec3* __restrict__ pa) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= P.R * P.C) return;
+    pa[i] = pbd_predict(x[i], v[i], w[i], P.dt, P.gravity);
 }
 
-// ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
-// ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+// One Jacobi iteration: every particle reads neighbours from `src` (read-only)
+// and writes its corrected position to `dst`. Because reads are all from `src`,
+// the particles are independent within the iteration -> no races, no atomics.
+__global__ void constraint_kernel(PbdParams P, const Vec3* __restrict__ src,
+                                  const double* __restrict__ w, Vec3* __restrict__ dst) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= P.R * P.C) return;
+    const int r = i / P.C;
+    const int c = i % P.C;
+    dst[i] = src[i] + pbd_correction(r, c, P, src, w);
+}
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+__global__ void finalize_kernel(PbdParams P, const Vec3* __restrict__ p,
+                                const double* __restrict__ w,
+                                Vec3* __restrict__ x, Vec3* __restrict__ v) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= P.R * P.C) return;
+    v[i] = pbd_new_velocity(p[i], x[i], w[i], P.dt);
+    x[i] = p[i];
+}
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+void simulate_gpu(const PbdParams& P, std::vector<Vec3>& x, std::vector<Vec3>& v,
+                  const std::vector<double>& w, float* kernel_ms) {
+    const int N = P.R * P.C;
+    const std::size_t vbytes = static_cast<std::size_t>(N) * sizeof(Vec3);
+    const std::size_t wbytes = static_cast<std::size_t>(N) * sizeof(double);
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    Vec3 *d_x = nullptr, *d_v = nullptr, *d_pa = nullptr, *d_pb = nullptr;
+    double* d_w = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_x, vbytes));
+    CUDA_CHECK(cudaMalloc(&d_v, vbytes));
+    CUDA_CHECK(cudaMalloc(&d_pa, vbytes));
+    CUDA_CHECK(cudaMalloc(&d_pb, vbytes));
+    CUDA_CHECK(cudaMalloc(&d_w, wbytes));
+    CUDA_CHECK(cudaMemcpy(d_x, x.data(), vbytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_v, v.data(), vbytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_w, w.data(), wbytes, cudaMemcpyHostToDevice));
+
+    const int grid = (N + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    for (int step = 0; step < P.steps; ++step) {
+        predict_kernel<<<grid, THREADS_PER_BLOCK>>>(P, d_x, d_v, d_w, d_pa);
+        Vec3* src = d_pa;
+        Vec3* dst = d_pb;
+        for (int it = 0; it < P.iters; ++it) {
+            constraint_kernel<<<grid, THREADS_PER_BLOCK>>>(P, src, d_w, dst);
+            Vec3* tmp = src; src = dst; dst = tmp;          // ping-pong
+        }
+        finalize_kernel<<<grid, THREADS_PER_BLOCK>>>(P, src, d_w, d_x, d_v);
+    }
+    *kernel_ms = timer.stop_ms();
+    CUDA_CHECK_LAST("pbd kernels");
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
+    CUDA_CHECK(cudaMemcpy(x.data(), d_x, vbytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(v.data(), d_v, vbytes, cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    CUDA_CHECK(cudaFree(d_v));
+    CUDA_CHECK(cudaFree(d_pa));
+    CUDA_CHECK(cudaFree(d_pb));
+    CUDA_CHECK(cudaFree(d_w));
 }

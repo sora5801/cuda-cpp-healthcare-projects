@@ -1,31 +1,30 @@
 // ===========================================================================
-// src/reference_cpu.h  --  Prototype of the CPU reference computation
+// src/reference_cpu.h  --  Mesh init + CPU PBD reference
 // ---------------------------------------------------------------------------
-// Project 10.2 -- Real-Time Soft-Tissue Deformation for Surgical Simulation   (template skeleton)
+// Project 10.02 : Real-Time Soft-Tissue Deformation for Surgical Simulation
 //
-// WHY A SEPARATE HEADER
-//   The CPU reference (reference_cpu.cpp) is compiled by the plain C++ compiler
-//   and must NOT see any CUDA/__global__ syntax, so its prototype cannot live in
-//   kernels.cuh. Both main.cu and reference_cpu.cpp include THIS pure-C++ header
-//   so they agree on the function signature.
-//
-// THE CONTRACT (this template's placeholder computation):
-//   SAXPY -- "Single-precision A*X Plus Y":  out[i] = a * x[i] + y[i].
-//   This is the canonical first GPU kernel; here it stands in as a buildable
-//   placeholder. TODO(impl): replace saxpy_cpu with this project's real
-//   reference computation, and update the prototype + callers accordingly.
-//
-//   The CPU reference exists for two reasons (CLAUDE.md section 5):
-//     (a) it is the readable baseline that makes the GPU speed-up legible, and
-//     (b) the demo runs BOTH and asserts they agree within tolerance.
+// Pure C++ (no CUDA). The per-particle physics is in pbd.h; kernels.cu reuses
+// PbdParams and the mesh. The CPU reference runs the identical PBD steps as the
+// GPU, so the final particle positions must match.
 // ===========================================================================
 #pragma once
 
+#include <string>
 #include <vector>
 
-// Compute out = a*x + y on the CPU, element by element.
-//   x, y : input vectors of equal length n
-//   a    : the scalar multiplier
-//   out  : resized to n and filled with the result (output parameter)
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out);
+#include "pbd.h"   // Vec3, PbdParams, pbd_predict/correction/new_velocity
+
+// Load PbdParams from the one-line text format (data/README.md):
+//   "R C spacing dt gravity stiffness omega iters steps"
+PbdParams load_pbd(const std::string& path);
+
+// Build the initial mesh: an R x C grid laid flat in the x-z plane (y = 0),
+// spacing apart. The top row (r = 0) is PINNED (inverse mass 0); all others are
+// free (inverse mass 1). Velocities start at zero.
+void init_mesh(const PbdParams& P, std::vector<Vec3>& x, std::vector<Vec3>& v,
+               std::vector<double>& w);
+
+// CPU reference: advance the mesh `steps` timesteps in place (predict ->
+// Jacobi constraint projection x iters -> velocity update). Trusted baseline.
+void simulate_cpu(const PbdParams& P, std::vector<Vec3>& x, std::vector<Vec3>& v,
+                  const std::vector<double>& w);

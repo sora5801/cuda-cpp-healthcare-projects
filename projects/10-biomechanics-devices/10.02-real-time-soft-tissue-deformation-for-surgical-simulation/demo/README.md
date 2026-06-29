@@ -1,33 +1,30 @@
-# Demo — 10.2 Real-Time Soft-Tissue Deformation for Surgical Simulation
+# Demo — 10.02 Real-Time Soft-Tissue Deformation (PBD)
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+`run_demo.ps1` (Windows) / `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on `data/sample/cloth_params.txt` (a 24×24 pinned sheet, 300 steps).
+3. **Verify** that the GPU PBD solver and the CPU reference reach the same final
+   mesh (within a physically-negligible tolerance).
+4. **Report** sampled particle positions and the **drape depth** (how far the
+   sheet sagged under gravity).
 
-The program splits its output deliberately:
+stdout (final positions) is deterministic and diffed against
+[`expected_output.txt`](expected_output.txt); the timing line is on stderr only.
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+## Canonical output
 
-## Expected result
+See [`expected_output.txt`](expected_output.txt). The pinned top edge holds while
+the rest drapes ~12.6 units under gravity, symmetric about the centre. `RESULT:
+PASS` means the GPU and CPU meshes agree to within `1e-3` on positions of
+magnitude ~10.
 
-```
-10.2 -- Real-Time Soft-Tissue Deformation for Surgical Simulation
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
+> **Numerical note:** over thousands of constraint iterations the GPU and CPU
+> drift at the ~`1e-5` level because their floating-point fused-multiply-add
+> behaviour differs — a real lesson in GPU reproducibility (see THEORY). The
+> agreement to ~6 significant figures confirms correctness.
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+> The mesh is a **synthetic grid sheet**, not a patient organ — a demonstration of
+> the PBD/GPU pattern, not a validated biomechanical model.

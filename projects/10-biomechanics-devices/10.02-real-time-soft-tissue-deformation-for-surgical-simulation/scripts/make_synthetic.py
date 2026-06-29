@@ -1,48 +1,47 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Write the PBD cloth/tissue parameters
 # ---------------------------------------------------------------------------
-# Project 10.2 -- Real-Time Soft-Tissue Deformation for Surgical Simulation   (template skeleton)
+# Project 10.02 : Real-Time Soft-Tissue Deformation for Surgical Simulation
 #
-# WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+# The "data" is the simulation setup: the grid mesh size, timestep, gravity,
+# constraint stiffness/relaxation, and iteration/step counts. The mesh itself
+# (positions, pinned top row) is built deterministically from these.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
-#
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# OUTPUT (data/README.md format), one line:
+#   R C spacing dt gravity stiffness omega iters steps
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py
+#   python scripts/make_synthetic.py --R 128 --C 128 --steps 600
 # ===========================================================================
 import argparse
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "data" / "sample" / "cloth_params.txt"
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
+    ap = argparse.ArgumentParser(description="Write the PBD soft-tissue parameters.")
+    ap.add_argument("--R", type=int, default=24, help="grid rows")
+    ap.add_argument("--C", type=int, default=24, help="grid columns")
+    ap.add_argument("--spacing", type=float, default=1.0, help="rest spacing")
+    ap.add_argument("--dt", type=float, default=0.02, help="timestep")
+    ap.add_argument("--gravity", type=float, default=10.0, help="gravity (-y)")
+    ap.add_argument("--stiffness", type=float, default=1.0, help="constraint stiffness [0,1]")
+    ap.add_argument("--omega", type=float, default=1.0, help="Jacobi relaxation factor")
+    ap.add_argument("--iters", type=int, default=20, help="constraint iterations per step")
+    ap.add_argument("--steps", type=int, default=300, help="number of timesteps")
+    ap.add_argument("--out", default=str(OUT))
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
-
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    line = (f"{args.R} {args.C} {args.spacing:g} {args.dt:g} {args.gravity:g} "
+            f"{args.stiffness:g} {args.omega:g} {args.iters} {args.steps}")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    Path(args.out).write_text(line + "\n", encoding="utf-8")
+    print(f"[make_synthetic] wrote {args.out}  ({args.R}x{args.C} particles, "
+          f"{args.iters} iters x {args.steps} steps; top row pinned)")
 
 
 if __name__ == "__main__":

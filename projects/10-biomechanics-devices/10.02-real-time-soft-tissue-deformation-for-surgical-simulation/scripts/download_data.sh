@@ -1,33 +1,23 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
-# ---------------------------------------------------------------------------
-# Project 10.2 -- Real-Time Soft-Tissue Deformation for Surgical Simulation   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# scripts/download_data.sh  --  Realistic organ-mesh pointers (Linux/macOS)
+# Project 10.02 : Real-Time Soft-Tissue Deformation. Nothing to download.
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
-echo "[download_data] Project 10.2 -- Real-Time Soft-Tissue Deformation for Surgical Simulation"
-echo "[download_data] Target data dir: $DATA_DIR"
+echo "[download_data] Project 10.02 -- Real-Time Soft-Tissue Deformation (PBD)"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    SOFA Framework benchmark scenes — laparoscopic and open-surgery deformable organ models (https://www.sofa-framework.org/); Kaggle Liver CT Segmentation — 3D liver meshes for deformation benchmarking (https://www.kaggle.com/datasets/andrewmvd/liver-tumor-segmentation); MRI Breast Tissue Segmentation (nnU-Net preprocessed) for biomechanical modeling (https://arxiv.org/abs/2411.18784); iMSTK Test Suite — pre-built surgical scenario meshes (https://www.imstk.org/)."
+echo "There is no file to download: the mesh is built from the parameters in"
+echo "data/sample/cloth_params.txt."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "For REAL organ meshes + GPU PBD frameworks:"
+echo "  SOFA  : https://github.com/sofa-framework/sofa  (physics + haptics)"
+echo "  iMSTK : https://github.com/Kitware/iMSTK        (CUDA deformation)"
+echo "  FleX  : https://github.com/NVIDIAGameWorks/FleX (GPU PBD particles)"
+echo "  Patient meshes: segment CT/MRI (e.g., 3D Slicer) into tetra/surface meshes."
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Bigger mesh (no download):"
+echo "  python scripts/make_synthetic.py --R 128 --C 128 --steps 600"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"
