@@ -1,16 +1,9 @@
 # ===========================================================================
 # demo/run_demo.ps1  --  One command: build (if needed) + run + verify
 # ---------------------------------------------------------------------------
-# Project 2.6 -- Normal Mode Analysis / Elastic Network Models   (template skeleton)
-#
-# WHAT IT DOES (CLAUDE.md §6.3)
-#   1. Ensure the Release exe exists (build it with MSBuild if missing).
-#   2. Run it on data/sample/, capturing stdout (deterministic) separately
-#      from stderr (timing / varies).
-#   3. Diff stdout against demo/expected_output.txt (line endings normalized).
-#   4. Echo the stderr timing for the learner; report PASS/FAIL and exit code.
-#
-# Usage:  ./demo/run_demo.ps1
+# Project 2.06 : Normal Mode Analysis / Elastic Network Models
+#   stdout (deterministic modes/mobility) is diffed against expected_output.txt;
+#   stderr (timing) is shown but not diffed.
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $Demo        = $PSScriptRoot
@@ -18,7 +11,7 @@ $ProjectRoot = Split-Path -Parent $Demo
 $Slug        = "normal-mode-analysis-elastic-network-models"
 $Sln         = Join-Path $ProjectRoot "build\$Slug.sln"
 $Exe         = Join-Path $ProjectRoot "build\x64\Release\$Slug.exe"
-$Sample      = Join-Path $ProjectRoot "data\sample\saxpy_sample.txt"
+$Sample      = Join-Path $ProjectRoot "data\sample\protein_ca.txt"
 $Expected    = Join-Path $Demo "expected_output.txt"
 
 function Find-MSBuild {
@@ -33,7 +26,6 @@ function Find-MSBuild {
     return $null
 }
 
-# --- 1. Build if the executable is missing --------------------------------
 if (-not (Test-Path $Exe)) {
     Write-Host "[run_demo] Release exe not found; building $Slug ..."
     $msbuild = Find-MSBuild
@@ -45,7 +37,6 @@ if (-not (Test-Path $Exe)) {
     if ($LASTEXITCODE -ne 0) { Write-Error "Build failed."; exit $LASTEXITCODE }
 }
 
-# --- 2. Run, capturing stdout and stderr separately -----------------------
 Write-Host "[run_demo] Running $Slug on the committed sample ..."
 $outFile = New-TemporaryFile
 $errFile = New-TemporaryFile
@@ -55,12 +46,10 @@ $stdout = (Get-Content $outFile -Raw) -replace "`r",""
 $stderr = (Get-Content $errFile -Raw) -replace "`r",""
 Remove-Item $outFile, $errFile -ErrorAction SilentlyContinue
 
-# --- 3. Compare stdout to expected ----------------------------------------
 $expected = (Get-Content $Expected -Raw) -replace "`r",""
 $actualLines   = $stdout.TrimEnd("`n").Split("`n")
 $expectedLines = $expected.TrimEnd("`n").Split("`n")
 
-# --- 4. Report ------------------------------------------------------------
 Write-Host "---- program output (stdout) ----"
 Write-Host $stdout.TrimEnd()
 Write-Host "---- timing / detail (stderr) ----"

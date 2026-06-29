@@ -1,87 +1,101 @@
-# THEORY — 2.6 Normal Mode Analysis / Elastic Network Models
+# THEORY — 2.06 Normal Mode Analysis / Elastic Network Models
 
-> The deep didactic explanation (the "why"). Written for a sharp student who
-> knows C++ but is new to CUDA and new to this domain. Diagrams in Mermaid/ASCII
-> are welcome. See [README.md](README.md) for the quick tour and build steps.
->
-> _Educational only — not for clinical use._
-
-<!-- =======================================================================
-     The block below is the verbatim catalog deep-dive for this project,
-     stamped in by scaffold.py as raw material. Use it to write the sections
-     that follow, then DELETE it (or fold it into "The science"). Every
-     TODO(theory) below must be completed before the project is "done".
-     ======================================================================= -->
-
-<details>
-<summary>Catalog deep-dive (raw source material — fold into the sections below, then remove)</summary>
-
-### 2.6 Normal Mode Analysis / Elastic Network Models 🟢 · Established
-
-- **Deep dive:** Normal Mode Analysis (NMA) computes the low-frequency vibrational modes of a protein structure, revealing collective motions (domain movements, breathing modes) relevant to allostery and function. The bottleneck is diagonalization of the 3N×3N Hessian matrix (N = atom count) — an O(N³) dense eigenvalue problem. For large proteins (N > 50,000 atoms) this is intractable on CPU. Elastic Network Models (ENMs: ANM, GNM) use simplified Hookean springs between Cα atoms, reducing the matrix but still benefiting from GPU cuSOLVER for eigendecomposition and CUDA-accelerated matrix-vector products (Lanczos iteration for sparse NMA).
-- **Key algorithms:** Anisotropic network model (ANM), Gaussian network model (GNM), Hessian matrix construction (pairwise spring contacts), Lanczos/ARPACK for sparse eigendecomposition, overlap with experimental B-factors/conformational changes, RMSF from mode summation.
-- **Datasets:** PDB protein structures (https://www.rcsb.org); ProDy structural dynamics dataset (https://github.com/prody/ProDy); MoDEL MD database for NMA validation (https://mmb.irbbarcelona.org/MoDEL/); flexnMR NMR flexibility benchmark (verify URL).
-- **Starter repos/tools:** ProDy (https://github.com/prody/ProDy) — Python NMA/ENM with GPU support via PyTorch; iModS server (https://imods.iqfr.csic.es) — NMA-based motion analysis; Bio3D R package (https://thegrantlab.org/bio3d/) — NMA in R; ElNemo (https://www.sciences.univ-nantes.fr/elnemo/) — elastic network modes server.
-- **CUDA libraries & GPU pattern:** cuSOLVER dense dsyevd for moderate-sized Hessians; cuSPARSE for sparse ANM matrix-vector products; custom CUDA Lanczos iteration for large sparse NMA; cuBLAS for B-factor RMSF accumulation.
-
-</details>
-
----
+> For a reader who knows C++ but is new to CUDA and to structural biology. See
+> [README.md](README.md) for the tour and build. _Educational only._
 
 ## 1. The science
 
-TODO(theory): The biology / medicine / physics being modeled — enough for a
-reader to understand the *problem* before any math. What real-world question
-does computing this answer?
+Proteins are not rigid — they flex, and their *large-scale* motions (a domain
+swinging shut on a substrate, a channel breathing open) are central to function
+and allostery. Remarkably, these slow collective motions are well captured by a
+crude mechanical caricature: ignore chemistry, treat each Cα atom as a bead, and
+connect nearby beads with identical springs. This **Elastic Network Model** (ENM),
+analyzed by **Normal Mode Analysis** (NMA), reproduces the experimentally observed
+flexible regions and motions surprisingly well.
 
 ## 2. The math
 
-TODO(theory): The governing equations / formal problem statement, with **every
-symbol defined** (units, ranges). State inputs, outputs, and the objective.
+For `N` Cα atoms, the elastic energy is a sum of `½γ(d − d₀)²` over spring-connected
+pairs. The **Hessian** `H` is the matrix of second derivatives of that energy with
+respect to the `3N` coordinates — a `3N×3N` symmetric matrix. In the **Anisotropic
+Network Model (ANM)**, the off-diagonal `3×3` block for a connected pair `(i,j)` is
+
+```
+H_ij = -(γ / d_ij²) · Δ Δᵀ ,   Δ = r_j − r_i      (a 3-vector)
+H_ii = -Σ_{j≠i} H_ij                              (so each row sums to zero)
+```
+
+The **normal modes** are the eigenvectors of `H`: `H v_k = λ_k v_k`. `λ_k` is the
+mode's squared frequency; small `λ` = soft, slow, large-amplitude motion. Because
+the energy is invariant under rigid-body translation and rotation, **exactly 6
+eigenvalues are zero** (3 translations + 3 rotations) — a built-in correctness
+check. The lowest *non-zero* modes are the functional motions.
 
 ## 3. The algorithm
 
-TODO(theory): Step-by-step. Include **complexity analysis**: serial cost vs. the
-parallel work/depth. Where is the arithmetic intensity? What is the data-access
-pattern?
+```
+build H (3N x 3N) from the Cα coordinates and a cutoff
+diagonalize H  ->  eigenvalues λ (ascending), eigenvectors v
+discard the 6 zero modes; the next few are the functional modes
+mobility_i = Σ_{k: λ_k>0} (1/λ_k) · |v_k restricted to atom i|²   (~ a B-factor)
+```
+
+**Complexity.** Building `H` is `O(N²)` (pairs). Diagonalizing it is `O((3N)³)` —
+the dominant cost, and the GPU target.
 
 ## 4. The GPU mapping
 
-TODO(theory): How the algorithm becomes **threads / blocks / grids**.
-- Thread-to-data mapping (which thread owns which element).
-- Launch configuration and the reasoning (block size, grid size).
-- Memory hierarchy used and **why**: global / shared / registers / constant /
-  texture. Where is the bandwidth bottleneck? What is the occupancy story?
-- Which CUDA library (cuBLAS / cuFFT / cuRAND / cuSOLVER / Thrust) does what,
-  and what it would take to write that step by hand (no black boxes — §6.1.6).
+**Use the library.** A dense symmetric eigendecomposition is exactly what
+**cuSOLVER** provides, so we call it rather than hand-rolling a QR or Jacobi solver.
+As with every library here, we **document what it does** (no black box):
 
 ```
-TODO(theory): an ASCII or Mermaid diagram of the grid/block decomposition.
+cusolverDnDsyevd(handle, jobz=VECTOR, uplo=LOWER, n, A, lda, W, work, lwork, info);
+// Solves A x = λ x for symmetric A by divide-and-conquer (O(n^3)).
+// On exit: W holds the eigenvalues (ascending); A is overwritten with the
+//          orthonormal eigenvectors as COLUMNS (column-major).
 ```
+
+We first call `cusolverDnDsyevd_bufferSize` to learn the workspace size, allocate
+it, then run the solve and check the `info` flag for convergence. Because the
+Hessian is **symmetric**, its row-major and column-major layouts are identical, so
+we upload it directly. The `O(N³)` solve is where the GPU's dense-linear-algebra
+throughput pays off — modest here (`n=180`), decisive for real proteins
+(`n = 3N` into the tens of thousands).
 
 ## 5. Numerical considerations
 
-TODO(theory): Precision (FP32 vs FP64) and why. Stability. Race conditions and
-whether atomics are used. **Determinism**: does the parallel reduction reorder
-floating-point sums? If so, say so and quantify the caveat.
+- **Precision.** Double throughout: eigenvalues span from ~0 (rigid-body) to
+  `O(1)`, and the near-zero modes must be resolved cleanly.
+- **Determinism.** cuSOLVER `Dsyevd` is deterministic for a fixed input, so the
+  reported modes/mobility are reproducible.
+- **Degeneracy.** Repeated eigenvalues have an arbitrary eigenvector *basis*, so we
+  verify the **eigenvalues** (basis-independent) rather than eigenvectors; the
+  mobility uses `|v|²` summed within a residue, which is basis-robust.
 
 ## 6. How we verify correctness
 
-TODO(theory): The CPU reference (`src/reference_cpu.cpp`), the **tolerance** and
-why that value, and the edge cases checked. Explain why agreement between an
-independent serial implementation and the GPU implementation is convincing
-evidence of correctness.
+`main.cu` diagonalizes the same Hessian with cuSOLVER (GPU) and a transparent
+**cyclic Jacobi** eigensolver (CPU) and compares the sorted eigenvalues
+(`worst diff ≈ 1e-12`). Beyond CPU/GPU parity, the result is physically right: the
+Hessian produces **exactly 6 zero modes** (the rigid-body invariance — a hard check
+the model must pass), the next modes are the soft functional motions, and the
+mobility profile flags the flexible loops, as a real ENM should.
 
 ## 7. Where this sits in the real world
 
-TODO(theory): How production tools (named in the catalog "Prior art") do this
-differently — what they add (scale, accuracy, features) that this teaching
-version omits. If this is a 🔴 frontier project shipped as a reduced-scope
-teaching version, describe the full approach here.
-
----
+ProDy, Bio3D, and ElNemo run ANM/GNM on real PDB structures and compare the
+predicted mobility to crystallographic **B-factors** (they correlate well). For
+large proteins one uses a **sparse** Hessian and a **Lanczos** iteration to extract
+only the lowest modes (the functional ones) instead of a full dense solve — there
+the GPU accelerates the sparse matrix-vector products. All-atom NMA with a real
+force field gives true vibrational frequencies at far greater cost. The dense
+symmetric eigensolve you call here via cuSOLVER is the computational core of the
+ENM family.
 
 ## References
 
-TODO(theory): Papers, docs, and the starter repos from the catalog, with one
-line each on what to learn from them.
+- Bahar, Atilgan & Erman (1997) — Gaussian Network Model (GNM).
+- Atilgan et al. (2001) — Anisotropic Network Model (ANM).
+- Tirion (1996) — single-parameter elastic network for protein dynamics.
+- NVIDIA **cuSOLVER** documentation — dense symmetric eigensolvers (`syevd`).

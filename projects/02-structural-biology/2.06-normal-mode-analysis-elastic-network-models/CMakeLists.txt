@@ -31,3 +31,7 @@ add_executable(normal-mode-analysis-elastic-network-models
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(normal-mode-analysis-elastic-network-models PRIVATE src)
+
+# This flagship links cuSOLVER (eigendecomposition; see kernels.cu).
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(normal-mode-analysis-elastic-network-models PRIVATE CUDA::cusolver CUDA::cublas CUDA::cusparse)

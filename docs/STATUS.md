@@ -2,11 +2,11 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 13/301 projects done (4.3%) | todo 288 | in-progress 0 | missing 0
+**Progress:** 14/301 projects done (4.7%) | todo 287 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
-| 🟢 Beginner | 67 | 5 | 0 | 62 |
+| 🟢 Beginner | 67 | 6 | 0 | 61 |
 | 🟡 Intermediate | 206 | 7 | 0 | 199 |
 | 🔴 Advanced | 28 | 1 | 0 | 27 |
 
@@ -50,7 +50,7 @@
 | 1.34 | Amyloid / Aggregation Propensity Prediction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 1.35 | QMMM/ML Potential Hybrid MD | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
 
-## 2. Structural Biology & Protein Science  (0/35 done)
+## 2. Structural Biology & Protein Science  (1/35 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -59,7 +59,7 @@
 | 2.03 | Cryo-EM Single-Particle Reconstruction | 🟢 Beginner | Established | [ ] todo | - | - |
 | 2.04 | Cryo-ET Subtomogram Averaging | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 2.05 | Coarse-Grained / MARTINI Simulation | 🟢 Beginner | Established | [ ] todo | - | - |
-| 2.06 | Normal Mode Analysis / Elastic Network Models | 🟢 Beginner | Established | [ ] todo | - | - |
+| 2.06 | Normal Mode Analysis / Elastic Network Models | 🟢 Beginner | Established | [x] done | lead | main |
 | 2.07 | Monte Carlo Protein Structure Sampling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 2.08 | GPU Molecular Visualization & Ray Tracing | 🟢 Beginner | Established | [ ] todo | - | - |
 | 2.09 | Solvent-Accessible Surface & Poisson-Boltzmann Electrostatics | 🟢 Beginner | Established | [ ] todo | - | - |

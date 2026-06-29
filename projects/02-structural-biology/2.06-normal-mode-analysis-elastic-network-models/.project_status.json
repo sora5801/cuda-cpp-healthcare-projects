@@ -2,8 +2,8 @@
   "id": "2.6",
   "id_padded": "2.06",
   "project": "Normal Mode Analysis / Elastic Network Models",
-  "status": "todo",
-  "owner": "",
-  "branch": "",
+  "status": "done",
+  "owner": "lead",
+  "branch": "main",
   "skeleton": true
 }

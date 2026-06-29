@@ -1,33 +1,23 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
-# ---------------------------------------------------------------------------
-# Project 2.6 -- Normal Mode Analysis / Elastic Network Models   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# scripts/download_data.sh  --  Real protein-structure pointers (Linux/macOS)
+# Project 2.06 : Normal Mode Analysis / Elastic Network Models. Nothing to fetch.
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
-echo "[download_data] Project 2.6 -- Normal Mode Analysis / Elastic Network Models"
-echo "[download_data] Target data dir: $DATA_DIR"
+echo "[download_data] Project 2.06 -- Normal Mode Analysis / Elastic Network Models"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    PDB protein structures (https://www.rcsb.org); ProDy structural dynamics dataset (https://github.com/prody/ProDy); MoDEL MD database for NMA validation (https://mmb.irbbarcelona.org/MoDEL/); flexnMR NMR flexibility benchmark (verify URL)."
+echo "Use a real structure: download a PDB/CIF, extract the CA atoms' x/y/z,"
+echo "and prepend 'N cutoff' to make data/sample/protein_ca.txt."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  RCSB PDB     : https://www.rcsb.org           (experimental structures)"
+echo "  AlphaFold DB : https://alphafold.ebi.ac.uk    (predicted structures)"
+echo "  ProDy        : https://github.com/prody/ProDy  (ANM/GNM; parses PDB)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Tip (with ProDy): prody.parsePDB('1abc').select('name CA').getCoords()"
+echo
+echo "Bigger synthetic structure (no download):"
+echo "  python scripts/make_synthetic.py --N 120"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

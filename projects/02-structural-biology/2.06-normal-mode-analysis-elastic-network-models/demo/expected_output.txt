@@ -1,5 +1,7 @@
 2.6 -- Normal Mode Analysis / Elastic Network Models
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+ANM: 60 residues, cutoff=13.0 A, Hessian 180x180
+zero (rigid-body) modes: 6  (expected 6)
+lowest 6 non-zero mode eigenvalues: 0.39132 0.82675 1.16679 1.38493 1.47777 1.64048
+most mobile residue: 35 (mobility=2.43148)
+residue mobility (8 sampled): 0.17930 0.21251 0.58586 0.19207 0.96994 0.21948 0.22955 0.22525
+RESULT: PASS (cuSOLVER eigenvalues match CPU Jacobi within tol=1.0e-04)

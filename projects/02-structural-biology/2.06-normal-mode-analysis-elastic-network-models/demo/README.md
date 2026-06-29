@@ -1,33 +1,27 @@
-# Demo — 2.6 Normal Mode Analysis / Elastic Network Models
+# Demo — 2.06 Normal Mode Analysis / Elastic Network Models
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+`run_demo.ps1` (Windows) / `run_demo.sh` (Linux/CMake) will:
 
-1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+1. **Build** the project (links **cuSOLVER**) if the executable is missing.
+2. **Run** it on `data/sample/protein_ca.txt` (60 Cα atoms).
+3. **Verify** that **cuSOLVER's eigenvalues match a CPU Jacobi eigensolver**.
+4. **Report** the number of rigid-body modes, the lowest functional-mode
+   frequencies, and per-residue mobility (predicted flexibility).
 
-The program splits its output deliberately:
+stdout (modes + mobility) is deterministic and diffed against
+[`expected_output.txt`](expected_output.txt); the timing line is on stderr only.
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+## Canonical output
 
-## Expected result
+See [`expected_output.txt`](expected_output.txt). The ANM Hessian (180×180) has
+exactly **6 zero (rigid-body) modes** — 3 translations + 3 rotations — as it must;
+the next eigenvalues are the slow, large-scale functional motions. `RESULT: PASS`
+means cuSOLVER's eigenvalues agree with the CPU Jacobi reference (here to ~`1e-12`,
+machine precision). The per-residue mobility highlights the most flexible
+residues. cuSOLVER edges out the CPU even on this small matrix; the gap explodes
+for real proteins (the eigensolver is O(n³), n = 3N).
 
-```
-2.6 -- Normal Mode Analysis / Elastic Network Models
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
-
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+> The structure is **synthetic** — a demonstration of NMA + the cuSOLVER
+> eigensolver, not a real protein analysis.
