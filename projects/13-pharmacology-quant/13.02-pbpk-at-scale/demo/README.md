@@ -1,33 +1,25 @@
-# Demo — 13.2 PBPK at Scale
+# Demo — 13.02 PBPK at Scale
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+`run_demo.ps1` (Windows) / `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on `data/sample/pbpk_params.txt` (4096 virtual patients, 48 h).
+3. **Verify** that the GPU population matches the CPU reference (same RK4).
+4. **Report** a few sample patients (Cmax, Tmax, AUC) and the population summary.
 
-The program splits its output deliberately:
+stdout (the summary) is deterministic and diffed against
+[`expected_output.txt`](expected_output.txt); the timing line is on stderr only.
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+## Canonical output
 
-## Expected result
+See [`expected_output.txt`](expected_output.txt). Each patient's plasma curve peaks
+after oral absorption (Tmax ≈ 1–2 h) and the population's **mean AUC ≈ 19 ≈
+dose/CL = 20** (the textbook PK identity), with patient-to-patient variability
+(AUC range ≈ 5–42). `RESULT: PASS` means the GPU and CPU per-patient metrics agree
+to ~machine precision (double-precision RK4). The GPU integrates the 4096 patients
+~19× faster than the CPU; real QSP/PBPK studies run 10⁴–10⁶ ODE solves.
 
-```
-13.2 -- PBPK at Scale
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
-
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+> Parameters are **illustrative** (a 3-compartment teaching reduction), not fitted
+> to any drug — a software demonstration, not a pharmacokinetic prediction.

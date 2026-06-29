@@ -1,5 +1,11 @@
 13.2 -- PBPK at Scale
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+PBPK population: 4096 virtual patients, 3 compartments, 48 h @ dt=0.05 h
+dose=100 mg, median ka=1.00 CL=5.00 Vc=30.0 Vp=40.0 Q=7.00, CV=30%
+sample patients (Cmax mg/L, Tmax h, AUC mg.h/L):
+  patient 0    : Cmax=2.0234  Tmax=1.20  AUC=16.8615
+  patient 1024 : Cmax=2.5957  Tmax=0.95  AUC=16.0581
+  patient 2048 : Cmax=1.8222  Tmax=1.70  AUC=27.4168
+  patient 3072 : Cmax=1.9126  Tmax=1.55  AUC=19.8037
+  patient 4095 : Cmax=2.8968  Tmax=1.15  AUC=20.9103
+population: mean Cmax=1.8519, mean AUC=19.0497, AUC range [5.0676, 41.9260]
+RESULT: PASS (GPU population matches CPU within tol=1.0e-06)

@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 11/301 projects done (3.7%) | todo 290 | in-progress 0 | missing 0
+**Progress:** 12/301 projects done (4.0%) | todo 289 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 5 | 0 | 62 |
-| 🟡 Intermediate | 206 | 6 | 0 | 200 |
+| 🟡 Intermediate | 206 | 7 | 0 | 199 |
 | 🔴 Advanced | 28 | 0 | 0 | 28 |
 
 ## 1. Drug Discovery & Molecular Design  (1/35 done)
@@ -336,12 +336,12 @@
 | 12.16 | GPU-Accelerated Hi-C Contact Loop Calling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 12.17 | Metagenome-Assembled Genome (MAG) Binning | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 
-## 13. Pharmacology & Clinical Quantitative Modeling  (0/19 done)
+## 13. Pharmacology & Clinical Quantitative Modeling  (1/19 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
 | 13.01 | Population PK/PD (Nonlinear Mixed-Effects) Fitting | 🟢 Beginner | Established | [ ] todo | - | - |
-| 13.02 | PBPK at Scale | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 13.02 | PBPK at Scale | 🟡 Intermediate | Active R&D | [x] done | lead | main |
 | 13.03 | Receptor Binding Kinetics & Occupancy | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 13.04 | Drug-Drug Interaction Prediction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 13.05 | In Silico Virtual Clinical Trials | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

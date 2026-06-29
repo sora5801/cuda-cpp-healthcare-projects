@@ -1,37 +1,52 @@
-# Data — 13.2 PBPK at Scale
+# Data — 13.02 PBPK at Scale
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/pbpk_params.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
-| License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Origin | **Synthetic** population configuration (`scripts/make_synthetic.py`) |
+| License | Public domain (CC0) |
+| Setup | 4096 virtual patients, 3-compartment oral PK, 48 h simulation |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+The "data" is the **population setup**; each patient's parameters are sampled
+deterministically from a seeded RNG (pbpk.h), so the study is reproducible.
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+### File format (one line)
 
-## Full dataset
+```
+dose  ka  CL  Vc  Vp  Q  cv  dt  steps  n_patients  seed
+```
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+| Field | Meaning |
+|---|---|
+| `dose` | oral dose (mg), into the gut depot |
+| `ka` | median first-order absorption rate (1/h) |
+| `CL` | median clearance (L/h) |
+| `Vc`, `Vp` | median central / peripheral volumes (L) |
+| `Q` | median inter-compartment flow (L/h) |
+| `cv` | log-normal variability applied to each sampled parameter |
+| `dt`, `steps` | RK4 step (h) and step count (run = `steps·dt` h) |
+| `n_patients` | virtual population size |
+| `seed` | base RNG seed |
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+Default: `100 1 5 30 40 7 0.3 0.05 960 4096 99`. Sanity check: with full
+absorption, mean **AUC ≈ dose/CL = 20** mg·h/L.
 
-Catalog dataset notes (verbatim):
+## "Full dataset" / realistic models
 
-> Open Systems Pharmacology PBPK model repository (https://github.com/Open-Systems-Pharmacology/OSP-PBPK-Model-Library) — 100+ validated human PBPK models DrugBank ADME data — 14k+ drugs with physicochemical and metabolic parameters (https://www.drugbank.com/) FDA/EMA drug approval submission PK data — publicly available pharmacokinetic data from drug labels (verify URL) ChEMBL ADMET data — assay-based ADME measurements (https://www.ebi.ac.uk/chembl/)
+Real PBPK uses ~15 physiological compartments (liver, kidney, lung, fat, muscle,
+gut, ...) with literature tissue volumes/blood flows and compound-specific
+partition coefficients and metabolism:
 
-## Provenance & field meanings
+- **PK-Sim** (<https://github.com/Open-Systems-Pharmacology/PK-Sim>) — whole-body PBPK.
+- **nvQSP** (<https://github.com/NVIDIA-Digital-Bio/nvQSP>) — NVIDIA GPU QSP/PBPK ODE solvers.
+- ICRP/Open Systems Pharmacology physiology databases for parameter values.
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+Bigger population: `python scripts/make_synthetic.py --patients 100000`.
+
+## Provenance & honesty
+
+The configuration is **synthetic** and the 3-compartment model is a teaching
+reduction of full PBPK; parameters are illustrative, not fitted to any drug.
+Outputs are a software demonstration, not a pharmacokinetic prediction, and are
+not for any clinical/dosing use.

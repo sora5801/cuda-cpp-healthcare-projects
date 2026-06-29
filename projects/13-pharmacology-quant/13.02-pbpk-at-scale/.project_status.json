@@ -2,8 +2,8 @@
   "id": "13.2",
   "id_padded": "13.02",
   "project": "PBPK at Scale",
-  "status": "todo",
-  "owner": "",
-  "branch": "",
+  "status": "done",
+  "owner": "lead",
+  "branch": "main",
   "skeleton": true
 }

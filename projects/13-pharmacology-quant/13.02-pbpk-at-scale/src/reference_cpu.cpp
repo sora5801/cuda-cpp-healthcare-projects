@@ -1,34 +1,31 @@
 // ===========================================================================
-// src/reference_cpu.cpp  --  The plain-C++ baseline we trust
+// src/reference_cpu.cpp  --  Loader + serial PBPK population integration
 // ---------------------------------------------------------------------------
-// Project 13.2 -- PBPK at Scale   (template skeleton)
-//
-// ROLE IN THE PROJECT
-//   This is the "ground truth" the GPU result is checked against. It is written
-//   to be OBVIOUSLY correct -- a single readable loop, no parallelism, no
-//   cleverness -- so that when the GPU and CPU agree, we believe the GPU.
-//
-//   Compiled by the host C++ compiler only (no CUDA here). See reference_cpu.h.
-//
-// TODO(impl): replace the SAXPY placeholder below with this project's real
-//             reference algorithm (keep it simple and readable on purpose).
-//
-// READ THIS AFTER: reference_cpu.h. Compare against kernels.cu (the GPU twin).
+// Project 13.02 : PBPK at Scale
+// Compiled by the host compiler only. Model/RK4 live in pbpk.h.
 // ===========================================================================
 #include "reference_cpu.h"
 
-// out[i] = a * x[i] + y[i], computed serially on the CPU.
-//   Complexity: O(n) time, O(1) extra space. This is the baseline whose wall
-//   time (timed in main.cu via util::CpuTimer) we compare with the GPU kernel.
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);  // allocate + zero n outputs
-    for (int i = 0; i < n; ++i) {
-        // The whole computation in one line. Each output element depends only
-        // on its own inputs -> no data dependencies between iterations, which
-        // is exactly WHY this maps perfectly onto independent GPU threads
-        // (one thread per i) in kernels.cu.
-        out[static_cast<std::size_t>(i)] = a * x[static_cast<std::size_t>(i)]
-                                             + y[static_cast<std::size_t>(i)];
-    }
+#include <fstream>
+#include <stdexcept>
+
+PbpkParams load_pbpk(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) throw std::runtime_error("cannot open PBPK parameter file: " + path);
+    PbpkParams P{};
+    if (!(in >> P.dose >> P.ka >> P.CL >> P.Vc >> P.Vp >> P.Q
+             >> P.cv >> P.dt >> P.steps >> P.n_patients >> P.seed))
+        throw std::runtime_error("bad parameters (expected "
+            "'dose ka CL Vc Vp Q cv dt steps n_patients seed') in " + path);
+    if (P.dose <= 0 || P.Vc <= 0 || P.Vp <= 0 || P.steps <= 0 || P.n_patients <= 0 || P.dt <= 0)
+        throw std::runtime_error("invalid PBPK parameters in " + path);
+    return P;
+}
+
+void integrate_cpu(const PbpkParams& P, std::vector<PatientResult>& results) {
+    results.assign(P.n_patients, PatientResult{});
+    // Each patient is an independent ODE solve -> a plain loop here, one GPU
+    // thread per patient in kernels.cu.
+    for (int i = 0; i < P.n_patients; ++i)
+        results[i] = pbpk_integrate(P, i);
 }

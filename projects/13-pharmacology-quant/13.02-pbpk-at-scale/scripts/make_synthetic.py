@@ -1,48 +1,51 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Write the PBPK virtual-population config
 # ---------------------------------------------------------------------------
-# Project 13.2 -- PBPK at Scale   (template skeleton)
+# Project 13.02 : PBPK at Scale
 #
-# WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+# The "data" is the population setup: the oral dose, the model's median
+# parameters (absorption ka, clearance CL, volumes Vc/Vp, inter-compartment flow
+# Q), the log-normal variability (CV), integration settings, and the population
+# size. Each patient's parameters are sampled deterministically from a seeded RNG
+# (pbpk.h), so the whole study is reproducible.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
-#
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# OUTPUT (data/README.md format), one line:
+#   dose ka CL Vc Vp Q cv dt steps n_patients seed
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py
+#   python scripts/make_synthetic.py --patients 100000 --cv 0.4
 # ===========================================================================
 import argparse
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "data" / "sample" / "pbpk_params.txt"
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
+    ap = argparse.ArgumentParser(description="Write the PBPK population configuration.")
+    ap.add_argument("--dose", type=float, default=100.0, help="oral dose (mg)")
+    ap.add_argument("--ka", type=float, default=1.0, help="median absorption rate (1/h)")
+    ap.add_argument("--CL", type=float, default=5.0, help="median clearance (L/h)")
+    ap.add_argument("--Vc", type=float, default=30.0, help="median central volume (L)")
+    ap.add_argument("--Vp", type=float, default=40.0, help="median peripheral volume (L)")
+    ap.add_argument("--Q", type=float, default=7.0, help="median inter-compartment flow (L/h)")
+    ap.add_argument("--cv", type=float, default=0.30, help="log-normal variability (CV)")
+    ap.add_argument("--dt", type=float, default=0.05, help="integration step (h)")
+    ap.add_argument("--steps", type=int, default=960, help="number of steps (run = steps*dt h)")
+    ap.add_argument("--patients", type=int, default=4096, help="virtual population size")
+    ap.add_argument("--seed", type=int, default=99)
+    ap.add_argument("--out", default=str(OUT))
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
-
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    line = (f"{args.dose:g} {args.ka:g} {args.CL:g} {args.Vc:g} {args.Vp:g} {args.Q:g} "
+            f"{args.cv:g} {args.dt:g} {args.steps} {args.patients} {args.seed}")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    Path(args.out).write_text(line + "\n", encoding="utf-8")
+    print(f"[make_synthetic] wrote {args.out}  ({args.patients} patients, "
+          f"{int(args.steps * args.dt)} h; expected mean AUC ~ dose/CL = {args.dose/args.CL:.1f})")
 
 
 if __name__ == "__main__":
