@@ -1,33 +1,22 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
-# ---------------------------------------------------------------------------
-# Project 5.1 -- Monte Carlo Dose Calculation   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# scripts/download_data.sh  --  Realistic MC physics pointers (Linux/macOS)
+# Project 5.01 : Monte Carlo Dose Calculation (simplified slab). Nothing to fetch.
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
-echo "[download_data] Project 5.1 -- Monte Carlo Dose Calculation"
-echo "[download_data] Target data dir: $DATA_DIR"
+echo "[download_data] Project 5.01 -- Monte Carlo Dose Calculation (simplified slab)"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    IAEA benchmark photon beam data (https://www.iaea.org/resources/databases/iaea-photon-electron-interaction-data-library); AAPM TG-119 IMRT QA phantom dataset; clinical patient CT + plan DICOM from departmental archives (IRB-required); CIRS anthropomorphic phantom CT datasets."
+echo "There is no file to download: the simulation makes its own data from"
+echo "the parameters in data/sample/mc_params.txt."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "For REAL physics (cross sections, electron transport, CT geometry):"
+echo "  EGSnrc : https://github.com/nrc-cnrc/EGSnrc   (reference MC + PEGS data)"
+echo "  GATE   : https://github.com/OpenGATE/opengate (Geant4 clinical MC)"
+echo "  MC-GPU : https://github.com/DIDSR/MCGPU        (open CUDA photon MC)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "More histories (smoother statistics):"
+echo "  python scripts/make_synthetic.py --photons 4000000"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

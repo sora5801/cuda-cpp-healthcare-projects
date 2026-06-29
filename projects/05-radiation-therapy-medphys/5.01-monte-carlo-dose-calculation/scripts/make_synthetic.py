@@ -1,48 +1,46 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Write the Monte Carlo parameter file
 # ---------------------------------------------------------------------------
-# Project 5.1 -- Monte Carlo Dose Calculation   (template skeleton)
+# Project 5.01 : Monte Carlo Dose Calculation (simplified slab)
 #
-# WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+# This project's "data" is the set of SIMULATION PARAMETERS (the slab + how many
+# histories), not measured input. This script writes the one-line parameter file
+# the program reads. A fixed seed makes the whole simulation reproducible.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
-#
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# OUTPUT (data/README.md format), one line:
+#   L n_bins mu p_abs E0 scatter_dep n_photons seed
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py
+#   python scripts/make_synthetic.py --photons 4000000 --mu 0.20
 # ===========================================================================
 import argparse
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "data" / "sample" / "mc_params.txt"
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
+    ap = argparse.ArgumentParser(description="Write the MC slab parameter file.")
+    ap.add_argument("--L", type=float, default=20.0, help="slab thickness (cm)")
+    ap.add_argument("--bins", type=int, default=40, help="number of depth bins")
+    ap.add_argument("--mu", type=float, default=0.15, help="attenuation coeff (1/cm)")
+    ap.add_argument("--p-abs", type=float, default=0.30, help="P(interaction is absorption)")
+    ap.add_argument("--E0", type=int, default=1024, help="starting energy quanta per photon")
+    ap.add_argument("--scatter-dep", type=int, default=128, help="quanta deposited per scatter")
+    ap.add_argument("--photons", type=int, default=262144, help="number of photon histories")
+    ap.add_argument("--seed", type=int, default=12345, help="base RNG seed")
+    ap.add_argument("--out", default=str(OUT))
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
-
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    line = f"{args.L} {args.bins} {args.mu} {args.p_abs} {args.E0} {args.scatter_dep} {args.photons} {args.seed}"
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    Path(args.out).write_text(line + "\n", encoding="utf-8")
+    print(f"[make_synthetic] wrote {args.out}")
+    print(f"  L={args.L} bins={args.bins} mu={args.mu} p_abs={args.p_abs} "
+          f"E0={args.E0} scatter_dep={args.scatter_dep} photons={args.photons} seed={args.seed}")
 
 
 if __name__ == "__main__":

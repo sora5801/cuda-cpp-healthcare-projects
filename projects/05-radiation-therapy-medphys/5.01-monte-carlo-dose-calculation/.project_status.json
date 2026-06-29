@@ -2,8 +2,8 @@
   "id": "5.1",
   "id_padded": "5.01",
   "project": "Monte Carlo Dose Calculation",
-  "status": "todo",
-  "owner": "",
-  "branch": "",
+  "status": "done",
+  "owner": "lead",
+  "branch": "main",
   "skeleton": true
 }

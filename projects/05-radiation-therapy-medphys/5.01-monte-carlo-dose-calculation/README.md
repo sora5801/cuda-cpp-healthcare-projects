@@ -1,108 +1,119 @@
-# 5.1 — Monte Carlo Dose Calculation
+# 5.01 — Monte Carlo Dose Calculation (simplified slab)
 
 ![difficulty](https://img.shields.io/badge/difficulty-Intermediate-blue) ![maturity](https://img.shields.io/badge/maturity-Active%20R%26D-informational) ![domain](https://img.shields.io/badge/domain-Radiation%20Therapy%20%26%20Medical%20Physics-lightgrey)
 
-> **🟡 Intermediate · Active R&D** — Domain 5: Radiation Therapy & Medical Physics · Catalog ID `5.1`
+> **🟡 Intermediate · Active R&D** — Domain 5: Radiation Therapy & Medical Physics · Catalog ID `5.01`
 >
-> _Educational only — not for clinical use (see CLAUDE.md §8)._
-
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
+> _Educational only — not for clinical use (see CLAUDE.md §8). This is a deliberately reduced-scope
+> teaching model — see "Limitations"._
 
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Estimate how radiation **dose** is deposited with depth by tracking many photon
+**histories** stochastically through a slab. Each history is independent, so each
+GPU thread tracks one photon, samples its interactions with a per-thread random
+number generator, and **atomically** adds its energy deposits to a shared
+depth-dose tally. This is the fourth distinct GPU pattern in the flagships:
+**massively parallel stochastic simulation with atomic scoring**.
 
 ## What this computes & why the GPU helps
 
-Monte Carlo (MC) simulation tracks individual particle histories through patient CT geometry, sampling physics interactions (Compton scatter, pair production, photoelectric effect) stochastically. Clinical accuracy requires ~10⁸–10⁹ particle histories; on CPU (e.g., EGSnrc, MCNP), a single prostate plan takes hours. GPU MC exploits the independence of particle histories: each CUDA thread tracks one particle, with warp-level divergence managed by sorting particles by material. GPU codes (DPM-GPU, gDPM, Acuros, FRED) achieve 100× speedups over single-CPU. The primary GPU challenge is divergent execution paths when different threads take different interaction branches and managing the CT voxel geometry lookup efficiently in constant/texture memory.
+Monte Carlo transport samples each particle's path and interactions from
+probability distributions; averaging over millions of histories gives the dose.
+Clinical accuracy needs ~10⁹–10¹⁰ histories — hours on a CPU. Histories are
+independent, so GPUs map one thread per particle and reach ~100× speed-ups
+(DPM-GPU, gDPM, MC-GPU). The key GPU challenges, both visible here, are
+**execution divergence** (different particles take different branches) and
+**scoring contention** (many threads deposit into the same bins).
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck** is the per-history transport loop; we run one thread
+per history (grid-stride) and tally with `atomicAdd`.
 
 ## The algorithm in brief
 
-Condensed-history electron transport, class-II MC (Berger/ICRU), photon interaction sampling (Klein-Nishina, photoelectric), bremsstrahlung production, Russian roulette / splitting variance reduction, GPU divergence management (particle sorting by material), macro-MC for ultra-fast TPS dose.
+Per photon: repeatedly sample a free-path step `s = -ln(ξ)/μ`, advance depth, and
+at each interaction either **absorb** (deposit all remaining energy) or
+**forward-scatter** (deposit a packet and continue). Tally **integer** energy
+quanta per depth bin.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+See [THEORY.md](THEORY.md) for the physics, the RNG choice, and the full real-world model.
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145) + **CUDA 13.3** ([docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
 
-1. Open `build/monte-carlo-dose-calculation.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/monte-carlo-dose-calculation.exe`.
+1. Open `build/monte-carlo-dose-calculation.sln`.
+2. **`Release|x64`** → **Build** → `build/x64/Release/monte-carlo-dose-calculation.exe`.
 
-Command-line alternative (Developer PowerShell):
-
-```powershell
-msbuild build\monte-carlo-dose-calculation.sln /p:Configuration=Release /p:Platform=x64
-```
+CLI: `msbuild build\monte-carlo-dose-calculation.sln /p:Configuration=Release /p:Platform=x64`
 
 ## Run the demo
 
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.ps1
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+Simulates the committed parameter set on CPU + GPU and verifies the dose tallies match exactly.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: IAEA benchmark photon beam data (https://www.iaea.org/resources/databases/iaea-photon-electron-interaction-data-library); AAPM TG-119 IMRT QA phantom dataset; clinical patient CT + plan DICOM from departmental archives (IRB-required); CIRS anthropomorphic phantom CT datasets.
+- **Sample (committed):** `data/sample/mc_params.txt` — the slab + run parameters.
+- **Realistic physics:** EGSnrc / GATE / MC-GPU (real cross sections, CT geometry) —
+  see `scripts/download_data.ps1` and [data/README.md](data/README.md).
+- More histories: `python scripts/make_synthetic.py --photons 4000000`.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+`demo/expected_output.txt` holds the deterministic depth-dose histogram. The GPU
+(`src/kernels.cu`) and CPU (`src/reference_cpu.cpp`) run the **identical
+histories** (shared RNG in `src/mc_physics.h`) and tally **integer** quanta, so
+their results are **bit-identical** (`bin mismatches = 0`) — atomic integer adds
+commute, unlike float dose.
 
 ## Code tour
 
-Read in this order:
-
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — load params, run CPU + GPU MC, verify, print histogram.
+2. [`src/mc_physics.h`](src/mc_physics.h) — **the shared RNG + photon transport** (host + device).
+3. [`src/kernels.cuh`](src/kernels.cuh) — the GPU MC interface (per-thread RNG, atomic scoring).
+4. [`src/kernels.cu`](src/kernels.cu) — the grid-stride history kernel + host wrapper.
+5. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the serial reference (same histories, plain add).
 
 ## Prior art & further reading
 
-EGSnrc (https://github.com/nrc-cnrc/EGSnrc) — reference CPU MC for photon/electron, GPU extensions in literature; GATE 10 (https://github.com/OpenGATE/opengate) — Python-based Geant4 wrapper, GPU-capable via Geant4 MT; gDPM / DPM-GPU (verify URL, published by Ma et al.) — GPU photon/electron MC dose; FRED (https://www.fredonline.eu/) — GPU MC for proton/ion therapy (verify URL); MC-GPU (https://github.com/adler-j/GPUMC) — CUDA GPU photon MC, open source.
+- **EGSnrc** (<https://github.com/nrc-cnrc/EGSnrc>) — reference CPU photon/electron MC.
+- **GATE 10** (<https://github.com/OpenGATE/opengate>) — Geant4-based clinical MC.
+- **MC-GPU** (<https://github.com/DIDSR/MCGPU>) — open CUDA photon MC dose.
+- **FRED** (<https://www.fredonline.eu/>) — GPU MC for proton/ion therapy.
 
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
+Study these for real physics; this project reimplements only the *pattern* didactically (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-Custom CUDA kernels for particle transport loop (one thread per particle history); physics tables in constant/texture memory; warp-divergence reduction via material sorting before interaction step; atomic adds to dose voxel array; batch history generation via cuRAND. --
+Per-thread RNG (reproducible streams) · independent histories (grid-stride) ·
+`atomicAdd` scoring into shared bins · **integer** energy quanta for exact,
+deterministic, CPU-matching tallies · branch divergence as the headline MC
+challenge. (Production uses cuRAND + float dose with statistical verification.)
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Use cuRAND.** Swap the shared RNG for `curandStatePhilox4_32_10_t`. Now CPU
+   and GPU diverge — verify *statistically* (within a few % per well-sampled bin)
+   instead of exactly. Discuss the trade-off.
+2. **Add a buildup region.** Model forward-transported secondary electrons so the
+   dose rises before it falls (real depth-dose curves have a `d_max`).
+3. **Layered slab.** Make `μ` depth-dependent (bone/tissue/lung layers) and watch
+   the dose change at interfaces.
+4. **Variance reduction.** Add Russian roulette / splitting and measure the
+   variance per unit time.
+5. **Divergence study.** Sort histories by remaining energy between steps and
+   measure the effect on warp efficiency.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced-scope teaching model:** 1-D, single material, integer energy quanta,
+  one absorb/forward-scatter branch. **No real cross sections, no Compton/
+  Klein-Nishina angular sampling, no electron transport, no CT geometry.**
+- Because of the absorption model there is **no buildup region** (peak is at the
+  surface); real photon depth-dose peaks at `d_max`. See THEORY and Exercise 2.
+- We use a **shared deterministic RNG** (not cuRAND) specifically so CPU and GPU
+  histories are identical for exact verification. **Not a dose engine.**

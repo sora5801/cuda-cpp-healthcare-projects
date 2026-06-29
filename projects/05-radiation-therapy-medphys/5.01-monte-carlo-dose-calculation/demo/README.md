@@ -1,33 +1,27 @@
-# Demo — 5.1 Monte Carlo Dose Calculation
+# Demo — 5.01 Monte Carlo Dose Calculation (simplified slab)
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+`run_demo.ps1` (Windows) / `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it with `data/sample/mc_params.txt` (simulate 262,144 photon histories
+   through a 20 cm slab).
+3. **Verify** that the GPU and CPU produce the **exact same** integer depth-dose
+   tally — because both run the identical histories (shared RNG) and integer
+   atomic adds commute.
+4. **Report** the depth-dose histogram, the deposited fraction, and timing.
 
-The program splits its output deliberately:
+stdout (the deterministic histogram) is diffed against
+[`expected_output.txt`](expected_output.txt); the timing line is on stderr only.
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+## Canonical output
 
-## Expected result
+See [`expected_output.txt`](expected_output.txt). The depth-dose falls off with
+depth (more interactions near the entrance, attenuation reduces deeper bins), and
+`RESULT: PASS` means the GPU tally equals the CPU tally **exactly** (`0
+mismatches`). On the sample the GPU is ~10× faster than the CPU, a gap that grows
+with the history count (clinical plans run 10⁹–10¹⁰ histories).
 
-```
-5.1 -- Monte Carlo Dose Calculation
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
-
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+> This is a **simplified, synthetic** teaching model (1-D, integer quanta, no real
+> cross sections or electron transport) — not a dose engine.

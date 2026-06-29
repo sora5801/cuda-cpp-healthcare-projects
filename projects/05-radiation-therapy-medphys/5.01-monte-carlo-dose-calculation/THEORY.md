@@ -1,86 +1,119 @@
-# THEORY — 5.1 Monte Carlo Dose Calculation
+# THEORY — 5.01 Monte Carlo Dose Calculation (simplified slab)
 
-> The deep didactic explanation (the "why"). Written for a sharp student who
-> knows C++ but is new to CUDA and new to this domain. Diagrams in Mermaid/ASCII
-> are welcome. See [README.md](README.md) for the quick tour and build steps.
->
-> _Educational only — not for clinical use._
-
-<!-- =======================================================================
-     The block below is the verbatim catalog deep-dive for this project,
-     stamped in by scaffold.py as raw material. Use it to write the sections
-     that follow, then DELETE it (or fold it into "The science"). Every
-     TODO(theory) below must be completed before the project is "done".
-     ======================================================================= -->
-
-<details>
-<summary>Catalog deep-dive (raw source material — fold into the sections below, then remove)</summary>
-
-### 5.1 Monte Carlo Dose Calculation 🟡 · Active R&D
-- **Deep dive:** Monte Carlo (MC) simulation tracks individual particle histories through patient CT geometry, sampling physics interactions (Compton scatter, pair production, photoelectric effect) stochastically. Clinical accuracy requires ~10⁸–10⁹ particle histories; on CPU (e.g., EGSnrc, MCNP), a single prostate plan takes hours. GPU MC exploits the independence of particle histories: each CUDA thread tracks one particle, with warp-level divergence managed by sorting particles by material. GPU codes (DPM-GPU, gDPM, Acuros, FRED) achieve 100× speedups over single-CPU. The primary GPU challenge is divergent execution paths when different threads take different interaction branches and managing the CT voxel geometry lookup efficiently in constant/texture memory.
-- **Key algorithms:** Condensed-history electron transport, class-II MC (Berger/ICRU), photon interaction sampling (Klein-Nishina, photoelectric), bremsstrahlung production, Russian roulette / splitting variance reduction, GPU divergence management (particle sorting by material), macro-MC for ultra-fast TPS dose.
-- **Datasets:** IAEA benchmark photon beam data (https://www.iaea.org/resources/databases/iaea-photon-electron-interaction-data-library); AAPM TG-119 IMRT QA phantom dataset; clinical patient CT + plan DICOM from departmental archives (IRB-required); CIRS anthropomorphic phantom CT datasets.
-- **Starter repos/tools:** EGSnrc (https://github.com/nrc-cnrc/EGSnrc) — reference CPU MC for photon/electron, GPU extensions in literature; GATE 10 (https://github.com/OpenGATE/opengate) — Python-based Geant4 wrapper, GPU-capable via Geant4 MT; gDPM / DPM-GPU (verify URL, published by Ma et al.) — GPU photon/electron MC dose; FRED (https://www.fredonline.eu/) — GPU MC for proton/ion therapy (verify URL); MC-GPU (https://github.com/adler-j/GPUMC) — CUDA GPU photon MC, open source.
-- **CUDA libraries & GPU pattern:** Custom CUDA kernels for particle transport loop (one thread per particle history); physics tables in constant/texture memory; warp-divergence reduction via material sorting before interaction step; atomic adds to dose voxel array; batch history generation via cuRAND.
-
-</details>
-
----
+> For a reader who knows C++ but is new to CUDA and to radiation transport.
+> See [README.md](README.md) for the tour and build. _Educational only; this is a
+> deliberately simplified model, not a dose engine._
 
 ## 1. The science
 
-TODO(theory): The biology / medicine / physics being modeled — enough for a
-reader to understand the *problem* before any math. What real-world question
-does computing this answer?
+When radiation passes through tissue it deposits energy — the **dose** — which is
+what radiotherapy aims to control (enough in the tumour, little in healthy
+tissue). Photons travel in straight lines until they interact (photoelectric
+absorption, Compton scatter, pair production), transferring energy to electrons
+that then deposit dose locally. There is no closed-form solution for a realistic
+patient, so we **simulate**: follow many individual particle "histories" drawn
+from the interaction probabilities and average. That is **Monte Carlo** transport,
+the gold standard for dose accuracy.
 
 ## 2. The math
 
-TODO(theory): The governing equations / formal problem statement, with **every
-symbol defined** (units, ranges). State inputs, outputs, and the objective.
+A photon's distance to its next interaction is **exponentially distributed**: the
+probability of travelling a distance `s` without interacting is `exp(-μs)`, where
+`μ` is the linear attenuation coefficient. We sample a free path by inverting the
+CDF:
+
+```
+s = -ln(ξ) / μ ,   ξ ~ Uniform(0,1]
+```
+
+At an interaction the photon is absorbed with probability `p_abs = μ_a/μ_t` (here
+all remaining energy is deposited) or scatters with probability `1 - p_abs`. The
+**depth-dose** `D(z)` is the expected energy deposited per depth bin, estimated as
+
+```
+D(bin) ≈ (1/N) Σ_histories  (energy deposited in bin)
+```
+
+with statistical uncertainty falling as `1/sqrt(N)`.
 
 ## 3. The algorithm
 
-TODO(theory): Step-by-step. Include **complexity analysis**: serial cost vs. the
-parallel work/depth. Where is the arithmetic intensity? What is the data-access
-pattern?
+```
+for each of N photon histories:                  # INDEPENDENT -> parallel
+    z = 0 ; energy = E0
+    loop:
+        s = -ln(xi)/mu ;  z += s
+        if z >= L: break                          # escaped the slab
+        if xi2 < p_abs:  deposit energy at bin(z); break        # absorbed
+        else:            deposit a packet at bin(z); energy -= packet   # scatter, continue
+```
+
+**Complexity.** Cost is `O(N · steps_per_history)`. Accuracy improves only as
+`1/sqrt(N)`, so halving the noise costs 4× the work — which is exactly why MC is
+compute-bound and why the GPU matters.
 
 ## 4. The GPU mapping
 
-TODO(theory): How the algorithm becomes **threads / blocks / grids**.
-- Thread-to-data mapping (which thread owns which element).
-- Launch configuration and the reasoning (block size, grid size).
-- Memory hierarchy used and **why**: global / shared / registers / constant /
-  texture. Where is the bandwidth bottleneck? What is the occupancy story?
-- Which CUDA library (cuBLAS / cuFFT / cuRAND / cuSOLVER / Thrust) does what,
-  and what it would take to write that step by hand (no black boxes — §6.1.6).
+**Decomposition.** One thread per history, grid-stride over `N` so a fixed grid
+(here 1024×256 threads) covers any `N`. Each thread:
 
-```
-TODO(theory): an ASCII or Mermaid diagram of the grid/block decomposition.
-```
+- **seeds its own RNG stream** from its history index (`rng_seed(seed, i)` in
+  `mc_physics.h`), so streams are independent yet reproducible;
+- runs the transport loop entirely in **registers/local memory** (no shared mem);
+- **`atomicAdd`s** its integer deposits into the global depth-dose tally.
+
+**Why a shared, deterministic RNG (not cuRAND).** Production GPU MC uses cuRAND.
+We instead use a small splitmix64 counter-based RNG defined `__host__ __device__`
+in one header, so the **CPU reference runs the identical histories** and the two
+dose tallies can be compared **exactly**. The `RNG_HD` macro makes the same code
+compile under nvcc (device) and the host compiler. (Exercise 1 swaps in cuRAND
+and switches to statistical verification.)
+
+**Why integer energy quanta.** Many threads `atomicAdd` into the same few bins.
+Floating-point addition is **not associative**, so a float tally would depend on
+the (non-deterministic) order of atomic operations — different every run, and
+different from the CPU. By depositing **integer** quanta, the atomic adds
+**commute**: the tally is exact, reproducible, and equal to the CPU's. This is a
+deliberate, important design choice for a verifiable teaching demo.
+
+**Divergence — the headline MC challenge.** Photons take different numbers of
+steps and different branches, so threads in a warp finish at different times and
+execute different code paths (`if absorbed … else …`). This **warp divergence**
+is the main inefficiency in GPU MC; production codes mitigate it by **sorting or
+compacting particles by state/material** between transport steps so a warp does
+uniform work. Memory-side, real codes also keep the CT geometry and cross-section
+tables in **constant/texture memory**.
 
 ## 5. Numerical considerations
 
-TODO(theory): Precision (FP32 vs FP64) and why. Stability. Race conditions and
-whether atomics are used. **Determinism**: does the parallel reduction reorder
-floating-point sums? If so, say so and quantify the caveat.
+- **Determinism:** guaranteed here by integer quanta + reproducible per-history
+  RNG (Section 4). The float-associativity pitfall is the key lesson.
+- **Statistics:** the result is an estimate; uncertainty `∝ 1/sqrt(N)`. Variance
+  reduction (Russian roulette, splitting) lowers it per unit time.
+- **`-ln(ξ)`:** we draw `ξ ∈ (0,1]` (as `1 - U[0,1)`) so `ln` never sees 0.
 
 ## 6. How we verify correctness
 
-TODO(theory): The CPU reference (`src/reference_cpu.cpp`), the **tolerance** and
-why that value, and the edge cases checked. Explain why agreement between an
-independent serial implementation and the GPU implementation is convincing
-evidence of correctness.
+`main.cu` runs `dose_cpu` and `dose_gpu` on the same parameters and compares the
+two integer histograms bin-by-bin; they are **identical** (`0 mismatches`)
+because of the shared RNG and integer scoring. The depth-dose also makes physical
+sense for this absorption model: it is highest near the entrance and falls off
+with depth as attenuation removes photons.
 
 ## 7. Where this sits in the real world
 
-TODO(theory): How production tools (named in the catalog "Prior art") do this
-differently — what they add (scale, accuracy, features) that this teaching
-version omits. If this is a 🔴 frontier project shipped as a reduced-scope
-teaching version, describe the full approach here.
-
----
+A clinical engine (EGSnrc, GATE/Geant4, gDPM, FRED, MC-GPU) replaces every
+simplification here: **sampled interaction physics** (Klein-Nishina Compton
+angles, photoelectric, pair production), **condensed-history electron transport**
+(which creates the dose **buildup region** and `d_max` that our absorption model
+lacks), **3-D patient CT geometry** with material-dependent cross sections, and
+**variance reduction**. The structure you learn here — independent histories,
+per-thread RNG, atomic scoring, divergence management — is exactly the skeleton
+those codes are built on.
 
 ## References
 
-TODO(theory): Papers, docs, and the starter repos from the catalog, with one
-line each on what to learn from them.
+- Bielajew, *Fundamentals of the Monte Carlo Method for Radiation Transport* — the standard text.
+- Jia et al., *GPU-based fast Monte Carlo dose calculation* (gDPM) — GPU MC for therapy.
+- Badal & Badano, **MC-GPU** — open CUDA photon MC.
+- NVIDIA cuRAND documentation — production GPU RNG; CUDA Programming Guide — atomics.

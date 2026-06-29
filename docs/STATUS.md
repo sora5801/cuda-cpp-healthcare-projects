@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 3/301 projects done (1.0%) | todo 298 | in-progress 0 | missing 0
+**Progress:** 4/301 projects done (1.3%) | todo 297 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 3 | 0 | 64 |
-| 🟡 Intermediate | 206 | 0 | 0 | 206 |
+| 🟡 Intermediate | 206 | 1 | 0 | 205 |
 | 🔴 Advanced | 28 | 0 | 0 | 28 |
 
 ## 1. Drug Discovery & Molecular Design  (1/35 done)
@@ -163,11 +163,11 @@
 | 4.32 | GPU-Accelerated Landmark Detection | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 4.33 | Real-Time MRI Reconstruction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 
-## 5. Radiation Therapy & Medical Physics  (0/15 done)
+## 5. Radiation Therapy & Medical Physics  (1/15 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
-| 5.01 | Monte Carlo Dose Calculation | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 5.01 | Monte Carlo Dose Calculation | 🟡 Intermediate | Active R&D | [x] done | lead | main |
 | 5.02 | Radiotherapy Treatment-Plan Optimization | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 5.03 | Proton & Heavy-Ion Therapy Dose | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 5.04 | Collapsed-Cone / Superposition-Convolution Dose | 🟢 Beginner | Established | [ ] todo | - | - |

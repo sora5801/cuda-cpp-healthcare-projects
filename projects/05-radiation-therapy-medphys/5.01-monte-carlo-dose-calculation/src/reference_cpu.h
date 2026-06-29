@@ -1,31 +1,32 @@
 // ===========================================================================
-// src/reference_cpu.h  --  Prototype of the CPU reference computation
+// src/reference_cpu.h  --  Problem definition + CPU Monte Carlo reference
 // ---------------------------------------------------------------------------
-// Project 5.1 -- Monte Carlo Dose Calculation   (template skeleton)
+// Project 5.01 : Monte Carlo Dose Calculation (simplified slab)
 //
-// WHY A SEPARATE HEADER
-//   The CPU reference (reference_cpu.cpp) is compiled by the plain C++ compiler
-//   and must NOT see any CUDA/__global__ syntax, so its prototype cannot live in
-//   kernels.cuh. Both main.cu and reference_cpu.cpp include THIS pure-C++ header
-//   so they agree on the function signature.
-//
-// THE CONTRACT (this template's placeholder computation):
-//   SAXPY -- "Single-precision A*X Plus Y":  out[i] = a * x[i] + y[i].
-//   This is the canonical first GPU kernel; here it stands in as a buildable
-//   placeholder. TODO(impl): replace saxpy_cpu with this project's real
-//   reference computation, and update the prototype + callers accordingly.
-//
-//   The CPU reference exists for two reasons (CLAUDE.md section 5):
-//     (a) it is the readable baseline that makes the GPU speed-up legible, and
-//     (b) the demo runs BOTH and asserts they agree within tolerance.
+// The CPU reference runs the SAME histories as the GPU (same RNG, same
+// transport from mc_physics.h), so the two dose tallies must be identical. This
+// header is pure C++ (no CUDA); kernels.cu reuses DoseProblem.
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
+#include <string>
 #include <vector>
 
-// Compute out = a*x + y on the CPU, element by element.
-//   x, y : input vectors of equal length n
-//   a    : the scalar multiplier
-//   out  : resized to n and filled with the result (output parameter)
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out);
+#include "mc_physics.h"   // SimParams, Rng, simulate_photon (host+device safe)
+
+// A complete simulation job: the slab physics plus how many histories to run.
+struct DoseProblem {
+    SimParams sp{};                 // slab + interaction parameters
+    unsigned long long n_photons = 0;   // number of photon histories to simulate
+    uint64_t seed = 0;              // base RNG seed (history i uses stream (seed,i))
+};
+
+// Load a DoseProblem from the one-line text format (data/README.md):
+//   "L n_bins mu p_abs E0 scatter_dep n_photons seed"
+DoseProblem load_dose_problem(const std::string& path);
+
+// CPU reference: simulate all n_photons histories serially and tally integer
+// dose per depth bin. `dose` is sized to n_bins. Because energy is integer
+// quanta, the tally is exact and order-independent -- it must equal the GPU's.
+void dose_cpu(const DoseProblem& prob, std::vector<unsigned long long>& dose);
