@@ -1,33 +1,22 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
-# ---------------------------------------------------------------------------
-# Project 9.2 -- Large-Scale Compartmental & Metapopulation Models   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# scripts/download_data.sh  --  Realistic epidemic-model pointers (Linux/macOS)
+# Project 9.02 : Large-Scale Compartmental & Metapopulation Models. Nothing to fetch.
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
-echo "[download_data] Project 9.2 -- Large-Scale Compartmental & Metapopulation Models"
-echo "[download_data] Target data dir: $DATA_DIR"
+echo "[download_data] Project 9.02 -- Large-Scale Compartmental & Metapopulation Models"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    GLEAM — global airline + commuting network for metapopulation coupling (https://www.gleamviz.org/) WHO Weekly Epidemiological Reports — case counts for parameter calibration (https://www.who.int/emergencies/situations) CDC FluView — US influenza surveillance by week and region (https://www.cdc.gov/flu/weekly/) COVID-19 Data Repository by CSSE at Johns Hopkins (archived) — global case/death time series (https://github.com/CSSEGISandData/COVID-19)"
+echo "There is no file to download: the program derives every member's"
+echo "parameters from the sweep in data/sample/ensemble_params.txt."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "For REAL models (mobility matrices, age structure, many patches):"
+echo "  MEmilio     : https://github.com/SciCompMod/memilio   (C++/CUDA)"
+echo "  EpiModel    : https://github.com/EpiModel/EpiModel    (R, network)"
+echo "  Torchdiffeq : https://github.com/rtqichen/torchdiffeq (GPU ODE solvers)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Bigger ensemble (no download):"
+echo "  python scripts/make_synthetic.py --nb 200 --ng 200"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

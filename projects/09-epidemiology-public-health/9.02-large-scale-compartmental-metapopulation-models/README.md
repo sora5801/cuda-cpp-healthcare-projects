@@ -1,108 +1,112 @@
-# 9.2 — Large-Scale Compartmental & Metapopulation Models
+# 9.02 — Large-Scale Compartmental & Metapopulation Models
 
 ![difficulty](https://img.shields.io/badge/difficulty-Intermediate-blue) ![maturity](https://img.shields.io/badge/maturity-Active%20R%26D-informational) ![domain](https://img.shields.io/badge/domain-Epidemiology%20%26%20Public%20Health-lightgrey)
 
-> **🟡 Intermediate · Active R&D** — Domain 9: Epidemiology & Public Health · Catalog ID `9.2`
+> **🟡 Intermediate · Active R&D** — Domain 9: Epidemiology & Public Health · Catalog ID `9.02`
 >
-> _Educational only — not for clinical use (see CLAUDE.md §8)._
-
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
+> _Educational only — not for clinical/forecasting use (see CLAUDE.md §8)._
 
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Run a whole **ensemble** of epidemic simulations at once: the same SEIR
+compartmental ODE solved for thousands of parameter combinations (a sweep of
+transmission rate β and recovery rate γ). Each parameter set is an independent
+RK4 time-integration, so each GPU thread integrates one trajectory — the natural
+pattern for **Monte Carlo / uncertainty quantification**. Eighth distinct GPU
+pattern in the flagships: **parallel ensemble ODE integration**.
 
 ## What this computes & why the GPU helps
 
-Solves large systems of ODEs or stochastic differential equations (SDEs) describing disease dynamics across thousands of geographic patches interconnected by mobility flows (SIR at metapopulation scale, seasonal forcing, age structure). ODE integration over thousands of patches with coupling matrices is equivalent to a batched sparse matrix-vector multiply at each time step — a cuSPARSE-accelerated operation. Monte Carlo uncertainty quantification requires thousands of independent ODE solves in parallel on GPU, each with different parameter samples. GPU-based adaptive stepsize RK4/5 solvers (Torchdiffeq's `dopri5` on GPU) handle stiff biological dynamics efficiently.
+Compartmental models (SIR/SEIR) are systems of ODEs for the fractions of a
+population that are Susceptible, Exposed, Infectious, Recovered. To quantify
+uncertainty (which parameters, which outcomes?) you must solve the ODE for many
+parameter samples — thousands to millions. These solves are independent, so the
+GPU runs one per thread and reaches large speed-ups (the demo shows ~24× for 4096
+members; the gap grows with ensemble size).
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallelized work** is the ensemble of RK4 integrations; each thread runs a
+full time loop in registers and writes a summary (peak infection, attack rate).
 
 ## The algorithm in brief
 
-Runge-Kutta 4/5 ODE integration on GPU, tau-leaping for stochastic compartmental models, MCMC parameter inference (ensemble MCMC), Approximate Bayesian Computation (ABC), metapopulation coupling via mobility matrix, seasonal forcing with Fourier series, age-structured SEIR with contact matrices.
+- **SEIR ODE:** `dS=-βSI/N`, `dE=βSI/N-σE`, `dI=σE-γI`, `dR=γI` (R0 = β/γ).
+- **RK4:** 4th-order Runge-Kutta time stepping (O(dt⁴) accurate, stable).
+- **Ensemble:** integrate every (β, γ) on the sweep grid; collect peak infection,
+  peak day, and attack rate per member.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+See [THEORY.md](THEORY.md) for the model, RK4, and the metapopulation extension.
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145) + **CUDA 13.3** ([docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
 
-1. Open `build/large-scale-compartmental-metapopulation-models.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/large-scale-compartmental-metapopulation-models.exe`.
+1. Open `build/large-scale-compartmental-metapopulation-models.sln`.
+2. **`Release|x64`** → **Build** → `build/x64/Release/large-scale-compartmental-metapopulation-models.exe`.
 
-Command-line alternative (Developer PowerShell):
-
-```powershell
-msbuild build\large-scale-compartmental-metapopulation-models.sln /p:Configuration=Release /p:Platform=x64
-```
+CLI: `msbuild build\large-scale-compartmental-metapopulation-models.sln /p:Configuration=Release /p:Platform=x64`
 
 ## Run the demo
 
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.ps1
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+Integrates the ensemble on CPU + GPU and verifies the per-member results match.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: GLEAM — global airline + commuting network for metapopulation coupling (https://www.gleamviz.org/) WHO Weekly Epidemiological Reports — case counts for parameter calibration (https://www.who.int/emergencies/situations) CDC FluView — US influenza surveillance by week and region (https://www.cdc.gov/flu/weekly/) COVID-19 Data Repository by CSSE at Johns Hopkins (archived) — global case/death time series (https://github.com/CSSEGISandData/COVID-19)
+- **Sample (committed):** `data/sample/ensemble_params.txt` — a 64×64 β×γ sweep.
+- **Realistic models:** MEmilio / EpiModel / Torchdiffeq — see
+  `scripts/download_data.ps1` and [data/README.md](data/README.md).
+- Bigger ensemble: `python scripts/make_synthetic.py --nb 200 --ng 200`.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+`demo/expected_output.txt` holds the deterministic sample trajectories and
+ensemble summary. The GPU (`src/kernels.cu`) and CPU (`src/reference_cpu.cpp`)
+share the RK4 integrator (`src/seir.h`) and use **double precision**, so they
+agree to ~machine precision (`worst diff ≈ 1e-15`).
 
 ## Code tour
 
-Read in this order:
-
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — load, CPU + GPU integrate, verify, print samples + summary.
+2. [`src/seir.h`](src/seir.h) — **the SEIR ODE + RK4 step + per-member integrator** (host + device).
+3. [`src/kernels.cuh`](src/kernels.cuh) — the GPU ensemble interface (one thread per member).
+4. [`src/kernels.cu`](src/kernels.cu) — the ensemble kernel + host wrapper.
+5. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the serial reference.
 
 ## Prior art & further reading
 
-Epiflows / EpiModel (https://github.com/EpiModel/EpiModel) — network-based compartmental modelling in R Torchdiffeq (https://github.com/rtqichen/torchdiffeq) — GPU-accelerated neural ODE and standard ODE solvers MEmilio (https://github.com/SciCompMod/memilio) — high-performance C++/CUDA epidemic simulation PyGOM (https://github.com/ukhsa-collaboration/pygom) — Python compartmental ODE modelling framework
+- **MEmilio** (<https://github.com/SciCompMod/memilio>) — high-performance C++/CUDA epidemic simulation.
+- **EpiModel** (<https://github.com/EpiModel/EpiModel>) — network-based compartmental modelling.
+- **Torchdiffeq** (<https://github.com/rtqichen/torchdiffeq>) — GPU ODE/neural-ODE solvers (`dopri5`).
+- **PyGOM** (<https://github.com/ukhsa-collaboration/pygom>) — compartmental ODE modelling framework.
 
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
+Study these for production modelling; reimplement the pattern didactically (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-cuSPARSE for mobility matrix coupling, cuRAND for stochastic tau-leaping, custom RK4 CUDA kernel for parallel ODE batch; pattern: each CUDA thread block integrates one metapopulation patch ODE system, with shared memory holding coupling matrices. --
+**Ensemble ODE integration**: one thread per parameter set, full RK4 loop in
+registers, no inter-thread communication · shared `__host__ __device__` integrator
+for exact CPU/GPU parity · double precision for accuracy over many steps.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Random sampling.** Replace the grid sweep with Latin-hypercube or Sobol
+   samples of (β, γ, σ) — proper Monte Carlo uncertainty quantification.
+2. **Adaptive step size.** Implement RK45 (Dormand-Prince) with error control and
+   compare cost/accuracy to fixed-step RK4.
+3. **Save trajectories.** Write the full I(t) curve per member (a 2-D output) and
+   plot the ensemble envelope.
+4. **Age structure.** Expand each compartment into age bands with a contact
+   matrix — more ODEs per member, same parallel pattern.
+5. **Metapopulation coupling.** Couple many geographic patches by a mobility
+   matrix; the per-step update becomes a batched sparse mat-vec (cuSPARSE).
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Independent SEIR members** (no spatial coupling). The metapopulation case —
+  many patches linked by mobility, a cuSPARSE batched SpMV per step — is described
+  in THEORY and is Exercise 5.
+- Fixed-step RK4 (no adaptive/stiff handling); a deterministic ODE (no demographic
+  stochasticity). Parameter ranges are illustrative, not fitted.

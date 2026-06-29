@@ -1,33 +1,22 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Realistic epidemic-model pointers (Windows)
 # ---------------------------------------------------------------------------
-# Project 9.2 -- Large-Scale Compartmental & Metapopulation Models   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
-#
-# Usage:  ./scripts/download_data.ps1
+# Project 9.02 : Large-Scale Compartmental & Metapopulation Models. Nothing to fetch.
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DataDir = Join-Path $ProjectRoot "data"
 
-Write-Host "[download_data] Project 9.2 -- Large-Scale Compartmental & Metapopulation Models"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
+Write-Host "[download_data] Project 9.02 -- Large-Scale Compartmental & Metapopulation Models"
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    GLEAM — global airline + commuting network for metapopulation coupling (https://www.gleamviz.org/) WHO Weekly Epidemiological Reports — case counts for parameter calibration (https://www.who.int/emergencies/situations) CDC FluView — US influenza surveillance by week and region (https://www.cdc.gov/flu/weekly/) COVID-19 Data Repository by CSSE at Johns Hopkins (archived) — global case/death time series (https://github.com/CSSEGISandData/COVID-19)"
+Write-Host "There is no file to download: the program derives every member's"
+Write-Host "parameters from the sweep in data/sample/ensemble_params.txt."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "For REAL models (mobility matrices, age structure, many patches):"
+Write-Host "  MEmilio     : https://github.com/SciCompMod/memilio   (C++/CUDA)"
+Write-Host "  EpiModel    : https://github.com/EpiModel/EpiModel    (R, network)"
+Write-Host "  Torchdiffeq : https://github.com/rtqichen/torchdiffeq (GPU ODE solvers)"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Bigger ensemble (no download):"
+Write-Host "  python scripts/make_synthetic.py --nb 200 --ng 200"
+Write-Host ""
+Write-Host "Target data dir: $ProjectRoot\data"

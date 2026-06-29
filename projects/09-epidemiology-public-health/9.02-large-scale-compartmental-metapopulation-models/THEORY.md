@@ -1,95 +1,110 @@
-# THEORY — 9.2 Large-Scale Compartmental & Metapopulation Models
+# THEORY — 9.02 Large-Scale Compartmental & Metapopulation Models
 
-> The deep didactic explanation (the "why"). Written for a sharp student who
-> knows C++ but is new to CUDA and new to this domain. Diagrams in Mermaid/ASCII
-> are welcome. See [README.md](README.md) for the quick tour and build steps.
->
-> _Educational only — not for clinical use._
-
-<!-- =======================================================================
-     The block below is the verbatim catalog deep-dive for this project,
-     stamped in by scaffold.py as raw material. Use it to write the sections
-     that follow, then DELETE it (or fold it into "The science"). Every
-     TODO(theory) below must be completed before the project is "done".
-     ======================================================================= -->
-
-<details>
-<summary>Catalog deep-dive (raw source material — fold into the sections below, then remove)</summary>
-
-### 9.2 Large-Scale Compartmental & Metapopulation Models 🟡 · Active R&D
-
-- **Deep dive:** Solves large systems of ODEs or stochastic differential equations (SDEs) describing disease dynamics across thousands of geographic patches interconnected by mobility flows (SIR at metapopulation scale, seasonal forcing, age structure). ODE integration over thousands of patches with coupling matrices is equivalent to a batched sparse matrix-vector multiply at each time step — a cuSPARSE-accelerated operation. Monte Carlo uncertainty quantification requires thousands of independent ODE solves in parallel on GPU, each with different parameter samples. GPU-based adaptive stepsize RK4/5 solvers (Torchdiffeq's `dopri5` on GPU) handle stiff biological dynamics efficiently.
-- **Key algorithms:** Runge-Kutta 4/5 ODE integration on GPU, tau-leaping for stochastic compartmental models, MCMC parameter inference (ensemble MCMC), Approximate Bayesian Computation (ABC), metapopulation coupling via mobility matrix, seasonal forcing with Fourier series, age-structured SEIR with contact matrices.
-- **Datasets:**
-  - GLEAM — global airline + commuting network for metapopulation coupling (https://www.gleamviz.org/)
-  - WHO Weekly Epidemiological Reports — case counts for parameter calibration (https://www.who.int/emergencies/situations)
-  - CDC FluView — US influenza surveillance by week and region (https://www.cdc.gov/flu/weekly/)
-  - COVID-19 Data Repository by CSSE at Johns Hopkins (archived) — global case/death time series (https://github.com/CSSEGISandData/COVID-19)
-- **Starter repos/tools:**
-  - Epiflows / EpiModel (https://github.com/EpiModel/EpiModel) — network-based compartmental modelling in R
-  - Torchdiffeq (https://github.com/rtqichen/torchdiffeq) — GPU-accelerated neural ODE and standard ODE solvers
-  - MEmilio (https://github.com/SciCompMod/memilio) — high-performance C++/CUDA epidemic simulation
-  - PyGOM (https://github.com/ukhsa-collaboration/pygom) — Python compartmental ODE modelling framework
-- **CUDA libraries & GPU pattern:** cuSPARSE for mobility matrix coupling, cuRAND for stochastic tau-leaping, custom RK4 CUDA kernel for parallel ODE batch; pattern: each CUDA thread block integrates one metapopulation patch ODE system, with shared memory holding coupling matrices.
-
-</details>
-
----
+> For a reader who knows C++ but is new to CUDA and to epidemic modelling.
+> See [README.md](README.md) for the tour and build. _Educational only._
 
 ## 1. The science
 
-TODO(theory): The biology / medicine / physics being modeled — enough for a
-reader to understand the *problem* before any math. What real-world question
-does computing this answer?
+To anticipate an outbreak, epidemiologists divide a population into
+**compartments** by infection status and write down how people flow between them.
+The **SEIR** model has four: **S**usceptible, **E**xposed (infected but not yet
+infectious), **I**nfectious, **R**ecovered. Because the true parameters are
+uncertain, a single simulation is not enough — you run an **ensemble** over many
+plausible parameter sets and study the distribution of outcomes (peak height,
+timing, attack rate). That ensemble is the compute load this project parallelizes.
 
 ## 2. The math
 
-TODO(theory): The governing equations / formal problem statement, with **every
-symbol defined** (units, ranges). State inputs, outputs, and the objective.
+With constant population `N = S+E+I+R`, the SEIR ODEs are
+
+```
+dS/dt = -β S I / N
+dE/dt =  β S I / N - σ E
+dI/dt =  σ E      - γ I
+dR/dt =  γ I
+```
+
+`β` is the transmission rate, `1/σ` the latent period, `1/γ` the infectious
+period. The **basic reproduction number** `R0 = β/γ` is the average number of
+secondary infections from one case in a fully susceptible population: `R0 > 1`
+produces an epidemic, `R0 < 1` fizzles. There is no closed-form `I(t)`, so we
+integrate numerically.
 
 ## 3. The algorithm
 
-TODO(theory): Step-by-step. Include **complexity analysis**: serial cost vs. the
-parallel work/depth. Where is the arithmetic intensity? What is the data-access
-pattern?
+**Runge-Kutta 4 (RK4)** advances the state by sampling the derivative at four
+points per step and combining them:
+
+```
+k1 = f(y)              k2 = f(y + dt/2 k1)
+k3 = f(y + dt/2 k2)    k4 = f(y + dt k3)
+y += dt/6 (k1 + 2 k2 + 2 k3 + k4)         # O(dt^4) local error
+```
+
+Each ensemble member runs this loop for `steps` timesteps and records its peak
+infectious fraction, the day of the peak, and the final `R/N` (attack rate).
+
+**Complexity.** Each member is `O(steps)` sequential RK4 steps; the ensemble is
+`M` members `×` that. The members are independent — perfect parallelism.
 
 ## 4. The GPU mapping
 
-TODO(theory): How the algorithm becomes **threads / blocks / grids**.
-- Thread-to-data mapping (which thread owns which element).
-- Launch configuration and the reasoning (block size, grid size).
-- Memory hierarchy used and **why**: global / shared / registers / constant /
-  texture. Where is the bandwidth bottleneck? What is the occupancy story?
-- Which CUDA library (cuBLAS / cuFFT / cuRAND / cuSOLVER / Thrust) does what,
-  and what it would take to write that step by hand (no black boxes — §6.1.6).
+**Decomposition.** One thread per ensemble member. Thread `idx` reads its
+`(β, γ)` from the sweep grid (`member_params`), then runs the **entire RK4 time
+loop in registers/local memory** and writes a single `MemberResult`. There is no
+inter-thread communication and no global memory traffic during integration — the
+state lives in registers — so it is bandwidth-light and compute-bound, exactly the
+regime where a GPU's many cores shine.
 
 ```
-TODO(theory): an ASCII or Mermaid diagram of the grid/block decomposition.
+  member 0 (beta0,gamma0):  RK4 ----------------> result[0]
+  member 1 (beta1,gamma1):  RK4 ----------------> result[1]
+  ...                                              (one thread each, in parallel)
+  member M-1:               RK4 ----------------> result[M-1]
 ```
+
+**Divergence.** All members run the same number of steps, so the only divergence
+is the peak-tracking branch — negligible. (Adaptive step sizes, Exercise 2, would
+introduce real divergence, since different members would take different numbers of
+steps.)
+
+**Precision.** We integrate in **double**: epidemic curves span many orders of
+magnitude (from `I0=10` to millions) over hundreds of steps, and double precision
+keeps the CPU and GPU in lock-step. Because the shared `__host__ __device__`
+integrator runs the identical operations, the per-member results match to ~`1e-15`
+— round-off, not algorithm.
 
 ## 5. Numerical considerations
 
-TODO(theory): Precision (FP32 vs FP64) and why. Stability. Race conditions and
-whether atomics are used. **Determinism**: does the parallel reduction reorder
-floating-point sums? If so, say so and quantify the caveat.
+- **Determinism.** No reductions, no atomics during integration → reproducible and
+  CPU-matching. (The ensemble summary stats are computed afterward on the host.)
+- **Stability.** RK4 is stable for these non-stiff dynamics at the chosen `dt`;
+  very large `β` or tiny `1/γ` could require a smaller step (or an implicit/
+  adaptive method — Exercise 2).
+- **Conservation.** `S+E+I+R = N` should hold; RK4 conserves it to round-off here.
 
 ## 6. How we verify correctness
 
-TODO(theory): The CPU reference (`src/reference_cpu.cpp`), the **tolerance** and
-why that value, and the edge cases checked. Explain why agreement between an
-independent serial implementation and the GPU implementation is convincing
-evidence of correctness.
+`main.cu` integrates the whole ensemble twice — `integrate_cpu` (a serial loop)
+and `integrate_gpu` (one thread per member) — and compares the per-member peak
+infection and attack rate (`worst diff ≈ 1e-15`). Beyond CPU/GPU parity, the
+results are epidemiologically sensible: members with larger `R0 = β/γ` peak
+earlier and higher and infect a larger fraction; `R0 < 1` members never take off.
+That is the model behaving correctly, not just two codes agreeing.
 
 ## 7. Where this sits in the real world
 
-TODO(theory): How production tools (named in the catalog "Prior art") do this
-differently — what they add (scale, accuracy, features) that this teaching
-version omits. If this is a 🔴 frontier project shipped as a reduced-scope
-teaching version, describe the full approach here.
-
----
+Production epidemic models add: **metapopulation structure** (many geographic
+patches coupled by a mobility matrix — the per-step update becomes a batched
+**sparse matrix-vector multiply**, a cuSPARSE operation), **age structure** and
+contact matrices, **seasonal forcing**, demographic and observational
+**stochasticity** (SDEs), and **adaptive/stiff solvers** (`dopri5` on GPU via
+Torchdiffeq). The ensemble-over-threads pattern you learn here is the backbone of
+the uncertainty-quantification step in all of them.
 
 ## References
 
-TODO(theory): Papers, docs, and the starter repos from the catalog, with one
-line each on what to learn from them.
+- Kermack & McKendrick (1927) — the original compartmental epidemic model.
+- Keeling & Rohani, *Modeling Infectious Diseases* — the standard text.
+- Press et al., *Numerical Recipes* — Runge-Kutta integration.
+- NVIDIA cuSPARSE documentation — batched sparse mat-vec for metapopulation coupling.

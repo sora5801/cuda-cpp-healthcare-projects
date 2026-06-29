@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 7/301 projects done (2.3%) | todo 294 | in-progress 0 | missing 0
+**Progress:** 8/301 projects done (2.7%) | todo 293 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 4 | 0 | 63 |
-| 🟡 Intermediate | 206 | 3 | 0 | 203 |
+| 🟡 Intermediate | 206 | 4 | 0 | 202 |
 | 🔴 Advanced | 28 | 0 | 0 | 28 |
 
 ## 1. Drug Discovery & Molecular Design  (1/35 done)
@@ -260,12 +260,12 @@
 | 8.15 | Optogenetics Stimulation Modeling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 8.16 | Neural Signal Compression & Wireless BCI Transmission | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 
-## 9. Epidemiology & Public Health  (0/10 done)
+## 9. Epidemiology & Public Health  (1/10 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
 | 9.01 | Agent-Based Epidemic Simulation | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 9.02 | Large-Scale Compartmental & Metapopulation Models | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 9.02 | Large-Scale Compartmental & Metapopulation Models | 🟡 Intermediate | Active R&D | [x] done | lead | main |
 | 9.03 | Contact-Network & Graph Epidemic Dynamics | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 9.04 | Phylodynamics & Pathogen Genomic Surveillance | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 9.05 | Spatial Disease Mapping & Forecasting | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

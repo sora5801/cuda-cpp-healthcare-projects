@@ -1,37 +1,49 @@
-# Data — 9.2 Large-Scale Compartmental & Metapopulation Models
+# Data — 9.02 Large-Scale Compartmental & Metapopulation Models
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/ensemble_params.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
-| License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Origin | **Synthetic** ensemble configuration (`scripts/make_synthetic.py`) |
+| License | Public domain (CC0) |
+| Contents | One line of population/IC/integration settings + a beta×gamma sweep |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+The "data" is the **ensemble setup**, not measured input; each member's
+parameters are derived from the sweep grid, so the whole ensemble is reproducible.
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+### File format (one line)
 
-## Full dataset
+```
+N  I0  dt  steps  sigma  nb  ng  beta_lo  beta_hi  gamma_lo  gamma_hi
+```
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+| Field | Meaning |
+|---|---|
+| `N` | total population (constant) |
+| `I0` | initial infectious count (`S0 = N − I0`, `E0 = R0 = 0`) |
+| `dt`, `steps` | RK4 timestep (days) and step count (run = `steps·dt` days) |
+| `sigma` | E→I rate = 1 / latent period |
+| `nb`, `ng` | sweep size: `nb` beta values × `ng` gamma values = `nb·ng` members |
+| `beta_lo..hi` | transmission-rate range |
+| `gamma_lo..hi` | recovery-rate range (1/infectious period) |
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+Default: `1000000 10 0.25 720 0.192308 64 64 0.15 0.6 0.1 0.5` → 4096 members, 180
+days, R0 = β/γ from 0.30 to 6.0.
 
-Catalog dataset notes (verbatim):
+## "Full dataset" / realistic models
 
-> GLEAM — global airline + commuting network for metapopulation coupling (https://www.gleamviz.org/) WHO Weekly Epidemiological Reports — case counts for parameter calibration (https://www.who.int/emergencies/situations) CDC FluView — US influenza surveillance by week and region (https://www.cdc.gov/flu/weekly/) COVID-19 Data Repository by CSSE at Johns Hopkins (archived) — global case/death time series (https://github.com/CSSEGISandData/COVID-19)
+Real epidemic modelling adds measured contact/mobility matrices, age structure,
+seasonal forcing, and many geographic patches:
 
-## Provenance & field meanings
+- **MEmilio** (<https://github.com/SciCompMod/memilio>) — high-performance C++/CUDA epidemic simulation.
+- **EpiModel** (<https://github.com/EpiModel/EpiModel>) — network compartmental modelling (R).
+- **Torchdiffeq** (<https://github.com/rtqichen/torchdiffeq>) — GPU ODE solvers (`dopri5`).
+- Mobility data: census commuting flows, GLEAM, mobile-phone-derived matrices.
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+Bigger ensemble: `python scripts/make_synthetic.py --nb 200 --ng 200` (40,000 members).
+
+## Provenance & honesty
+
+The configuration is **synthetic**; the parameter ranges are illustrative, not
+fitted to any disease. Outputs are a software demonstration of ensemble ODE
+integration, not an epidemic forecast.
