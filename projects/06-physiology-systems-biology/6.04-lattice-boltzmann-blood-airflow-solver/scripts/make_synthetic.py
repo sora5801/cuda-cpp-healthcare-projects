@@ -1,48 +1,47 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Write the LBM channel parameter file
 # ---------------------------------------------------------------------------
-# Project 6.4 -- Lattice-Boltzmann Blood/Airflow Solver   (template skeleton)
+# Project 6.04 : Lattice-Boltzmann Blood/Airflow Solver
 #
-# WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+# This project's "data" is the simulation setup: a periodic channel with no-slip
+# walls, driven by a body force, that develops a Poiseuille (parabolic) velocity
+# profile. This writes the one-line parameter file the program reads.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
-#
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# OUTPUT (data/README.md format), one line:  "nx ny steps tau gx"
+#   nx,ny : lattice size (x=flow direction, y=across the channel)
+#   steps : number of collide+stream iterations
+#   tau   : BGK relaxation time (viscosity nu=(tau-0.5)/3); must be > 0.5
+#   gx    : body force per unit mass in +x (keep u << 1 for stability)
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py
+#   python scripts/make_synthetic.py --nx 128 --ny 64 --steps 20000
 # ===========================================================================
 import argparse
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "data" / "sample" / "channel_params.txt"
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
+    ap = argparse.ArgumentParser(description="Write the LBM channel parameter file.")
+    ap.add_argument("--nx", type=int, default=16, help="lattice width (flow direction, periodic)")
+    ap.add_argument("--ny", type=int, default=24, help="lattice height (across the channel)")
+    ap.add_argument("--steps", type=int, default=6000, help="collide+stream iterations")
+    ap.add_argument("--tau", type=float, default=0.8, help="BGK relaxation time (>0.5)")
+    ap.add_argument("--gx", type=float, default=1e-5, help="body force per unit mass (+x)")
+    ap.add_argument("--out", default=str(OUT))
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
-
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    line = f"{args.nx} {args.ny} {args.steps} {args.tau} {args.gx}"
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    Path(args.out).write_text(line + "\n", encoding="utf-8")
+    nu = (args.tau - 0.5) / 3.0
+    print(f"[make_synthetic] wrote {args.out}")
+    print(f"  nx={args.nx} ny={args.ny} steps={args.steps} tau={args.tau} "
+          f"(nu={nu:.4f}) gx={args.gx}")
 
 
 if __name__ == "__main__":

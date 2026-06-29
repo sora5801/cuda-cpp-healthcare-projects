@@ -1,94 +1,70 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  LBM stencil kernel + host ping-pong time loop
 // ---------------------------------------------------------------------------
-// Project 6.4 -- Lattice-Boltzmann Blood/Airflow Solver   (template skeleton)
+// Project 6.04 : Lattice-Boltzmann Blood/Airflow Solver
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of lbm_cpu(): identical per-node physics (shared lbm_d2q9.h), one
+// thread per node, host-driven time loop with two buffers. main.cu runs both and
+// compares the velocity fields. See ../THEORY.md "GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
-#include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "lbm_d2q9.h"
+#include "util/cuda_check.cuh"
+#include "util/timer.cuh"
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+static constexpr int TILE = 16;   // 16x16 = 256 threads/block over the 2-D lattice
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// lbm_step_kernel: thread (x,y) updates its node for one timestep. The whole
+// collide+stream is the shared function -> the kernel body is just the mapping.
+// Nodes are independent within a step (each writes only its own f_new), reading
+// neighbours from the read-only f_old buffer -> no races, no atomics.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+__global__ void lbm_step_kernel(int nx, int ny, double tau, double gx,
+                                const double* __restrict__ f_old,
+                                double* __restrict__ f_new) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= nx || y >= ny) return;                  // guard ragged edge tiles
+    lbm_collide_stream(x, y, nx, ny, tau, gx, f_old, f_new);
 }
 
-// ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
-// ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void lbm_gpu(const LbmParams& p, std::vector<double>& f_final, float* kernel_ms) {
+    const std::size_t cells = static_cast<std::size_t>(9) * p.nx * p.ny;
+    const std::size_t bytes = cells * sizeof(double);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // Initialize at rest equilibrium on the host, then upload.
+    std::vector<double> init(cells);
+    for (int y = 0; y < p.ny; ++y)
+        for (int x = 0; x < p.nx; ++x)
+            for (int i = 0; i < 9; ++i)
+                init[lbm_idx(i, x, y, p.nx, p.ny)] = w_i(i);
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    double* d_a = nullptr;
+    double* d_b = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_a, bytes));
+    CUDA_CHECK(cudaMalloc(&d_b, bytes));
+    CUDA_CHECK(cudaMemcpy(d_a, init.data(), bytes, cudaMemcpyHostToDevice));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    dim3 block(TILE, TILE);
+    dim3 grid((p.nx + TILE - 1) / TILE, (p.ny + TILE - 1) / TILE);
+
+    // Time loop: launch one kernel per step, ping-ponging the two buffers. We
+    // time the whole loop (all step kernels) with CUDA events.
+    double* src = d_a;
+    double* dst = d_b;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    for (int s = 0; s < p.steps; ++s) {
+        lbm_step_kernel<<<grid, block>>>(p.nx, p.ny, p.tau, p.gx, src, dst);
+        double* tmp = src; src = dst; dst = tmp;
+    }
+    *kernel_ms = timer.stop_ms();
+    CUDA_CHECK_LAST("lbm_step_kernel");
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    // `src` holds the latest state after the final swap.
+    f_final.assign(cells, 0.0);
+    CUDA_CHECK(cudaMemcpy(f_final.data(), src, bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_a));
+    CUDA_CHECK(cudaFree(d_b));
 }

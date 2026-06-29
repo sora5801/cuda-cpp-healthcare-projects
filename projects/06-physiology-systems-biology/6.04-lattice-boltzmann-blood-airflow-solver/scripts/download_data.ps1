@@ -1,33 +1,23 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Realistic LBM geometry pointers (Windows)
 # ---------------------------------------------------------------------------
-# Project 6.4 -- Lattice-Boltzmann Blood/Airflow Solver   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
-#
-# Usage:  ./scripts/download_data.ps1
+# Project 6.04 : Lattice-Boltzmann Blood/Airflow Solver
+# This project generates its own flow from parameters; nothing to download.
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DataDir = Join-Path $ProjectRoot "data"
 
-Write-Host "[download_data] Project 6.4 -- Lattice-Boltzmann Blood/Airflow Solver"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
+Write-Host "[download_data] Project 6.04 -- Lattice-Boltzmann Blood/Airflow Solver"
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    PhysioNet coronary/aortic waveforms (https://physionet.org); Vascular Model Repository geometries (http://www.vascularmodel.com); open-access bronchial tree CT data from LIDC-IDRI (https://wiki.cancerimagingarchive.net/display/Public/LIDC-IDRI); UK Biobank aortic flow MRI (https://www.ukbiobank.ac.uk)."
+Write-Host "There is no file to download: the solver makes its own flow from the"
+Write-Host "parameters in data/sample/channel_params.txt."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "For REAL 3-D geometry (segmented vessels/airways + D3Q19/D3Q27):"
+Write-Host "  HemeLB     : https://github.com/hemelb-codes/hemelb"
+Write-Host "  PALABOS    : https://gitlab.com/unigespc/palabos"
+Write-Host "  USERMESO-2 : https://github.com/AnselGitAccount/USERMESO-2.0"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Bigger 2-D grid:"
+Write-Host "  python scripts/make_synthetic.py --nx 128 --ny 64 --steps 20000"
+Write-Host ""
+Write-Host "Target data dir: $ProjectRoot\data"

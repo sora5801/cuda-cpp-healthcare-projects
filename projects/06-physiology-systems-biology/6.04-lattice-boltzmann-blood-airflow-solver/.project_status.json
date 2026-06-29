@@ -2,8 +2,8 @@
   "id": "6.4",
   "id_padded": "6.04",
   "project": "Lattice-Boltzmann Blood/Airflow Solver",
-  "status": "todo",
-  "owner": "",
-  "branch": "",
+  "status": "done",
+  "owner": "lead",
+  "branch": "main",
   "skeleton": true
 }

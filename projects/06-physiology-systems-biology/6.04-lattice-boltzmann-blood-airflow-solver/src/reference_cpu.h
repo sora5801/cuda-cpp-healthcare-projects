@@ -1,31 +1,35 @@
 // ===========================================================================
-// src/reference_cpu.h  --  Prototype of the CPU reference computation
+// src/reference_cpu.h  --  LBM parameters + CPU reference solver
 // ---------------------------------------------------------------------------
-// Project 6.4 -- Lattice-Boltzmann Blood/Airflow Solver   (template skeleton)
+// Project 6.04 : Lattice-Boltzmann Blood/Airflow Solver
 //
-// WHY A SEPARATE HEADER
-//   The CPU reference (reference_cpu.cpp) is compiled by the plain C++ compiler
-//   and must NOT see any CUDA/__global__ syntax, so its prototype cannot live in
-//   kernels.cuh. Both main.cu and reference_cpu.cpp include THIS pure-C++ header
-//   so they agree on the function signature.
-//
-// THE CONTRACT (this template's placeholder computation):
-//   SAXPY -- "Single-precision A*X Plus Y":  out[i] = a * x[i] + y[i].
-//   This is the canonical first GPU kernel; here it stands in as a buildable
-//   placeholder. TODO(impl): replace saxpy_cpu with this project's real
-//   reference computation, and update the prototype + callers accordingly.
-//
-//   The CPU reference exists for two reasons (CLAUDE.md section 5):
-//     (a) it is the readable baseline that makes the GPU speed-up legible, and
-//     (b) the demo runs BOTH and asserts they agree within tolerance.
+// Pure C++ (no CUDA). kernels.cu reuses LbmParams. The actual per-node physics
+// is in the shared lbm_d2q9.h so CPU and GPU are byte-for-byte identical.
 // ===========================================================================
 #pragma once
 
+#include <string>
 #include <vector>
 
-// Compute out = a*x + y on the CPU, element by element.
-//   x, y : input vectors of equal length n
-//   a    : the scalar multiplier
-//   out  : resized to n and filled with the result (output parameter)
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out);
+#include "lbm_d2q9.h"   // shared update (host+device)
+
+// A simulation job: a periodic channel (walls top/bottom) driven by a body force.
+struct LbmParams {
+    int nx = 0, ny = 0;   // lattice size (x = flow direction, y = across channel)
+    int steps = 0;        // number of collide+stream iterations
+    double tau = 0.0;     // BGK relaxation time -> kinematic viscosity nu=(tau-0.5)/3
+    double gx = 0.0;      // body force per unit mass in +x (the pressure gradient)
+};
+
+// Load LbmParams from the one-line text format (data/README.md):
+//   "nx ny steps tau gx"
+LbmParams load_lbm(const std::string& path);
+
+// CPU reference: initialize populations at rest equilibrium, run `steps`
+// collide+stream iterations (ping-ponging two buffers), and return the FINAL
+// population field `f` (size 9*nx*ny). The trusted baseline for the GPU.
+void lbm_cpu(const LbmParams& p, std::vector<double>& f_final);
+
+// Fill `ux` (size nx*ny) with the macroscopic x-velocity of every node, from a
+// population field. Shared by both paths so the comparison is apples-to-apples.
+void velocity_field(const LbmParams& p, const std::vector<double>& f, std::vector<double>& ux);

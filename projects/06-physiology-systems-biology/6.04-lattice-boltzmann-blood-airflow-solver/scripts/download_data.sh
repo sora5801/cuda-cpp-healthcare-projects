@@ -1,33 +1,22 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
-# ---------------------------------------------------------------------------
-# Project 6.4 -- Lattice-Boltzmann Blood/Airflow Solver   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# scripts/download_data.sh  --  Realistic LBM geometry pointers (Linux/macOS)
+# Project 6.04 : Lattice-Boltzmann Blood/Airflow Solver. Nothing to download.
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
-echo "[download_data] Project 6.4 -- Lattice-Boltzmann Blood/Airflow Solver"
-echo "[download_data] Target data dir: $DATA_DIR"
+echo "[download_data] Project 6.04 -- Lattice-Boltzmann Blood/Airflow Solver"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    PhysioNet coronary/aortic waveforms (https://physionet.org); Vascular Model Repository geometries (http://www.vascularmodel.com); open-access bronchial tree CT data from LIDC-IDRI (https://wiki.cancerimagingarchive.net/display/Public/LIDC-IDRI); UK Biobank aortic flow MRI (https://www.ukbiobank.ac.uk)."
+echo "There is no file to download: the solver makes its own flow from the"
+echo "parameters in data/sample/channel_params.txt."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "For REAL 3-D geometry (segmented vessels/airways + D3Q19/D3Q27):"
+echo "  HemeLB     : https://github.com/hemelb-codes/hemelb"
+echo "  PALABOS    : https://gitlab.com/unigespc/palabos"
+echo "  USERMESO-2 : https://github.com/AnselGitAccount/USERMESO-2.0"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Bigger 2-D grid:"
+echo "  python scripts/make_synthetic.py --nx 128 --ny 64 --steps 20000"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

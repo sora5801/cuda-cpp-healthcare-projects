@@ -1,5 +1,6 @@
 6.4 -- Lattice-Boltzmann Blood/Airflow Solver
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+D2Q9 channel: 16x24 lattice, 6000 steps, tau=0.800 (nu=0.1000), gx=1.00e-05
+centerline u_max = 0.007186 at y=12
+velocity profile u_x(y) across the channel (x=8):
+ 0.000586 0.001686 0.002686 0.003586 0.004386 0.005086 0.005686 0.006186 0.006586 0.006886 0.007086 0.007186 0.007186 0.007086 0.006886 0.006586 0.006186 0.005686 0.005086 0.004386 0.003586 0.002686 0.001686 0.000586
+RESULT: PASS (GPU velocity matches CPU within tol=1.0e-06)

@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 4/301 projects done (1.3%) | todo 297 | in-progress 0 | missing 0
+**Progress:** 5/301 projects done (1.7%) | todo 296 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 3 | 0 | 64 |
-| 🟡 Intermediate | 206 | 1 | 0 | 205 |
+| 🟡 Intermediate | 206 | 2 | 0 | 204 |
 | 🔴 Advanced | 28 | 0 | 0 | 28 |
 
 ## 1. Drug Discovery & Molecular Design  (1/35 done)
@@ -183,14 +183,14 @@
 | 5.14 | GPU-Accelerated Adaptive MR-Linac Workflow | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 5.15 | Proton CT & Ion Imaging Reconstruction | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
 
-## 6. Computational Physiology & Systems Biology  (0/27 done)
+## 6. Computational Physiology & Systems Biology  (1/27 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
 | 6.01 | Cardiac Electrophysiology Simulation | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 6.02 | Whole-Heart Digital Twin | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 6.03 | Hemodynamics / Blood-Flow CFD | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 6.04 | Lattice-Boltzmann Blood/Airflow Solver | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 6.04 | Lattice-Boltzmann Blood/Airflow Solver | 🟡 Intermediate | Active R&D | [x] done | lead | main |
 | 6.05 | Respiratory / Lung Airflow & Particle Deposition | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 6.06 | Neuronal Network Simulation (Biophysical) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 6.07 | Spiking Neural Network (Point-Neuron) Simulation | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

@@ -1,108 +1,114 @@
-# 6.4 — Lattice-Boltzmann Blood/Airflow Solver
+# 6.04 — Lattice-Boltzmann Blood/Airflow Solver
 
 ![difficulty](https://img.shields.io/badge/difficulty-Intermediate-blue) ![maturity](https://img.shields.io/badge/maturity-Active%20R%26D-informational) ![domain](https://img.shields.io/badge/domain-Computational%20Physiology%20%26%20Systems%20Biology-lightgrey)
 
-> **🟡 Intermediate · Active R&D** — Domain 6: Computational Physiology & Systems Biology · Catalog ID `6.4`
+> **🟡 Intermediate · Active R&D** — Domain 6: Computational Physiology & Systems Biology · Catalog ID `6.04`
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Simulate fluid flow (blood, airflow) with the **Lattice-Boltzmann Method (LBM)**:
+instead of solving the Navier-Stokes PDEs directly, track 9 "populations" of
+fictitious particles at each grid node (the **D2Q9** stencil) and repeatedly
+**collide** (relax toward equilibrium) and **stream** (move to neighbours). Each
+node updates from its nearest neighbours only — a pure **stencil**, the fifth
+distinct GPU pattern in the flagships and the workhorse of GPU computational
+fluid dynamics. The demo develops textbook **Poiseuille (parabolic) channel flow**.
 
 ## What this computes & why the GPU helps
 
-The lattice-Boltzmann method (LBM) replaces continuum Navier-Stokes with a mesoscale kinetic equation for particle distribution functions on a regular grid—ideal for GPUs because each lattice site updates independently using only nearest-neighbor communication (the BGK collision step). Blood in complex vascular trees, red blood cell suspension rheology, and pulmonary airflow through bronchial trees all benefit from this approach. HemeLB achieves ~29.5 billion lattice site updates per second on thousands of cores; GPU versions (e.g., HemeLB GPU branch, PALABOS GPU) push throughput further with shared-memory streaming.
+LBM replaces continuum Navier-Stokes with a mesoscale kinetic model on a regular
+lattice. It is ideal for GPUs because a node updates using **only nearest-neighbour
+communication** — no global solves — so the collide+stream step is embarrassingly
+local. Blood flow in vascular trees, red-blood-cell rheology, and pulmonary
+airflow all use it; HemeLB reaches tens of billions of lattice-site updates per
+second, and GPU versions push further.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck** is the per-node collide+stream stencil over the whole
+lattice, every timestep; we give each node a thread on a 2-D grid and iterate.
 
 ## The algorithm in brief
 
-BGK (Bhatnagar-Gross-Krook) collision operator, multi-relaxation time (MRT) LBM, D3Q19/D3Q27 velocity stencils, bounce-back boundary conditions for no-slip walls, Shan-Chen multiphase LBM, immersed boundary method for red blood cell membranes, Palabos fluid-particle coupling.
+Per node, per step: **stream** (pull each population from its upstream neighbour;
+bounce-back at walls), compute density/velocity moments, then **collide** (BGK
+relaxation toward the local Maxwellian equilibrium), with a body force driving the
+flow.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+See [THEORY.md](THEORY.md) for the kinetic theory, the BGK operator, and the 3-D extension.
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145) + **CUDA 13.3** ([docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
 
-1. Open `build/lattice-boltzmann-blood-airflow-solver.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/lattice-boltzmann-blood-airflow-solver.exe`.
+1. Open `build/lattice-boltzmann-blood-airflow-solver.sln`.
+2. **`Release|x64`** → **Build** → `build/x64/Release/lattice-boltzmann-blood-airflow-solver.exe`.
 
-Command-line alternative (Developer PowerShell):
-
-```powershell
-msbuild build\lattice-boltzmann-blood-airflow-solver.sln /p:Configuration=Release /p:Platform=x64
-```
+CLI: `msbuild build\lattice-boltzmann-blood-airflow-solver.sln /p:Configuration=Release /p:Platform=x64`
 
 ## Run the demo
 
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.ps1
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+Runs the channel flow on CPU + GPU and verifies the velocity fields match.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: PhysioNet coronary/aortic waveforms (https://physionet.org); Vascular Model Repository geometries (http://www.vascularmodel.com); open-access bronchial tree CT data from LIDC-IDRI (https://wiki.cancerimagingarchive.net/display/Public/LIDC-IDRI); UK Biobank aortic flow MRI (https://www.ukbiobank.ac.uk).
+- **Sample (committed):** `data/sample/channel_params.txt` — the channel + run parameters.
+- **Realistic geometry:** 3-D segmented vessels/airways with HemeLB / PALABOS —
+  see `scripts/download_data.ps1` and [data/README.md](data/README.md).
+- Bigger 2-D grid: `python scripts/make_synthetic.py --nx 128 --ny 64 --steps 20000`.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+`demo/expected_output.txt` holds the deterministic across-channel velocity
+profile — a parabola peaking at the centerline. The GPU (`src/kernels.cu`) and CPU
+(`src/reference_cpu.cpp`) share the per-node update (`src/lbm_d2q9.h`), so their
+velocity fields agree to ~machine precision (`max diff ≈ 2e-16`).
 
 ## Code tour
 
-Read in this order:
-
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — load, run CPU + GPU LBM, verify, print the velocity profile.
+2. [`src/lbm_d2q9.h`](src/lbm_d2q9.h) — **the shared per-node collide+stream update** (host + device).
+3. [`src/kernels.cuh`](src/kernels.cuh) — the GPU stencil interface (1 thread/node, ping-pong loop).
+4. [`src/kernels.cu`](src/kernels.cu) — the step kernel + host time loop.
+5. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the serial reference + velocity moments.
 
 ## Prior art & further reading
 
-HemeLB (https://github.com/hemelb-codes/hemelb) — sparse-geometry vascular LBM, MPI+GPU, scales to 32 000+ cores; HemePure GPU variant (https://github.com/hemelb-codes/HemePure) — cleaned GPU-first branch; PALABOS (https://gitlab.com/unigespc/palabos) — full-featured C++ LBM framework including multiphase and thermal extensions; USERMESO-2.0 (https://github.com/AnselGitAccount/USERMESO-2.0) — GPU red blood cell hemodynamics with deformable membrane.
+- **HemeLB** (<https://github.com/hemelb-codes/hemelb>) — sparse-geometry vascular LBM, MPI+GPU.
+- **PALABOS** (<https://gitlab.com/unigespc/palabos>) — full-featured C++ LBM framework.
+- **USERMESO-2.0** (<https://github.com/AnselGitAccount/USERMESO-2.0>) — GPU red-blood-cell hemodynamics.
 
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
+Study these for production LBM; this project reimplements the core pattern didactically (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-Custom CUDA kernels for BGK streaming+collision in a single fused pass; shared memory for D3Q19 population arrays; texture memory for geometry masks; NCCL for GPU-direct halo exchange; pattern: one-thread-per-lattice-site with coalesced memory access on SOA layout. --
+Nearest-neighbour **stencil** (one thread per lattice node, 2-D grid) ·
+**ping-pong** double buffering across timesteps · pull-streaming + halfway
+bounce-back walls · BGK collision · shared `__host__ __device__` per-node update
+for exact CPU/GPU parity.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Shared-memory tiling.** Cache a tile of the lattice (plus a halo) in shared
+   memory so streaming reads coalesce — the standard LBM GPU optimization.
+2. **Obstacle.** Add a solid cylinder (bounce-back nodes) and watch a wake / von
+   Kármán vortex street form. Plot the velocity field.
+3. **MRT collision.** Replace single-relaxation BGK with multi-relaxation-time
+   (MRT) for better stability at low viscosity.
+4. **3-D D3Q19.** Extend the stencil to 3-D (19 velocities) — the geometry real
+   blood/airflow solvers use.
+5. **Throughput.** Grow the grid (`--nx 512 --ny 512`) and measure MLUPS
+   (mega-lattice-updates/s) on CPU vs GPU; where does the GPU pull ahead?
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **2-D D2Q9, single-relaxation BGK**, straight channel — real solvers are 3-D
+  (D3Q19/D3Q27), often MRT, in complex vessel geometries.
+- **One kernel launch per timestep** (no shared-memory tiling), so on a small grid
+  the GPU is launch-bound; the win grows with grid size (Exercise 5).
+- The body force uses a simple equilibrium-velocity shift; production uses Guo
+  forcing. Flow is incompressible-limit only (low Mach).
