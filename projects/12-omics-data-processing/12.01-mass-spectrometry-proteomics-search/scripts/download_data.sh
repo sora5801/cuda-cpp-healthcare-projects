@@ -1,33 +1,23 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
-# ---------------------------------------------------------------------------
-# Project 12.1 -- Mass-Spectrometry Proteomics Search   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# scripts/download_data.sh  --  Real proteomics-data pointers (Linux/macOS)
+# Project 12.01 : Mass-Spectrometry Proteomics Search. Nothing to download.
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
-echo "[download_data] Project 12.1 -- Mass-Spectrometry Proteomics Search"
-echo "[download_data] Target data dir: $DATA_DIR"
+echo "[download_data] Project 12.01 -- Mass-Spectrometry Proteomics Search"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    PRIDE / ProteomeXchange — proteomics data repository (https://www.ebi.ac.uk/pride/); PeptideAtlas — validated human peptide spectral library (https://www.peptideatlas.org/); CPTAC cancer proteomics datasets (https://proteomics.cancer.gov/); MassIVE — mass spectrometry data repository (https://massive.ucsd.edu/)."
+echo "Real data: observed MS/MS spectra (mzML) searched against a peptide DB."
+echo "Bin observed peaks + theoretical fragments to a common grid, then write the"
+echo "format in data/README.md."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  ProteomeXchange / PRIDE : https://www.proteomexchange.org  (raw/mzML)"
+echo "  MSFragger               : https://github.com/Nesvilab/MSFragger"
+echo "  GiCOPS (GPU search)     : https://github.com/pcdslab/gicops"
+echo "  OpenMS                  : https://github.com/OpenMS/OpenMS  (mzML I/O)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Bigger synthetic set (no download):"
+echo "  python scripts/make_synthetic.py --N 8192"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

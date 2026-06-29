@@ -1,5 +1,10 @@
 12.1 -- Mass-Spectrometry Proteomics Search
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
+spectral search: 1 query vs 1024 library spectra (200 bins)
+top-5 matches:
+  #1  lib[7]  cosine = 0.993478
+  #2  lib[518]  cosine = 0.363808
+  #3  lib[655]  cosine = 0.343681
+  #4  lib[57]  cosine = 0.322052
+  #5  lib[85]  cosine = 0.302032
+true target lib[7] cosine = 0.993478, rank = 1 of 1024
 RESULT: PASS (GPU matches CPU within tol=1.0e-05)

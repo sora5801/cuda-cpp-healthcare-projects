@@ -1,108 +1,109 @@
-# 12.1 — Mass-Spectrometry Proteomics Search
+# 12.01 — Mass-Spectrometry Proteomics Search
 
 ![difficulty](https://img.shields.io/badge/difficulty-Beginner-blue) ![maturity](https://img.shields.io/badge/maturity-Established-informational) ![domain](https://img.shields.io/badge/domain-Analytical%20%26%20Omics%20Data%20Processing-lightgrey)
 
-> **🟢 Beginner · Established** — Domain 12: Analytical & Omics Data Processing · Catalog ID `12.1`
+> **🟢 Beginner · Established** — Domain 12: Analytical & Omics Data Processing · Catalog ID `12.01`
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Identify a peptide by **spectral library search**: score one observed MS/MS
+spectrum (the query) against thousands of theoretical spectra and return the best
+matches. Each spectrum is a binned intensity vector; the match score is the
+**cosine similarity** (normalized dot product). Every query-vs-library comparison
+is independent, so one GPU thread scores one library spectrum, with the query in
+constant memory. Eleventh distinct GPU pattern: **batched dot-product scoring**.
 
 ## What this computes & why the GPU helps
 
-Database peptide search correlates each observed MS/MS spectrum against thousands of theoretical peptide spectra from a protein sequence database, the most time-consuming step in proteomics. For a dataset of 100 k spectra against a human tryptic database of 1 M peptides (× 100 modifications), the search space is 10¹¹ comparisons; GPU parallelises scoring of thousands of theoretical spectra simultaneously per observed spectrum. GiCOPS (GPU-accelerated HiCOPS) achieves 1.2–5× speedup over CPU HiCOPS and >10× over older GPU tools like Tempest, using fragment-ion indexing on GPU. MSFragger uses hash-based fragment indexing on CPU but its inner scoring loop is a GPU acceleration target.
+Database peptide search — correlating each observed spectrum against a peptide
+database — is the most time-consuming step in proteomics: ~10⁵ spectra against
+~10⁶ peptides is 10¹¹ comparisons. Each score is an independent dot product, so
+GPUs parallelize scoring thousands of theoretical spectra per observed spectrum
+(GiCOPS, Tempest). The query is read by every thread but never changes → constant
+memory broadcasts it.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallelized work** is the per-library cosine score; the small top-K
+selection is a host step.
 
 ## The algorithm in brief
 
-Fragment-ion indexing (hash/sorted lists of b/y-ions); Xcorr / HyperScore spectral dot product; fragment index mass offset search (open search); XCorr normalised cross-correlation; peptide-spectrum match (PSM) q-value estimation (Percolator); precursor mass matching and charge state deconvolution.
+- **Binning:** each spectrum → a fixed-length intensity vector.
+- **Score:** `cosine(q, lib_i) = dot(q, lib_i) / (‖q‖·‖lib_i‖)` (norms precomputed).
+- **Rank:** report the top-K highest-scoring library spectra.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+See [THEORY.md](THEORY.md) for spectral matching, normalization, and the sparse/indexed approaches.
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145) + **CUDA 13.3** ([docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
 
-1. Open `build/mass-spectrometry-proteomics-search.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/mass-spectrometry-proteomics-search.exe`.
+1. Open `build/mass-spectrometry-proteomics-search.sln`.
+2. **`Release|x64`** → **Build** → `build/x64/Release/mass-spectrometry-proteomics-search.exe`.
 
-Command-line alternative (Developer PowerShell):
-
-```powershell
-msbuild build\mass-spectrometry-proteomics-search.sln /p:Configuration=Release /p:Platform=x64
-```
+CLI: `msbuild build\mass-spectrometry-proteomics-search.sln /p:Configuration=Release /p:Platform=x64`
 
 ## Run the demo
 
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.ps1
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+Scores the query against the library on CPU + GPU and verifies they match.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: PRIDE / ProteomeXchange — proteomics data repository (https://www.ebi.ac.uk/pride/); PeptideAtlas — validated human peptide spectral library (https://www.peptideatlas.org/); CPTAC cancer proteomics datasets (https://proteomics.cancer.gov/); MassIVE — mass spectrometry data repository (https://massive.ucsd.edu/).
+- **Sample (committed):** `data/sample/spectra_sample.txt` — 1 query + 1024 **synthetic** spectra.
+- **Real data:** mzML from ProteomeXchange/PRIDE searched against a peptide DB — see
+  `scripts/download_data.ps1` and [data/README.md](data/README.md).
+- Bigger synthetic set: `python scripts/make_synthetic.py --N 8192`.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+`demo/expected_output.txt` holds the deterministic top-5 matches and the rank of
+the known target. The GPU (`src/kernels.cu`) and CPU (`src/reference_cpu.cpp`)
+compute the dot product in double, so their cosine scores agree to `~0`. The query
+(derived from library spectrum 7) is recovered at **rank 1** (cosine ≈ 0.993).
 
 ## Code tour
 
-Read in this order:
-
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — load, compute norms, CPU + GPU score, verify, top-K, print.
+2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the constant-memory-query idea.
+3. [`src/kernels.cu`](src/kernels.cu) — the cosine kernel (one thread per library spectrum).
+4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — norms + the serial cosine reference.
 
 ## Prior art & further reading
 
-GiCOPS (https://github.com/pcdslab/gicops) — GPU HPC framework for database peptide search; MSFragger (https://github.com/Nesvilab/MSFragger) — ultra-fast hash-index search (CPU, GPU inner loop target); Tempest — CUDA spectral scoring (verify URL; legacy); OpenMS (https://github.com/OpenMS/OpenMS) — proteomics framework with GPU integration potential.
+- **GiCOPS** (<https://github.com/pcdslab/gicops>) — GPU database peptide search (fragment indexing).
+- **MSFragger** (<https://github.com/Nesvilab/MSFragger>) — ultra-fast hash-indexed search.
+- **OpenMS** (<https://github.com/OpenMS/OpenMS>) — proteomics toolkit (mzML, scoring).
+- SpectraST / spectral-library search; the **spectral contrast angle** score.
 
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
+Study these for the production approach; reimplement didactically (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-GPU hash tables for fragment ion indexing; batched dot-product CUDA kernels (one thread per theoretical peptide per observed spectrum); shared-memory spectral vector loading; cuFFT-based cross-correlation; multi-GPU database sharding. --
+**Batched dot-product scoring**: one thread per library spectrum, query in
+**constant memory** (warp broadcast), double-accumulated dot product, precomputed
+norms · top-K on the host. The same shape as `1.12` (Tanimoto), with real-valued
+intensities and a cosine score.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Sparse spectra.** Store each spectrum as (bin, intensity) peak lists and score
+   by merging sorted peaks — the representation real engines use (most bins are 0).
+2. **Fragment-ion indexing.** Invert the library (bin → list of spectra with a peak
+   there) so a query only touches candidate spectra (the MSFragger/GiCOPS idea).
+3. **On-GPU top-K.** Replace the host `partial_sort` with `cub::DeviceRadixSort`.
+4. **Better scores.** Implement the dot-product **spectral contrast angle** or a
+   cross-correlation (XCorr) score and compare rankings.
+5. **Many queries.** Score a batch of observed spectra at once (a 2-D launch) — the
+   real throughput case.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Dense binned cosine** on synthetic random spectra; real search uses sparse
+  peaks, fragment-ion indexing, precursor-mass filtering, decoys/FDR, and PTMs.
+- The query is broadcast from constant memory (fits ≤ 1024 bins); top-K is on the host.
+- Data is synthetic and has no biological meaning.

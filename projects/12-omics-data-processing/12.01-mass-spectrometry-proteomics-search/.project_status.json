@@ -2,8 +2,8 @@
   "id": "12.1",
   "id_padded": "12.01",
   "project": "Mass-Spectrometry Proteomics Search",
-  "status": "todo",
-  "owner": "",
-  "branch": "",
+  "status": "done",
+  "owner": "lead",
+  "branch": "main",
   "skeleton": true
 }

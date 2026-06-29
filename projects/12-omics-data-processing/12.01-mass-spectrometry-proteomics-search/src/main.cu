@@ -1,122 +1,103 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: spectral library search, verify, report
 // ---------------------------------------------------------------------------
-// Project 12.1 -- Mass-Spectrometry Proteomics Search   (template skeleton)
+// Project 12.01 : Mass-Spectrometry Proteomics Search
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape:
+//   1. Load the query + library spectra (data/sample).
+//   2. CPU reference cosine scores (reference_cpu.cpp).
+//   3. GPU cosine scores (kernels.cu): query in constant memory, 1 thread/library.
+//   4. VERIFY: GPU scores match CPU within tolerance.
+//   5. REPORT: deterministic top-K matches + the rank of the true target.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
-//
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then kernels.cuh -> kernels.cu, then reference_cpu.cpp.
 // ===========================================================================
+#include <algorithm>
 #include <cstdio>
+#include <numeric>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // cosine_gpu, SpectralData, MAX_BINS
+#include "reference_cpu.h"    // load_spectra, compute_norms, cosine_cpu
+#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "12.1";
 static const char* PROJECT_NAME = "Mass-Spectrometry Proteomics Search";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+static constexpr double TOLERANCE = 1.0e-5;   // float cosine; double dot product
+static constexpr int    TOP_K     = 5;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// Indices of the TOP_K highest scores (ties -> lower index), via partial_sort.
+static std::vector<int> top_k(const std::vector<float>& score, int k) {
+    std::vector<int> idx(score.size());
+    std::iota(idx.begin(), idx.end(), 0);
+    const int kk = std::min<int>(k, static_cast<int>(idx.size()));
+    std::partial_sort(idx.begin(), idx.begin() + kk, idx.end(),
+        [&](int a, int b) { return score[a] != score[b] ? score[a] > score[b] : a < b; });
+    idx.resize(kk);
+    return idx;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/spectra_sample.txt";
+    SpectralData s;
+    try {
+        s = load_spectra(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    double qnorm = 0.0;
+    std::vector<double> libnorm;
+    compute_norms(s, qnorm, libnorm);
+
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<float> score_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    cosine_cpu(s, qnorm, libnorm, score_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU search (kernel timed) -------------------------------------
+    std::vector<float> score_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    cosine_gpu(s, qnorm, libnorm, score_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify ---------------------------------------------------------
+    const double err = util::max_abs_err(score_cpu, score_gpu);
+    const bool pass = err <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    const std::vector<int> best = top_k(score_gpu, TOP_K);
+    // Rank of the known target spectrum (1-based) among all scores.
+    int target_rank = -1;
+    if (s.target >= 0 && s.target < s.N) {
+        const float ts = score_gpu[s.target];
+        int better = 0;
+        for (int i = 0; i < s.N; ++i)
+            if (score_gpu[i] > ts || (score_gpu[i] == ts && i < s.target)) ++better;
+        target_rank = better + 1;
+    }
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("spectral search: 1 query vs %d library spectra (%d bins)\n", s.N, s.bins);
+    std::printf("top-%d matches:\n", static_cast<int>(best.size()));
+    for (std::size_t r = 0; r < best.size(); ++r)
+        std::printf("  #%zu  lib[%d]  cosine = %.6f\n", r + 1, best[r], score_gpu[best[r]]);
+    if (s.target >= 0)
+        std::printf("true target lib[%d] cosine = %.6f, rank = %d of %d\n",
+                    s.target, score_gpu[s.target], target_rank, s.N);
+    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d library spectra, %d bins)\n", path.c_str(), s.N, s.bins);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernel: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- speed-up grows with library size; real searches scan "
+                         "10^6 peptides x 10^5 spectra.\n");
+    std::fprintf(stderr, "[verify] max_abs_err = %.3e  (tolerance %.1e)\n", err, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

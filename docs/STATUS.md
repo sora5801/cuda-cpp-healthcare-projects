@@ -2,11 +2,11 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 10/301 projects done (3.3%) | todo 291 | in-progress 0 | missing 0
+**Progress:** 11/301 projects done (3.7%) | todo 290 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
-| 🟢 Beginner | 67 | 4 | 0 | 63 |
+| 🟢 Beginner | 67 | 5 | 0 | 62 |
 | 🟡 Intermediate | 206 | 6 | 0 | 200 |
 | 🔴 Advanced | 28 | 0 | 0 | 28 |
 
@@ -314,11 +314,11 @@
 | 11.11 | CHO Cell & Mammalian Bioprocess Digital Twin | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 11.12 | Downstream Processing & Chromatography Simulation | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 
-## 12. Analytical & Omics Data Processing  (0/17 done)
+## 12. Analytical & Omics Data Processing  (1/17 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
-| 12.01 | Mass-Spectrometry Proteomics Search | 🟢 Beginner | Established | [ ] todo | - | - |
+| 12.01 | Mass-Spectrometry Proteomics Search | 🟢 Beginner | Established | [x] done | lead | main |
 | 12.02 | Metabolomics Spectral Processing | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 12.03 | Spatial Transcriptomics Analysis | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 12.04 | Cryo-EM / ET Image Preprocessing | 🟢 Beginner | Established | [ ] todo | - | - |

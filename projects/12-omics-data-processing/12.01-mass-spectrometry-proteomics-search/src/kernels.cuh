@@ -1,52 +1,37 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU spectral-search interface
 // ---------------------------------------------------------------------------
-// Project 12.1 -- Mass-Spectrometry Proteomics Search   (template skeleton)
+// Project 12.01 : Mass-Spectrometry Proteomics Search
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (eleventh flagship pattern: BATCHED DOT-PRODUCT SCORING)
+//   One observed spectrum (the query) is scored against N library spectra. Each
+//   score is an independent normalized dot product, so we give each library
+//   spectrum its own GPU thread. The query is read by every thread but never
+//   changes -> CONSTANT memory (its cache broadcasts a value warp-wide). This is
+//   the same shape as project 1.12's Tanimoto search, here with real-valued
+//   intensities and a cosine score.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   kernels.cu defines the kernel. main.cu calls cosine_gpu().
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // SpectralData (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Maximum query length that fits in the constant-memory buffer (see kernels.cu).
+static constexpr int MAX_BINS = 1024;
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Device kernel: scores[i] = cosine(query, lib_i). The query is read from the
+// __constant__ buffer defined in kernels.cu (not a parameter).
+//   lib     : [N*bins] library spectra, row-major (device)
+//   libnorm : [N] precomputed L2 norms (device)
+//   qnorm   : the query's L2 norm
+__global__ void cosine_kernel(const float* __restrict__ lib, const double* __restrict__ libnorm,
+                              int N, int bins, double qnorm, float* __restrict__ scores);
+
+// Host wrapper: upload query (to constant memory) + library + norms, launch,
+// copy the per-library scores back, report the kernel time.
+void cosine_gpu(const SpectralData& s, double qnorm, const std::vector<double>& libnorm,
+                std::vector<float>& scores, float* kernel_ms);

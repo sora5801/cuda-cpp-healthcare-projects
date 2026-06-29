@@ -1,94 +1,71 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Cosine spectral-search kernel + host wrapper
 // ---------------------------------------------------------------------------
-// Project 12.1 -- Mass-Spectrometry Proteomics Search   (template skeleton)
+// Project 12.01 : Mass-Spectrometry Proteomics Search
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of cosine_cpu(): one thread per library spectrum, the query in
+// constant memory. main.cu runs both and compares scores. See ../THEORY.md.
 // ===========================================================================
 #include "kernels.cuh"
-#include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "util/cuda_check.cuh"
+#include "util/timer.cuh"
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
+#include <cstdio>
+#include <cstdlib>
+
+// The query spectrum in CONSTANT memory: read by every thread, never written
+// during the launch -> the constant cache broadcasts each bin warp-wide. Sized
+// at MAX_BINS (1024 floats = 4 KB, well within the 64 KB constant bank).
+__constant__ float c_query[MAX_BINS];
+
 static constexpr int THREADS_PER_BLOCK = 256;
 
-// ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
-// ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+// One thread computes the cosine score for one library spectrum.
+//   cosine = dot(query, lib_i) / (||query|| * ||lib_i||).
+// The dot product accumulates in double (matching the CPU reference); the norms
+// are precomputed once on the host.
+__global__ void cosine_kernel(const float* __restrict__ lib, const double* __restrict__ libnorm,
+                              int N, int bins, double qnorm, float* __restrict__ scores) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= N) return;
+    const float* row = lib + static_cast<std::size_t>(i) * bins;
+    double dot = 0.0;
+    for (int b = 0; b < bins; ++b)
+        dot += static_cast<double>(c_query[b]) * static_cast<double>(row[b]);
+    const double denom = qnorm * libnorm[i];
+    scores[i] = (denom > 0.0) ? static_cast<float>(dot / denom) : 0.0f;
 }
 
-// ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
-// ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void cosine_gpu(const SpectralData& s, double qnorm, const std::vector<double>& libnorm,
+                std::vector<float>& scores, float* kernel_ms) {
+    const int N = s.N, bins = s.bins;
+    scores.assign(N, 0.0f);
+    if (bins > MAX_BINS) {
+        std::fprintf(stderr, "[cosine_gpu] bins=%d exceeds MAX_BINS=%d\n", bins, MAX_BINS);
+        std::exit(EXIT_FAILURE);
+    }
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // Upload the query to constant memory.
+    CUDA_CHECK(cudaMemcpyToSymbol(c_query, s.query.data(), bins * sizeof(float)));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    float* d_lib = nullptr; double* d_libnorm = nullptr; float* d_scores = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_lib, s.lib.size() * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_libnorm, static_cast<std::size_t>(N) * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_scores, static_cast<std::size_t>(N) * sizeof(float)));
+    CUDA_CHECK(cudaMemcpy(d_lib, s.lib.data(), s.lib.size() * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_libnorm, libnorm.data(), static_cast<std::size_t>(N) * sizeof(double),
+                          cudaMemcpyHostToDevice));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    const int grid = (N + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    cosine_kernel<<<grid, THREADS_PER_BLOCK>>>(d_lib, d_libnorm, N, bins, qnorm, d_scores);
+    *kernel_ms = timer.stop_ms();
+    CUDA_CHECK_LAST("cosine_kernel");
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    CUDA_CHECK(cudaMemcpy(scores.data(), d_scores, static_cast<std::size_t>(N) * sizeof(float),
+                          cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_lib));
+    CUDA_CHECK(cudaFree(d_libnorm));
+    CUDA_CHECK(cudaFree(d_scores));
 }

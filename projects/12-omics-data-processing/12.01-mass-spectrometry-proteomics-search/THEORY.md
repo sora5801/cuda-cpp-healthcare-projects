@@ -1,86 +1,102 @@
-# THEORY — 12.1 Mass-Spectrometry Proteomics Search
+# THEORY — 12.01 Mass-Spectrometry Proteomics Search
 
-> The deep didactic explanation (the "why"). Written for a sharp student who
-> knows C++ but is new to CUDA and new to this domain. Diagrams in Mermaid/ASCII
-> are welcome. See [README.md](README.md) for the quick tour and build steps.
->
-> _Educational only — not for clinical use._
-
-<!-- =======================================================================
-     The block below is the verbatim catalog deep-dive for this project,
-     stamped in by scaffold.py as raw material. Use it to write the sections
-     that follow, then DELETE it (or fold it into "The science"). Every
-     TODO(theory) below must be completed before the project is "done".
-     ======================================================================= -->
-
-<details>
-<summary>Catalog deep-dive (raw source material — fold into the sections below, then remove)</summary>
-
-### 12.1 Mass-Spectrometry Proteomics Search 🟢 · Established
-- **Deep dive:** Database peptide search correlates each observed MS/MS spectrum against thousands of theoretical peptide spectra from a protein sequence database, the most time-consuming step in proteomics. For a dataset of 100 k spectra against a human tryptic database of 1 M peptides (× 100 modifications), the search space is 10¹¹ comparisons; GPU parallelises scoring of thousands of theoretical spectra simultaneously per observed spectrum. GiCOPS (GPU-accelerated HiCOPS) achieves 1.2–5× speedup over CPU HiCOPS and >10× over older GPU tools like Tempest, using fragment-ion indexing on GPU. MSFragger uses hash-based fragment indexing on CPU but its inner scoring loop is a GPU acceleration target.
-- **Key algorithms:** Fragment-ion indexing (hash/sorted lists of b/y-ions); Xcorr / HyperScore spectral dot product; fragment index mass offset search (open search); XCorr normalised cross-correlation; peptide-spectrum match (PSM) q-value estimation (Percolator); precursor mass matching and charge state deconvolution.
-- **Datasets:** PRIDE / ProteomeXchange — proteomics data repository (https://www.ebi.ac.uk/pride/); PeptideAtlas — validated human peptide spectral library (https://www.peptideatlas.org/); CPTAC cancer proteomics datasets (https://proteomics.cancer.gov/); MassIVE — mass spectrometry data repository (https://massive.ucsd.edu/).
-- **Starter repos/tools:** GiCOPS (https://github.com/pcdslab/gicops) — GPU HPC framework for database peptide search; MSFragger (https://github.com/Nesvilab/MSFragger) — ultra-fast hash-index search (CPU, GPU inner loop target); Tempest — CUDA spectral scoring (verify URL; legacy); OpenMS (https://github.com/OpenMS/OpenMS) — proteomics framework with GPU integration potential.
-- **CUDA libraries & GPU pattern:** GPU hash tables for fragment ion indexing; batched dot-product CUDA kernels (one thread per theoretical peptide per observed spectrum); shared-memory spectral vector loading; cuFFT-based cross-correlation; multi-GPU database sharding.
-
-</details>
-
----
+> For a reader who knows C++ but is new to CUDA and to proteomics. See
+> [README.md](README.md) for the tour and build. _Educational only._
 
 ## 1. The science
 
-TODO(theory): The biology / medicine / physics being modeled — enough for a
-reader to understand the *problem* before any math. What real-world question
-does computing this answer?
+In shotgun proteomics, proteins are digested into peptides, separated, and
+fragmented in a mass spectrometer, producing **MS/MS spectra**: each is a set of
+(mass-to-charge, intensity) peaks from the peptide's fragment ions. To identify
+the peptide behind an observed spectrum, we **search** it against a database of
+**theoretical** spectra predicted from a protein sequence database. The peptide
+whose theoretical spectrum best matches the observation is the identification.
+This database search is the central, and most expensive, computation in
+proteomics.
 
 ## 2. The math
 
-TODO(theory): The governing equations / formal problem statement, with **every
-symbol defined** (units, ranges). State inputs, outputs, and the objective.
+Bin each spectrum to a fixed-length intensity vector (peaks fall into m/z bins).
+For an observed spectrum `q` and a theoretical spectrum `r`, the **cosine
+similarity** (a.k.a. normalized dot product, or the spectral contrast angle's
+cosine) is
+
+```
+cos(q, r) = (q · r) / (‖q‖ ‖r‖) = ( Σ_b q_b r_b ) / ( sqrt(Σ q_b²) · sqrt(Σ r_b²) )
+```
+
+It lies in `[0,1]` for non-negative intensities: `1` = identical peak pattern, `0`
+= no shared peaks. Normalizing by the norms makes the score independent of overall
+intensity scale, so a faint and a strong copy of the same peptide score alike.
 
 ## 3. The algorithm
 
-TODO(theory): Step-by-step. Include **complexity analysis**: serial cost vs. the
-parallel work/depth. Where is the arithmetic intensity? What is the data-access
-pattern?
+```
+precompute ‖q‖ and ‖r_i‖ for every library spectrum     # once
+for each library spectrum i:                            # PARALLEL
+    score_i = (q · r_i) / (‖q‖ ‖r_i‖)
+report the top-K highest scores
+```
+
+**Complexity.** Scoring is `Θ(N · bins)` for `N` library spectra. Dense binning
+makes every comparison touch every bin; sparse/indexed methods (§7) cut this
+dramatically. The top-K selection is `Θ(N log K)`.
 
 ## 4. The GPU mapping
 
-TODO(theory): How the algorithm becomes **threads / blocks / grids**.
-- Thread-to-data mapping (which thread owns which element).
-- Launch configuration and the reasoning (block size, grid size).
-- Memory hierarchy used and **why**: global / shared / registers / constant /
-  texture. Where is the bandwidth bottleneck? What is the occupancy story?
-- Which CUDA library (cuBLAS / cuFFT / cuRAND / cuSOLVER / Thrust) does what,
-  and what it would take to write that step by hand (no black boxes — §6.1.6).
+**Decomposition.** One thread per library spectrum (a 1-D grid over `N`). Thread
+`i` reads its spectrum's row from global memory and the query from **constant
+memory**, accumulates the dot product, and divides by the precomputed norms.
 
-```
-TODO(theory): an ASCII or Mermaid diagram of the grid/block decomposition.
-```
+**Constant memory for the query.** Every thread reads all `bins` query values and
+none writes them — identical to project 1.12's Tanimoto search. Constant memory's
+broadcast cache serves one address to a whole warp in a single transaction, so the
+query is not re-fetched from global memory by every thread. (Here `bins ≤ 1024`
+fits the 4 KB we reserve, well within the 64 KB constant bank.)
+
+**Numerics.** The dot product accumulates in **double** even though the data is
+`float`, which keeps the score accurate and — crucially — lets the CPU and GPU
+agree: both do the same double accumulation in the same bin order. With the norms
+precomputed identically, the cosine scores match to `~0` (no reduction across
+threads, so nothing reorders). The score is deterministic and reproducible.
+
+**Why this is fast.** The kernel is a streaming dot product: it reads each library
+spectrum once (coalesced across threads for a fixed bin) and does `bins`
+multiply-adds — memory-bandwidth bound, the GPU's strength. The advantage grows
+with `N` (and with batching many query spectra).
 
 ## 5. Numerical considerations
 
-TODO(theory): Precision (FP32 vs FP64) and why. Stability. Race conditions and
-whether atomics are used. **Determinism**: does the parallel reduction reorder
-floating-point sums? If so, say so and quantify the caveat.
+- **Precision.** `float` storage, `double` accumulation — standard for dot
+  products of many terms.
+- **Determinism.** Each thread writes its own score; no atomics or cross-thread
+  reduction, so the result is reproducible and CPU-matching.
+- **Zero norms.** An empty spectrum has norm 0; we guard the division to return 0
+  rather than NaN.
 
 ## 6. How we verify correctness
 
-TODO(theory): The CPU reference (`src/reference_cpu.cpp`), the **tolerance** and
-why that value, and the edge cases checked. Explain why agreement between an
-independent serial implementation and the GPU implementation is convincing
-evidence of correctness.
+`main.cu` scores the query on CPU (`cosine_cpu`) and GPU (`cosine_gpu`) and
+compares all `N` scores (`max_abs_err ≈ 0`). Beyond CPU/GPU parity, the search is
+*correct*: the query was synthesized from library spectrum 7 (with intensity
+jitter and a little noise), and it is recovered at **rank 1** with cosine ≈ 0.993,
+while unrelated spectra score ≈ 0.3 — the method actually finds the right peptide,
+not just two codes agreeing.
 
 ## 7. Where this sits in the real world
 
-TODO(theory): How production tools (named in the catalog "Prior art") do this
-differently — what they add (scale, accuracy, features) that this teaching
-version omits. If this is a 🔴 frontier project shipped as a reduced-scope
-teaching version, describe the full approach here.
-
----
+Production engines (MSFragger, GiCOPS, Comet, SpectraST) add what this teaching
+version omits: **sparse** spectra (peaks, not dense bins — most bins are empty),
+**fragment-ion indexing** (invert the library so a query only scores *candidate*
+spectra sharing peaks — the key to scaling to 10⁶ peptides), **precursor-mass
+filtering**, **decoy databases + FDR** control, **post-translational
+modifications**, and richer scores (XCorr, hyperscore). The per-comparison dot
+product you parallelize here is their innermost loop; GiCOPS' contribution is
+exactly moving that loop, plus the indexing, onto the GPU.
 
 ## References
 
-TODO(theory): Papers, docs, and the starter repos from the catalog, with one
-line each on what to learn from them.
+- Eng, McCormack & Yates (1994) — SEQUEST / the cross-correlation score.
+- Kong et al. (2017), *MSFragger* — fragment-ion indexing for fast search.
+- Haseeb & Saeed, *GiCOPS* — GPU-accelerated database peptide search.
+- NVIDIA CUDA C++ Programming Guide — constant memory and coalescing.
