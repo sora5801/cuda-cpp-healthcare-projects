@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- =========================================================================
+     build/deformable-dose-accumulation-adaptive-radiotherapy.vcxproj  :  Visual Studio 2026 + CUDA 13.3 project
+     Project 5.5 : Deformable Dose Accumulation & Adaptive Radiotherapy
+
+     HOW THIS FILE WORKS (read top to bottom):
+       * It declares two configurations (Debug|x64, Release|x64).
+       * It pulls in the C++ build system (Microsoft.Cpp.*), then layers the
+         CUDA build customization on top (the two "CUDA 13.3" imports) so that
+         .cu files are compiled by nvcc and linked with the CUDA runtime.
+       * It uses $(VCTargetsPath) and $(CUDA_PATH) indirectly (NO absolute
+         paths) so it builds on any machine with VS 2026 + CUDA 13.3 (see
+         docs/BUILD_GUIDE.md). To retarget to another CUDA version, change the
+         two "CUDA 13.3" import filenames and rebuild.
+     ========================================================================= -->
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!-- The (configuration, platform) pairs this project understands. -->
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <!-- Identity. ProjectGuid must be unique per project (scaffold.py stamps a
+       deterministic GUID). WindowsTargetPlatformVersion=10.0 means "use the
+       latest Windows SDK installed", which keeps the file portable. -->
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <ProjectGuid>{D4298278-1C78-57B5-85D5-67250C73DFAF}</ProjectGuid>
+    <RootNamespace>deformable-dose-accumulation-adaptive-radiotherapy</RootNamespace>
+    <ProjectName>deformable-dose-accumulation-adaptive-radiotherapy</ProjectName>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <!-- Per-configuration toolset selection. v145 is the VS 2026 toolset; the
+       contract ratified CUDA 13.3 + VS 2026 as this repo's build standard. -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+  <!-- CUDA INTEGRATION (1 of 2): the .props teaches MSBuild about the
+       CudaCompile item type and adds CUDA's include/lib search paths. -->
+  <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\CUDA 13.3.props" />
+  </ImportGroup>
+
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+
+  <PropertyGroup Label="UserMacros" />
+
+  <!-- Where outputs go. The .exe lands in build/x64/<Config>/; demo/run_demo
+       scripts look exactly there. -->
+  <PropertyGroup>
+    <OutDir>$(SolutionDir)x64\$(Configuration)\</OutDir>
+    <IntDir>x64\$(Configuration)\</IntDir>
+  </PropertyGroup>
+
+  <!-- ================= DEBUG settings ================= -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;WIN64;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <!-- Lets reference_cpu.cpp find "reference_cpu.h" and "util/..." headers. -->
+      <AdditionalIncludeDirectories>$(ProjectDir)..\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <SubSystem>Console</SubSystem>
+      <!-- cudart_static.lib = the CUDA runtime; its folder is on the search
+           path thanks to the CUDA .props import above. -->
+      <AdditionalDependencies>cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <CudaCompile>
+      <TargetMachinePlatform>64</TargetMachinePlatform>
+      <!-- Fat binary: real SASS for Turing(75)/Ampere(86)/Ada(89) + PTX(89) so
+           a JIT can target newer cards. Narrow this for faster local builds
+           (BUILD_GUIDE explains how to detect your card's capability). -->
+      <CodeGeneration>compute_75,sm_75;compute_86,sm_86;compute_89,sm_89;compute_89,compute_89</CodeGeneration>
+      <GenerateRelocatableDeviceCode>false</GenerateRelocatableDeviceCode>
+      <!-- -G: full device-side debug so you can step kernels in Nsight. -->
+      <GPUDebugInfo>true</GPUDebugInfo>
+      <HostDebugInfo>true</HostDebugInfo>
+      <!-- fast math is OFF by default; enable per-project only where the
+           numerics tolerate it, and document it (CLAUDE.md section 5). -->
+      <FastMath>false</FastMath>
+    </CudaCompile>
+  </ItemDefinitionGroup>
+
+  <!-- ================= RELEASE settings ================= -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;WIN64;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <SubSystem>Console</SubSystem>
+      <AdditionalDependencies>cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <CudaCompile>
+      <TargetMachinePlatform>64</TargetMachinePlatform>
+      <CodeGeneration>compute_75,sm_75;compute_86,sm_86;compute_89,sm_89;compute_89,compute_89</CodeGeneration>
+      <GenerateRelocatableDeviceCode>false</GenerateRelocatableDeviceCode>
+      <!-- -lineinfo: source mapping for Nsight profiling without the -G slowdown. -->
+      <GenerateLineInfo>true</GenerateLineInfo>
+      <FastMath>false</FastMath>
+    </CudaCompile>
+  </ItemDefinitionGroup>
+
+  <!-- The actual files. CudaCompile => nvcc; ClCompile => cl.exe (host C++);
+       ClInclude => headers (not compiled, but shown in the Solution Explorer). -->
+  <ItemGroup>
+    <CudaCompile Include="..\src\main.cu" />
+    <CudaCompile Include="..\src\kernels.cu" />
+    <ClCompile Include="..\src\reference_cpu.cpp" />
+    <ClInclude Include="..\src\kernels.cuh" />
+    <ClInclude Include="..\src\reference_cpu.h" />
+    <ClInclude Include="..\src\util\cuda_check.cuh" />
+    <ClInclude Include="..\src\util\timer.cuh" />
+    <ClInclude Include="..\src\util\io.hpp" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+
+  <!-- CUDA INTEGRATION (2 of 2): the .targets wires nvcc into the build graph. -->
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\CUDA 13.3.targets" />
+  </ImportGroup>
+</Project>

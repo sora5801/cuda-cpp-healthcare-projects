@@ -1,0 +1,46 @@
+# =====================================================================
+# Root .gitignore  (per-project .gitignore files add data/ allow-listing)
+# =====================================================================
+
+# --- Build artifacts: every generated subdir under any build/, plus x64/ ---
+**/build/*/
+**/x64/
+.vs/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.idb
+*.tlog
+*.log
+*.exe
+
+# --- Python ---
+__pycache__/
+*.pyc
+
+# --- Secrets / credentials (never commit) ---
+.env
+*.env
+*.key
+*.pem
+secrets.*
+*token*
+
+# --- OS / editor noise ---
+Thumbs.db
+.DS_Store
+
+# --- Pre-existing catalog-generation pipeline (kept LOCAL, not published) ---
+# The source-of-truth inputs (CUDA_CPP_Healthcare_Projects.xlsx +
+# CUDA_CPP_Healthcare_Projects_DeepDive.md) and the generated catalog.json ARE
+# committed. The upstream scratch artifacts that produced them are not
+# (CLAUDE.md §2-§3): they would just confuse a learner cloning the repo.
+projects.json
+raw_part_*.md
+assemble.py
+build_xlsx.py
+CUDA_CPP_Healthcare_Projects.md
+START_PROMPT.md
+.~lock.*#

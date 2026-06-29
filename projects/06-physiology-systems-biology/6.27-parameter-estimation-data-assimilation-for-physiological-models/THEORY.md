@@ -1,0 +1,86 @@
+# THEORY — 6.27 Parameter Estimation & Data Assimilation for Physiological Models
+
+> The deep didactic explanation (the "why"). Written for a sharp student who
+> knows C++ but is new to CUDA and new to this domain. Diagrams in Mermaid/ASCII
+> are welcome. See [README.md](README.md) for the quick tour and build steps.
+>
+> _Educational only — not for clinical use._
+
+<!-- =======================================================================
+     The block below is the verbatim catalog deep-dive for this project,
+     stamped in by scaffold.py as raw material. Use it to write the sections
+     that follow, then DELETE it (or fold it into "The science"). Every
+     TODO(theory) below must be completed before the project is "done".
+     ======================================================================= -->
+
+<details>
+<summary>Catalog deep-dive (raw source material — fold into the sections below, then remove)</summary>
+
+### 6.27 Parameter Estimation & Data Assimilation for Physiological Models 🟡 · Active R&D
+- **Deep dive:** Fitting ODE/PDE physiological models to patient-specific clinical data (ECG, pressure waveforms, biomarker time series) requires repeated forward simulation within an optimization or Bayesian inference loop. Ensemble Kalman filters (EnKF) update an ensemble of 50–500 model states in parallel with incoming observations; unscented Kalman filters (UKF) propagate 2N+1 sigma points. GPU acceleration of the forward model ensemble is the bottleneck.
+- **Key algorithms:** Ensemble Kalman filter (EnKF), unscented Kalman filter (UKF), particle filter (sequential Monte Carlo), adjoint-based gradient optimization (L-BFGS), variational data assimilation (4D-Var), Gaussian process emulator surrogate, Bayesian optimization, trust-region methods.
+- **Datasets:** PhysioNet MIMIC clinical waveforms (https://physionet.org); UK Biobank cardiac functional parameters (https://www.ukbiobank.ac.uk); Zenodo cardiac mechanics emulation dataset (https://zenodo.org/records/7075055); openCARP community experiments (https://opencarp.org/community/community-experiments).
+- **Starter repos/tools:** SUNDIALS/CVODES (https://github.com/LLNL/sundials) — sensitivity-aware ODE integrator for adjoint gradient; simcardems (https://github.com/ComputationalPhysiology/simcardems) — cardiac twin with parameter fitting; SALib (https://github.com/SALib/SALib) — sensitivity analysis for parameter prioritization; PyMC (https://github.com/pymc-devs/pymc) — probabilistic programming with GPU via JAX/Aesara backend.
+- **CUDA libraries & GPU pattern:** Batch forward ODE on GPU (ensemble members); cuBLAS for EnKF covariance update (N×N matrix operations); cuSOLVER for Kalman gain; CUDA Thrust for particle resampling; pattern: ensemble-parallel forward solves + host-side EnKF analysis step.
+
+</details>
+
+---
+
+## 1. The science
+
+TODO(theory): The biology / medicine / physics being modeled — enough for a
+reader to understand the *problem* before any math. What real-world question
+does computing this answer?
+
+## 2. The math
+
+TODO(theory): The governing equations / formal problem statement, with **every
+symbol defined** (units, ranges). State inputs, outputs, and the objective.
+
+## 3. The algorithm
+
+TODO(theory): Step-by-step. Include **complexity analysis**: serial cost vs. the
+parallel work/depth. Where is the arithmetic intensity? What is the data-access
+pattern?
+
+## 4. The GPU mapping
+
+TODO(theory): How the algorithm becomes **threads / blocks / grids**.
+- Thread-to-data mapping (which thread owns which element).
+- Launch configuration and the reasoning (block size, grid size).
+- Memory hierarchy used and **why**: global / shared / registers / constant /
+  texture. Where is the bandwidth bottleneck? What is the occupancy story?
+- Which CUDA library (cuBLAS / cuFFT / cuRAND / cuSOLVER / Thrust) does what,
+  and what it would take to write that step by hand (no black boxes — §6.1.6).
+
+```
+TODO(theory): an ASCII or Mermaid diagram of the grid/block decomposition.
+```
+
+## 5. Numerical considerations
+
+TODO(theory): Precision (FP32 vs FP64) and why. Stability. Race conditions and
+whether atomics are used. **Determinism**: does the parallel reduction reorder
+floating-point sums? If so, say so and quantify the caveat.
+
+## 6. How we verify correctness
+
+TODO(theory): The CPU reference (`src/reference_cpu.cpp`), the **tolerance** and
+why that value, and the edge cases checked. Explain why agreement between an
+independent serial implementation and the GPU implementation is convincing
+evidence of correctness.
+
+## 7. Where this sits in the real world
+
+TODO(theory): How production tools (named in the catalog "Prior art") do this
+differently — what they add (scale, accuracy, features) that this teaching
+version omits. If this is a 🔴 frontier project shipped as a reduced-scope
+teaching version, describe the full approach here.
+
+---
+
+## References
+
+TODO(theory): Papers, docs, and the starter repos from the catalog, with one
+line each on what to learn from them.

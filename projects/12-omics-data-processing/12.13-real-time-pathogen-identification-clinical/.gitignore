@@ -1,0 +1,23 @@
+# Per-project .gitignore -- build artifacts and downloaded data never get committed.
+
+# --- Everything generated under build/ (VS x64/, CMake, nvcc keep-dirs, ...) ---
+# build/ holds only the .sln/.vcxproj/.filters as flat files; every SUBDIR is
+# generated, so ignore them all.
+/build/*/
+x64/
+.vs/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.idb
+*.tlog
+*.log
+
+# --- Downloaded / large data: keep ONLY the tiny committed sample + README ---
+/data/*
+!/data/README.md
+!/data/sample/
+
+# Note: .project_status.json IS tracked (it is the status marker for status.py).
