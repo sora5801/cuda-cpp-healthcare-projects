@@ -1,5 +1,6 @@
 # Changelog — newest first; each entry links to its push-note in `push-notes/`.
 
+- 2026-06-29 #03 -- [flagship 11.09 gpu-kmeans](push-notes/2026-06-29-03-flagship-11-09-gpu-kmeans.md)
 - 2026-06-29 #02 -- [flagship 10.02 pbd-soft-tissue](push-notes/2026-06-29-02-flagship-10-02-pbd-soft-tissue.md)
 - 2026-06-29 #01 -- [flagship 9.02 seir-ensemble](push-notes/2026-06-29-01-flagship-9-02-seir-ensemble.md)
 - 2026-06-29 #00 -- [flagship 8.03 cufft-eeg](push-notes/2026-06-29-00-flagship-8-03-cufft-eeg.md)

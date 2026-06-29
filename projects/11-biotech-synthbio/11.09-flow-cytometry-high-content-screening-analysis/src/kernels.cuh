@@ -1,52 +1,41 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU k-means interface
 // ---------------------------------------------------------------------------
-// Project 11.9 -- Flow Cytometry & High-Content Screening Analysis   (template skeleton)
+// Project 11.09 : Flow Cytometry & High-Content Screening Analysis
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (tenth flagship pattern: PARALLEL ASSIGN + ATOMIC REDUCTION)
+//   k-means alternates two GPU steps:
+//     * ASSIGN: one thread per event finds its nearest centroid -> independent.
+//     * ACCUMULATE: every event atomically adds its coordinates to its cluster's
+//       running sum (and bumps the count) -- a SCATTER-REDUCTION via atomicAdd.
+//   The centroid divide (sum/count) is a tiny host step reused from the CPU
+//   reference, so CPU and GPU produce identical centroids. To make the atomic
+//   reduction DETERMINISTIC and CPU-matching, coordinates are accumulated in
+//   FIXED-POINT integers (kmeans.h) -- atomic integer adds commute.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   kernels.cu defines the kernels. main.cu calls kmeans_gpu().
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, kmeans.h, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
 #include <vector>
+#include "reference_cpu.h"   // Dataset + shared helpers (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ASSIGN: labels[i] = index of the nearest centroid to event i.
+__global__ void assign_kernel(const float* __restrict__ x, int N, int D,
+                              const float* __restrict__ centroids, int K,
+                              int* __restrict__ labels);
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// ACCUMULATE: atomically add each event's fixed-point coordinates to its
+// cluster's sum, and increment the cluster count.
+__global__ void accumulate_kernel(const float* __restrict__ x, int N, int D,
+                                  const int* __restrict__ labels,
+                                  unsigned long long* __restrict__ sum,
+                                  unsigned int* __restrict__ count);
+
+// Host wrapper: run `iters` Lloyd iterations on the GPU. Fills labels, centroids,
+// and sizes; returns the final inertia and the GPU loop time via kernel_ms.
+double kmeans_gpu(const Dataset& d, int iters, std::vector<float>& centroids,
+                  std::vector<int>& labels, std::vector<unsigned int>& sizes, float* kernel_ms);

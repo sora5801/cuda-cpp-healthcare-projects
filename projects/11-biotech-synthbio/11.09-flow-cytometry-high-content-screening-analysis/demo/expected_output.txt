@@ -1,5 +1,9 @@
 11.9 -- Flow Cytometry & High-Content Screening Analysis
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+k-means: 20000 events x 5 markers -> 5 clusters, 20 iterations
+  cluster 0 (n= 6000): centroid = 0.8008 0.1996 0.8001 0.6999 0.2007
+  cluster 1 (n= 4000): centroid = 0.2999 0.3008 0.2003 0.1993 0.2004
+  cluster 2 (n= 5000): centroid = 0.8010 0.2999 0.7995 0.2004 0.7002
+  cluster 3 (n= 2000): centroid = 0.2000 0.1998 0.5011 0.6008 0.5008
+  cluster 4 (n= 3000): centroid = 0.5994 0.8005 0.3010 0.2994 0.3005
+inertia = 160.0651
+RESULT: PASS (GPU labels+centroids match CPU)

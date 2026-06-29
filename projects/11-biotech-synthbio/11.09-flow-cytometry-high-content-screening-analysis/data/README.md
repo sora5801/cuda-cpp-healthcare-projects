@@ -1,37 +1,40 @@
-# Data — 11.9 Flow Cytometry & High-Content Screening Analysis
+# Data — 11.09 Flow Cytometry & High-Content Screening Analysis
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/cytometry_sample.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
-| License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Origin | **Synthetic** cytometry events (`scripts/make_synthetic.py`, seed 8) |
+| License | Public domain (CC0) — synthetic |
+| Contents | 20,000 events × 5 markers, drawn from 5 well-separated populations |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+### File format
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+```
+<N> <D> <K>            # events, markers, clusters to find
+<event 0: D floats>    # one row per event, values normalized to [0,1]
+<event 1: ...>
+... (N rows)
+```
+
+Markers are conceptually FSC, SSC, CD3, CD4, CD8 (a small T-cell panel). Values
+are normalized to **[0,1]** so the fixed-point centroid accumulation (kmeans.h)
+is exact. Events are grouped by population so the farthest-first init seeds one
+centroid per population.
 
 ## Full dataset
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+Real cytometry data lives in **FCS** files; GPU clustering follows segmentation:
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+- **FlowKit** (<https://github.com/whitews/FlowKit>) — read/transform FCS files.
+- **RAPIDS cuML** (<https://github.com/rapidsai/cuml>) — GPU UMAP/HDBSCAN/k-means.
+- **FlowRepository** (<http://flowrepository.org>) — public FCS datasets.
 
-Catalog dataset notes (verbatim):
+Export a few markers per event (arcsinh-transform + scale to [0,1]) into the
+format above. Bigger synthetic set: `python scripts/make_synthetic.py --scale 50`.
 
-> FlowRepository — public flow cytometry FCS files (https://flowrepository.org/); JUMP-CP — 116 K compound HCS morphological profiles, RxRx cell-painting images (https://jump-cellpainting.broadinstitute.org/); Cell Painting Gallery (Broad Institute) — 140 TB cell images (https://registry.opendata.aws/cellpainting-gallery/); Human Protein Atlas imaging (https://www.proteinatlas.org/).
+## Provenance & honesty
 
-## Provenance & field meanings
-
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+The sample is **synthetic** Gaussian blobs, not real immunophenotyping data, and
+carries no clinical meaning. It exists to make the clustering result interpretable
+(the 5 populations are recovered) and the GPU/CPU comparison verifiable.

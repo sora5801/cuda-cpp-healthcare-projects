@@ -1,33 +1,26 @@
-# Demo — 11.9 Flow Cytometry & High-Content Screening Analysis
+# Demo — 11.09 Flow Cytometry & High-Content Screening Analysis
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+`run_demo.ps1` (Windows) / `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on `data/sample/cytometry_sample.txt` (20,000 events × 5 markers).
+3. **Verify** that the GPU k-means matches the CPU reference — **labels and
+   centroids identical** (the fixed-point atomic reduction commutes).
+4. **Report** each recovered cluster's size and centroid, and the inertia.
 
-The program splits its output deliberately:
+stdout (the clusters) is deterministic and diffed against
+[`expected_output.txt`](expected_output.txt); the timing line is on stderr only.
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+## Canonical output
 
-## Expected result
+See [`expected_output.txt`](expected_output.txt). k-means recovers all 5 synthetic
+populations with the right sizes (6000/5000/4000/3000/2000) and centroids matching
+the true marker patterns. `RESULT: PASS` means the GPU and CPU produced the **same
+labels and centroids exactly** (`0 label mismatches`, `centroid diff 0`). The GPU
+clusters the 20k events several times faster than the CPU; the gap grows toward the
+10⁶–10⁷ cells of real runs.
 
-```
-11.9 -- Flow Cytometry & High-Content Screening Analysis
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
-
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+> The data is **synthetic** Gaussian populations, not real immunophenotyping — a
+> demonstration of GPU clustering, not a clinical analysis.

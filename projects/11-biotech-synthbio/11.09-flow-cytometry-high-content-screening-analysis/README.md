@@ -1,108 +1,114 @@
-# 11.9 — Flow Cytometry & High-Content Screening Analysis
+# 11.09 — Flow Cytometry & High-Content Screening Analysis
 
 ![difficulty](https://img.shields.io/badge/difficulty-Intermediate-blue) ![maturity](https://img.shields.io/badge/maturity-Active%20R%26D-informational) ![domain](https://img.shields.io/badge/domain-Biotechnology%2C%20Bioprocess%20%26%20Synthetic%20Biology-lightgrey)
 
-> **🟡 Intermediate · Active R&D** — Domain 11: Biotechnology, Bioprocess & Synthetic Biology · Catalog ID `11.9`
+> **🟡 Intermediate · Active R&D** — Domain 11: Biotechnology, Bioprocess & Synthetic Biology · Catalog ID `11.09`
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Cluster flow-cytometry **events** (cells, each measured on several markers) into
+populations with GPU **k-means**. k-means alternates two GPU steps: **assign**
+every event to its nearest centroid (one thread per event), then **update** each
+centroid as the mean of its members (a scatter-**reduction** via `atomicAdd`).
+Tenth distinct GPU pattern in the flagships: **parallel assignment + atomic
+reduction** — made deterministic with fixed-point integer accumulation.
 
 ## What this computes & why the GPU helps
 
-Modern cell sorters generate 10⁶ cells/second at 20–50 parameters per event; high-content screening (HCS) platforms image millions of cells per plate with 10+ channels. GPU-accelerated dimensionality reduction (GPU-UMAP, GPU-TSNE via RAPIDS cuML) and clustering (GPU-HDBSCAN, GPU-PhenoGraph) turn 30-minute analyses into seconds, enabling real-time sort gates. GPU-accelerated CellProfiler-style morphological feature extraction processes 96-well plate images in minutes instead of hours. Deep-learning classifiers (ResNet, ViT) deployed on GPU identify rare phenotypes (1-in-10⁵ events) with high sensitivity.
+Modern sorters emit ~10⁵ cells/second at 20–50 parameters; clustering millions of
+events (immunophenotyping, rare-population detection) is the bottleneck. Both
+k-means steps are data-parallel: assignment is independent per event, and the
+centroid update is a reduction where many events accumulate into the same K
+centroids. RAPIDS cuML turns 30-minute analyses into seconds this way.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallelized work** is per-event assignment + the atomic centroid
+accumulation, iterated; the tiny centroid divide is a host step.
 
 ## The algorithm in brief
 
-GPU-UMAP (approximate nearest-neighbor with NN-descent), GPU-HDBSCAN, GPU FlowSOM self-organizing map, GPU PhenoGraph graph-based clustering, GPU CellPose segmentation for HCS, Wasserstein distance for batch-effect correction, GPU deep learning rare-event classifier.
+- **Init:** deterministic **farthest-first** seeding (the greedy core of k-means++).
+- **Assign:** `label[i] = argmin_k ‖x_i − c_k‖²` (one thread per event).
+- **Accumulate:** `atomicAdd` each event's fixed-point coordinates into its
+  cluster's sum + count.
+- **Update:** `c_k = sum_k / count_k`. Repeat.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+See [THEORY.md](THEORY.md) for Lloyd's algorithm, the atomic-reduction determinism trick, and init.
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145) + **CUDA 13.3** ([docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
 
-1. Open `build/flow-cytometry-high-content-screening-analysis.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/flow-cytometry-high-content-screening-analysis.exe`.
+1. Open `build/flow-cytometry-high-content-screening-analysis.sln`.
+2. **`Release|x64`** → **Build** → `build/x64/Release/flow-cytometry-high-content-screening-analysis.exe`.
 
-Command-line alternative (Developer PowerShell):
-
-```powershell
-msbuild build\flow-cytometry-high-content-screening-analysis.sln /p:Configuration=Release /p:Platform=x64
-```
+CLI: `msbuild build\flow-cytometry-high-content-screening-analysis.sln /p:Configuration=Release /p:Platform=x64`
 
 ## Run the demo
 
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.ps1
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+Clusters the committed events on CPU + GPU and verifies labels + centroids match.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: FlowRepository — public flow cytometry FCS files (https://flowrepository.org/); JUMP-CP — 116 K compound HCS morphological profiles, RxRx cell-painting images (https://jump-cellpainting.broadinstitute.org/); Cell Painting Gallery (Broad Institute) — 140 TB cell images (https://registry.opendata.aws/cellpainting-gallery/); Human Protein Atlas imaging (https://www.proteinatlas.org/).
+- **Sample (committed):** `data/sample/cytometry_sample.txt` — 20k events, 5 markers, 5 populations.
+- **Real data:** FCS files via FlowKit / FlowRepository / RAPIDS — see
+  `scripts/download_data.ps1` and [data/README.md](data/README.md).
+- Bigger synthetic set: `python scripts/make_synthetic.py --scale 50`.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+`demo/expected_output.txt` holds the deterministic clusters (size + centroid each)
+and inertia. The GPU (`src/kernels.cu`) and CPU (`src/reference_cpu.cpp`) share the
+distance + **fixed-point** accumulation (`src/kmeans.h`) and the same host update,
+so labels and centroids are **identical** (`0 mismatches`, `centroid diff 0`). The
+demo recovers all 5 synthetic populations with the correct sizes.
 
 ## Code tour
 
-Read in this order:
-
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — load, CPU + GPU k-means, verify labels+centroids, print.
+2. [`src/kmeans.h`](src/kmeans.h) — **distance, nearest-centroid, and the fixed-point accumulation** (host + device).
+3. [`src/kernels.cuh`](src/kernels.cuh) — the assign + accumulate kernel interface.
+4. [`src/kernels.cu`](src/kernels.cu) — assign + **atomic** accumulate + the Lloyd loop.
+5. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — farthest-first init + the serial reference.
 
 ## Prior art & further reading
 
-RAPIDS cuML (https://github.com/rapidsai/cuml) — GPU UMAP/TSNE/HDBSCAN for cytometry analysis; CellProfiler (https://github.com/CellProfiler/CellProfiler) — HCS morphological profiling (with GPU CellPose segmentation); CellPose (https://github.com/mouseland/cellpose) — GPU-accelerated cell segmentation; FlowKit (https://github.com/whitews/FlowKit) — FCS file processing (CPU; upstream of GPU analysis).
+- **RAPIDS cuML** (<https://github.com/rapidsai/cuml>) — GPU k-means / HDBSCAN / UMAP for cytometry.
+- **FlowKit** (<https://github.com/whitews/FlowKit>) — FCS file processing (upstream of clustering).
+- **CellProfiler** (<https://github.com/CellProfiler/CellProfiler>) / **CellPose** — HCS imaging + segmentation.
+- PhenoGraph, FlowSOM — cytometry-specific clustering methods.
 
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
+Study these for production analysis; reimplement the pattern didactically (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-cuML GPU-UMAP, cuDNN for ResNet cell image classifier, CUDA 2D convolution kernels for morphological feature extraction; pattern: FCS/image batch ingest → GPU feature extraction → GPU-UMAP embedding → GPU-HDBSCAN clustering → rare-event gating → real-time sort decisions. --
+**Parallel assignment** (one thread per event, argmin) + **atomic scatter-reduction**
+for centroid sums · **fixed-point integers** so the atomics commute → deterministic
+and CPU-matching · deterministic farthest-first init.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Naive init pitfall.** Switch init to evenly-spaced indices and watch k-means
+   fall into a local minimum (it splits one population and merges two — higher
+   inertia). This is *why* k-means++ exists.
+2. **Convergence test.** Stop when labels stop changing (or inertia plateaus)
+   instead of a fixed iteration count.
+3. **Shared-memory centroids.** Cache the K·D centroids in shared memory in the
+   assign kernel to cut global reads.
+4. **Float vs fixed-point.** Replace the fixed-point accumulation with float
+   `atomicAdd` and observe that the centroids vary run-to-run (lost determinism).
+5. **GPU-HDBSCAN / FlowSOM.** Swap k-means for a density-based method better suited
+   to non-spherical cytometry clusters.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Spherical k-means** with fixed iterations; real cytometry uses
+  density/graph methods (HDBSCAN, PhenoGraph, FlowSOM) for non-convex populations.
+- The centroid divide runs on the host (the parallelized work — assign + accumulate
+  — is on the GPU); fixed-point quantizes coordinates to ~6 digits.
+- Data is synthetic, well-separated, and grouped so the demo recovers the truth.

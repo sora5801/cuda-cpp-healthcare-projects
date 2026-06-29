@@ -1,48 +1,66 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate synthetic flow-cytometry events
 # ---------------------------------------------------------------------------
-# Project 11.9 -- Flow Cytometry & High-Content Screening Analysis   (template skeleton)
+# Project 11.09 : Flow Cytometry & High-Content Screening Analysis
 #
-# WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+# Builds N cell "events", each a D-marker vector, drawn from K well-separated
+# Gaussian populations (a stand-in for distinct cell types in a marker panel).
+# Values are normalized to [0,1] (so the fixed-point accumulation in kmeans.h is
+# valid). Events are grouped by population, so the evenly-spaced centroid init
+# seeds one cluster per population and k-means recovers them cleanly. Real data
+# comes from FCS files (see download_data.*).
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
-#
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# OUTPUT (data/README.md format): "N D K" then N rows of D floats.
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py
+#   python scripts/make_synthetic.py --scale 5     # 5x more events
 # ===========================================================================
 import argparse
+import random
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "data" / "sample" / "cytometry_sample.txt"
+
+# K=5 populations in a D=5 marker space (e.g. FSC, SSC, CD3, CD4, CD8), with a
+# representative count each (imbalanced, like real immunophenotyping).
+POPULATIONS = [
+    ([0.80, 0.20, 0.80, 0.70, 0.20], 6000),   # CD3+ CD4+ T-helper
+    ([0.80, 0.30, 0.80, 0.20, 0.70], 5000),   # CD3+ CD8+ T-cytotoxic
+    ([0.30, 0.30, 0.20, 0.20, 0.20], 4000),   # CD3- B / other
+    ([0.60, 0.80, 0.30, 0.30, 0.30], 3000),   # high SSC monocytes
+    ([0.20, 0.20, 0.50, 0.60, 0.50], 2000),   # mixed
+]
+SPREAD = 0.04
+
+
+def clip01(v):
+    return 0.0 if v < 0.0 else (1.0 if v > 1.0 else v)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
+    ap = argparse.ArgumentParser(description="Generate a synthetic cytometry dataset.")
+    ap.add_argument("--scale", type=int, default=1, help="multiply every population's count")
+    ap.add_argument("--spread", type=float, default=SPREAD, help="Gaussian std per marker")
+    ap.add_argument("--seed", type=int, default=8)
+    ap.add_argument("--out", default=str(OUT))
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    rng = random.Random(args.seed)
+    D = len(POPULATIONS[0][0])
+    K = len(POPULATIONS)
+    rows = []
+    for (center, count) in POPULATIONS:
+        for _ in range(count * args.scale):
+            ev = [clip01(center[j] + rng.gauss(0.0, args.spread)) for j in range(D)]
+            rows.append(" ".join(f"{v:.5f}" for v in ev))
+    N = len(rows)
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    Path(args.out).write_text(f"{N} {D} {K}\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    print(f"[make_synthetic] wrote {args.out}  (N={N} events, D={D} markers, K={K} populations; SYNTHETIC)")
 
 
 if __name__ == "__main__":

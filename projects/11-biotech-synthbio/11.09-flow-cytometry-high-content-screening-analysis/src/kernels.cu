@@ -1,94 +1,93 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  k-means kernels (assign + atomic accumulate) + loop
 // ---------------------------------------------------------------------------
-// Project 11.9 -- Flow Cytometry & High-Content Screening Analysis   (template skeleton)
+// Project 11.09 : Flow Cytometry & High-Content Screening Analysis
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of kmeans_cpu(): identical assign + fixed-point accumulate (kmeans.h)
+// and the SAME host centroid-update, so the results match exactly. main.cu
+// compares labels + centroids. See ../THEORY.md "GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
-#include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "util/cuda_check.cuh"
+#include "util/timer.cuh"
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
 static constexpr int THREADS_PER_BLOCK = 256;
 
-// ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
-// ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+__global__ void assign_kernel(const float* __restrict__ x, int N, int D,
+                              const float* __restrict__ centroids, int K,
+                              int* __restrict__ labels) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= N) return;
+    labels[i] = km_nearest(x + static_cast<std::size_t>(i) * D, centroids, K, D);
 }
 
-// ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
-// ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+// Each event scatters its fixed-point coordinates into its cluster's sum. Many
+// events share a cluster, so the adds collide -> atomicAdd. Integer fixed-point
+// makes the adds commute => order-independent => deterministic and CPU-matching.
+__global__ void accumulate_kernel(const float* __restrict__ x, int N, int D,
+                                  const int* __restrict__ labels,
+                                  unsigned long long* __restrict__ sum,
+                                  unsigned int* __restrict__ count) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= N) return;
+    const int k = labels[i];
+    const float* p = x + static_cast<std::size_t>(i) * D;
+    for (int d = 0; d < D; ++d)
+        atomicAdd(&sum[static_cast<std::size_t>(k) * D + d], km_to_fixed(p[d]));
+    atomicAdd(&count[k], 1u);
+}
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+double kmeans_gpu(const Dataset& d, int iters, std::vector<float>& centroids,
+                  std::vector<int>& labels, std::vector<unsigned int>& sizes, float* kernel_ms) {
+    const int N = d.N, D = d.D, K = d.K;
+    init_centroids(d, centroids);                 // host: same deterministic init as CPU
+    labels.assign(N, 0);
+    sizes.assign(K, 0);
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // Device buffers.
+    float* d_x = nullptr; float* d_centroids = nullptr; int* d_labels = nullptr;
+    unsigned long long* d_sum = nullptr; unsigned int* d_count = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_x, d.x.size() * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_centroids, static_cast<std::size_t>(K) * D * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_labels, static_cast<std::size_t>(N) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_sum, static_cast<std::size_t>(K) * D * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_count, static_cast<std::size_t>(K) * sizeof(unsigned int)));
+    CUDA_CHECK(cudaMemcpy(d_x, d.x.data(), d.x.size() * sizeof(float), cudaMemcpyHostToDevice));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    std::vector<unsigned long long> sum(static_cast<std::size_t>(K) * D);
+    const int grid = (N + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    for (int it = 0; it < iters; ++it) {
+        // Upload current centroids; ASSIGN every event to its nearest.
+        CUDA_CHECK(cudaMemcpy(d_centroids, centroids.data(),
+                              static_cast<std::size_t>(K) * D * sizeof(float), cudaMemcpyHostToDevice));
+        assign_kernel<<<grid, THREADS_PER_BLOCK>>>(d_x, N, D, d_centroids, K, d_labels);
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+        // ACCUMULATE: zero the tallies, then atomic-add fixed-point coordinates.
+        CUDA_CHECK(cudaMemset(d_sum, 0, static_cast<std::size_t>(K) * D * sizeof(unsigned long long)));
+        CUDA_CHECK(cudaMemset(d_count, 0, static_cast<std::size_t>(K) * sizeof(unsigned int)));
+        accumulate_kernel<<<grid, THREADS_PER_BLOCK>>>(d_x, N, D, d_labels, d_sum, d_count);
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
+        // Bring the tallies back; UPDATE centroids on the host (same code as CPU).
+        CUDA_CHECK(cudaMemcpy(sum.data(), d_sum,
+                              static_cast<std::size_t>(K) * D * sizeof(unsigned long long),
+                              cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(sizes.data(), d_count,
+                              static_cast<std::size_t>(K) * sizeof(unsigned int), cudaMemcpyDeviceToHost));
+        update_centroids(d, sum, sizes, centroids);
+    }
+    *kernel_ms = timer.stop_ms();
+    CUDA_CHECK_LAST("kmeans kernels");
+
+    CUDA_CHECK(cudaMemcpy(labels.data(), d_labels,
+                          static_cast<std::size_t>(N) * sizeof(int), cudaMemcpyDeviceToHost));
+
     CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    CUDA_CHECK(cudaFree(d_centroids));
+    CUDA_CHECK(cudaFree(d_labels));
+    CUDA_CHECK(cudaFree(d_sum));
+    CUDA_CHECK(cudaFree(d_count));
+    return compute_inertia(d, centroids, labels);
 }

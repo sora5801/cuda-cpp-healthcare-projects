@@ -1,31 +1,44 @@
 // ===========================================================================
-// src/reference_cpu.h  --  Prototype of the CPU reference computation
+// src/reference_cpu.h  --  Dataset + shared k-means helpers + CPU reference
 // ---------------------------------------------------------------------------
-// Project 11.9 -- Flow Cytometry & High-Content Screening Analysis   (template skeleton)
+// Project 11.09 : Flow Cytometry & High-Content Screening Analysis
 //
-// WHY A SEPARATE HEADER
-//   The CPU reference (reference_cpu.cpp) is compiled by the plain C++ compiler
-//   and must NOT see any CUDA/__global__ syntax, so its prototype cannot live in
-//   kernels.cuh. Both main.cu and reference_cpu.cpp include THIS pure-C++ header
-//   so they agree on the function signature.
-//
-// THE CONTRACT (this template's placeholder computation):
-//   SAXPY -- "Single-precision A*X Plus Y":  out[i] = a * x[i] + y[i].
-//   This is the canonical first GPU kernel; here it stands in as a buildable
-//   placeholder. TODO(impl): replace saxpy_cpu with this project's real
-//   reference computation, and update the prototype + callers accordingly.
-//
-//   The CPU reference exists for two reasons (CLAUDE.md section 5):
-//     (a) it is the readable baseline that makes the GPU speed-up legible, and
-//     (b) the demo runs BOTH and asserts they agree within tolerance.
+// Pure C++ (no CUDA). The distance/fixed-point math is in kmeans.h. The centroid
+// UPDATE (divide fixed-point sums by counts), the INERTIA, and the deterministic
+// INIT are host helpers reused by BOTH the CPU reference and the GPU wrapper, so
+// the two produce identical centroids. kernels.cu reuses Dataset + these helpers.
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
+#include <string>
 #include <vector>
 
-// Compute out = a*x + y on the CPU, element by element.
-//   x, y : input vectors of equal length n
-//   a    : the scalar multiplier
-//   out  : resized to n and filled with the result (output parameter)
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out);
+#include "kmeans.h"   // km_nearest, km_to_fixed, KM_SCALE
+
+// A loaded dataset: N events, each D markers; cluster into K populations.
+struct Dataset {
+    int N = 0, D = 0, K = 0;
+    std::vector<float> x;   // [N*D] events, row-major; normalized to [0,1]
+};
+
+// Load from the text format (data/README.md): "N D K" then N rows of D floats.
+Dataset load_dataset(const std::string& path);
+
+// Deterministic init: take K events at evenly spaced indices as the centroids.
+void init_centroids(const Dataset& d, std::vector<float>& centroids);
+
+// Update centroids from fixed-point coordinate sums + counts (shared by CPU/GPU):
+//   centroid[k][d] = (sum[k][d] / KM_SCALE) / count[k]   (empty clusters: unchanged)
+void update_centroids(const Dataset& d, const std::vector<unsigned long long>& sum,
+                      const std::vector<unsigned int>& count, std::vector<float>& centroids);
+
+// Inertia = sum over events of squared distance to the assigned centroid (the
+// k-means objective; lower is tighter). Shared by CPU/GPU for an identical metric.
+double compute_inertia(const Dataset& d, const std::vector<float>& centroids,
+                       const std::vector<int>& labels);
+
+// CPU reference: run `iters` Lloyd iterations. Fills labels (N), centroids (K*D),
+// and cluster sizes (K); returns the final inertia. The trusted baseline.
+double kmeans_cpu(const Dataset& d, int iters, std::vector<float>& centroids,
+                  std::vector<int>& labels, std::vector<unsigned int>& sizes);

@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 9/301 projects done (3.0%) | todo 292 | in-progress 0 | missing 0
+**Progress:** 10/301 projects done (3.3%) | todo 291 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 4 | 0 | 63 |
-| 🟡 Intermediate | 206 | 5 | 0 | 201 |
+| 🟡 Intermediate | 206 | 6 | 0 | 200 |
 | 🔴 Advanced | 28 | 0 | 0 | 28 |
 
 ## 1. Drug Discovery & Molecular Design  (1/35 done)
@@ -297,7 +297,7 @@
 | 10.16 | Surgical Robot Path Planning & Collision Detection | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 10.17 | AR/VR Surgical Visualization & Real-Time Volume Rendering | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 
-## 11. Biotechnology, Bioprocess & Synthetic Biology  (0/12 done)
+## 11. Biotechnology, Bioprocess & Synthetic Biology  (1/12 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -309,7 +309,7 @@
 | 11.06 | Metabolic Engineering & Strain Design | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 11.07 | mRNA / Vaccine Sequence Design | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 11.08 | CRISPR System Design & Modeling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 11.09 | Flow Cytometry & High-Content Screening Analysis | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 11.09 | Flow Cytometry & High-Content Screening Analysis | 🟡 Intermediate | Active R&D | [x] done | lead | main |
 | 11.10 | Antibody Developability Prediction & Optimization | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 11.11 | CHO Cell & Mammalian Bioprocess Digital Twin | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 11.12 | Downstream Processing & Chromatography Simulation | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
