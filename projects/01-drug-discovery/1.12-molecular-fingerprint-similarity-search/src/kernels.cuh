@@ -1,52 +1,42 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for Tanimoto similarity search
 // ---------------------------------------------------------------------------
-// Project 1.12 -- Molecular Fingerprint Similarity Search   (template skeleton)
+// Project 1.12 : Molecular Fingerprint Similarity Search
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   Comparing the query against N library fingerprints is N INDEPENDENT jobs,
+//   so we give each library molecule its own GPU thread. Two CUDA features make
+//   this fast and are the teaching points of this project:
+//     * the query lives in CONSTANT memory (read by every thread, never written
+//       during the launch) -> the constant cache broadcasts it warp-wide; and
+//     * __popcll() (64-bit population count) is a SINGLE hardware instruction,
+//       so each word-pair costs ~2 popcounts + 2 boolean ops.
+//   A grid-stride loop lets one modest grid cover millions of molecules.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   This header is included only by .cu units (and by reference_cpu.h's data
+//   model, which is pure C++). main.cu calls tanimoto_gpu().
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, reference_cpu.h.
+// Then read kernels.cu. The science/GPU-mapping is in ../THEORY.md.
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // FP_WORDS, FingerprintSet (pure C++, safe in .cu)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Device kernel: out[i] = Tanimoto(query, lib_i). The query is read from the
+// __constant__ symbol defined in kernels.cu (not a parameter).
+//   lib : [n * FP_WORDS] row-major device array of library fingerprints
+//   n   : number of library fingerprints
+//   out : [n] device array of similarity scores (output)
+__global__ void tanimoto_kernel(const uint64_t* __restrict__ lib, int n,
+                                float* __restrict__ out);
+
+// Host wrapper: uploads the query to constant memory and the library to global
+// memory, launches the kernel, times it (CUDA events), and returns the scores.
+//   fps        : the loaded dataset (query + n library fingerprints)
+//   out        : resized to n; filled with per-molecule Tanimoto scores
+//   kernel_ms  : out-param, GPU-measured kernel time in milliseconds
+void tanimoto_gpu(const FingerprintSet& fps, std::vector<float>& out, float* kernel_ms);

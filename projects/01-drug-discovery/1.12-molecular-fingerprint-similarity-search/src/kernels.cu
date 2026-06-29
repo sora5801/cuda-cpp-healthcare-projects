@@ -1,94 +1,93 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Tanimoto similarity kernel + host wrapper
 // ---------------------------------------------------------------------------
-// Project 1.12 -- Molecular Fingerprint Similarity Search   (template skeleton)
+// Project 1.12 : Molecular Fingerprint Similarity Search
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// This is the GPU twin of tanimoto_cpu() in reference_cpu.cpp. main.cu runs
+// both and asserts they agree. See ../THEORY.md sec "GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "util/timer.cuh"        // GpuTimer
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
+// ---------------------------------------------------------------------------
+// The query fingerprint in CONSTANT memory.
+//   * Every thread reads all FP_WORDS query words but NONE writes them, and they
+//     are identical for the whole launch -> constant memory is the ideal home:
+//     its hardware cache broadcasts one address to an entire warp in a single
+//     transaction, instead of FP_WORDS global loads per thread.
+//   * Size is fixed at compile time (FP_WORDS * 8 = 256 bytes), well within the
+//     64 KB constant bank. Filled by cudaMemcpyToSymbol() in tanimoto_gpu().
+// ---------------------------------------------------------------------------
+__constant__ uint64_t c_query[FP_WORDS];
+
+// 256 threads/block: a multiple of the 32-lane warp with good occupancy on
+// sm_75..sm_89 (see THEORY "GPU mapping" for the occupancy reasoning).
 static constexpr int THREADS_PER_BLOCK = 256;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// tanimoto_kernel: one logical thread per library molecule, via a grid-stride
+// loop so a fixed-size grid still covers an arbitrarily large library.
+//   Thread (blockIdx.x, threadIdx.x) starts at i = block*blockDim + thread and
+//   strides by the total thread count until i >= n.
+//   Memory: c_query from constant cache; lib row i from global memory (coalesced
+//   when consecutive threads read consecutive rows... see THEORY for the layout
+//   trade-off). No shared memory or atomics: outputs are fully independent.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
+__global__ void tanimoto_kernel(const uint64_t* __restrict__ lib, int n,
+                                float* __restrict__ out) {
+    const int stride = blockDim.x * gridDim.x;             // total threads in grid
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride) {
+        const uint64_t* b = lib + static_cast<std::size_t>(i) * FP_WORDS;  // row i
+        int inter = 0, uni = 0;
+        // FP_WORDS is a compile-time constant, so the compiler fully unrolls
+        // this loop -> no loop overhead, just a straight line of popcounts.
+        #pragma unroll
+        for (int w = 0; w < FP_WORDS; ++w) {
+            const uint64_t a  = c_query[w];   // broadcast from constant cache
+            const uint64_t bb = b[w];         // this molecule's word w
+            inter += __popcll(a & bb);        // 64-bit popcount = one instruction
+            uni   += __popcll(a | bb);
+        }
+        // Same exact-integer division as the CPU reference -> bit-identical.
+        out[i] = uni ? static_cast<float>(inter) / static_cast<float>(uni) : 0.0f;
     }
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// tanimoto_gpu: the five canonical CUDA steps, with the query going to constant
+// memory instead of a global buffer. We time ONLY the kernel (CUDA events), not
+// the H2D/D2H copies (those are discussed separately in THEORY).
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
+void tanimoto_gpu(const FingerprintSet& fps, std::vector<float>& out, float* kernel_ms) {
+    const int n = fps.n;
     out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+    const std::size_t lib_bytes = static_cast<std::size_t>(n) * FP_WORDS * sizeof(uint64_t);
+    const std::size_t out_bytes = static_cast<std::size_t>(n) * sizeof(float);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // (a) Upload the query to the __constant__ symbol (a special copy that
+    //     targets the constant bank rather than ordinary global memory).
+    CUDA_CHECK(cudaMemcpyToSymbol(c_query, fps.query.data(), FP_WORDS * sizeof(uint64_t)));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // (b) Allocate + upload the library, and allocate the output scores.
+    uint64_t* d_lib = nullptr;   // [n*FP_WORDS] device, row-major
+    float*    d_out = nullptr;   // [n] device scores
+    CUDA_CHECK(cudaMalloc(&d_lib, lib_bytes));
+    CUDA_CHECK(cudaMalloc(&d_out, out_bytes));
+    CUDA_CHECK(cudaMemcpy(d_lib, fps.lib.data(), lib_bytes, cudaMemcpyHostToDevice));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // (c) Launch. Enough blocks to cover n one-thread-per-molecule, but capped
+    //     so the grid stays modest; the grid-stride loop handles the remainder.
+    int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    if (blocks > 1024) blocks = 1024;   // cap: grid-stride covers any larger n
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    tanimoto_kernel<<<blocks, THREADS_PER_BLOCK>>>(d_lib, n, d_out);
+    *kernel_ms = timer.stop_ms();
+    CUDA_CHECK_LAST("tanimoto_kernel");
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
+    // (d) Copy scores back, then (e) free device memory.
+    CUDA_CHECK(cudaMemcpy(out.data(), d_out, out_bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_lib));
     CUDA_CHECK(cudaFree(d_out));
 }

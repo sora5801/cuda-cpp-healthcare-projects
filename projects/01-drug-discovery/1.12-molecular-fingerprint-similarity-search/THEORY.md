@@ -1,87 +1,139 @@
 # THEORY — 1.12 Molecular Fingerprint Similarity Search
 
-> The deep didactic explanation (the "why"). Written for a sharp student who
-> knows C++ but is new to CUDA and new to this domain. Diagrams in Mermaid/ASCII
-> are welcome. See [README.md](README.md) for the quick tour and build steps.
->
-> _Educational only — not for clinical use._
-
-<!-- =======================================================================
-     The block below is the verbatim catalog deep-dive for this project,
-     stamped in by scaffold.py as raw material. Use it to write the sections
-     that follow, then DELETE it (or fold it into "The science"). Every
-     TODO(theory) below must be completed before the project is "done".
-     ======================================================================= -->
-
-<details>
-<summary>Catalog deep-dive (raw source material — fold into the sections below, then remove)</summary>
-
-### 1.12 Molecular Fingerprint Similarity Search 🟢 · Established
-
-- **Deep dive:** Tanimoto similarity between Morgan/ECFP bit-vectors is the standard metric for chemical similarity searching. Brute-force comparison of a query against a library of 100M compounds requires 10^10 bit-AND/popcount operations — ideally suited for GPU SIMD. Each 2048-bit fingerprint fits in 32 uint64 words; a GPU thread evaluates one query-vs-library pair in ~5 ns. Schrodinger's gpusimilarity loads an entire library into GPU memory and achieves sub-second retrieval on billion-compound libraries. The GPU pattern is embarrassingly data-parallel with a final topK reduction.
-- **Key algorithms:** Tanimoto coefficient (Jaccard on bit-vectors), Morgan/ECFP fingerprints (radius 2–3), TopK reduction, LSH-based approximate search, Faiss IVF for high-dimensional vectors.
-- **Datasets:** ChEMBL (https://www.ebi.ac.uk/chembl/); ZINC20 (https://zinc20.docking.org); PubChem Compound — 115M+ compounds (https://pubchem.ncbi.nlm.nih.gov); Enamine REAL (https://enamine.net).
-- **Starter repos/tools:** gpusimilarity (https://github.com/schrodinger/gpusimilarity) — CUDA/Thrust brute-force fingerprint search; FPSim2 (https://github.com/chembl/FPSim2) — fast similarity search using PyTables and GPU-accelerated popcount; RDKit (https://github.com/rdkit/rdkit) — cheminformatics toolkit with Morgan fingerprint generation; Faiss (https://github.com/facebookresearch/faiss) — GPU-accelerated ANN search applicable to molecular embeddings.
-- **CUDA libraries & GPU pattern:** Thrust device_vector for library storage; custom CUDA kernels with __popcll() for bit-count; warp-shuffle reduction for partial Tanimoto sums; GPU topK using cub::DeviceRadixSort; texture memory for fingerprint cache.
-
-</details>
-
----
+> Written for a reader who knows C++ but is new to CUDA and to cheminformatics.
+> See [README.md](README.md) for the quick tour and build steps. _Educational only._
 
 ## 1. The science
 
-TODO(theory): The biology / medicine / physics being modeled — enough for a
-reader to understand the *problem* before any math. What real-world question
-does computing this answer?
+Chemists routinely ask: *"which molecules in my library are most similar to this
+one?"* — to find alternative drug candidates, to rationalize bioactivity ("similar
+molecules tend to have similar properties"), or to deduplicate enormous virtual
+libraries. To answer it at scale we need (a) a way to turn a molecule into a
+comparable object, and (b) a similarity measure.
+
+A **molecular fingerprint** is that object: a fixed-length bit string where each
+bit marks the presence of a particular substructure. **Morgan / ECFP** (Extended
+Connectivity FingerPrints) enumerate the circular atom environments up to a given
+radius and hash each into a bit of a 2048-bit vector. Two molecules sharing many
+substructures share many set bits.
 
 ## 2. The math
 
-TODO(theory): The governing equations / formal problem statement, with **every
-symbol defined** (units, ranges). State inputs, outputs, and the objective.
+Let `A, B ∈ {0,1}^m` be two fingerprints (here `m = 2048`). The **Tanimoto
+coefficient** (identical to the **Jaccard index** for sets) is
+
+```
+            |A ∧ B|        popcount(A AND B)
+T(A,B) = ------------- = -----------------------
+            |A ∨ B|        popcount(A OR  B)
+```
+
+where `popcount(x)` is the number of 1-bits. `T ∈ [0,1]`: `T=1` iff the
+fingerprints are identical, `T=0` iff they share no bits. Note the identity
+`|A ∨ B| = |A| + |B| − |A ∧ B|`, so a single pass computing the AND-popcount and
+OR-popcount per word suffices.
+
+**Problem statement.** Given a query `q` and library `L = {b_0, …, b_{N-1}}`,
+compute `s_i = T(q, b_i)` for all `i`, and return the indices of the `K` largest.
 
 ## 3. The algorithm
 
-TODO(theory): Step-by-step. Include **complexity analysis**: serial cost vs. the
-parallel work/depth. Where is the arithmetic intensity? What is the data-access
-pattern?
+```
+for i in 0..N-1:                      # over library molecules  (PARALLEL)
+    inter = 0; uni = 0
+    for w in 0..FP_WORDS-1:           # over 64-bit words       (unrolled)
+        inter += popcount(q[w] & b_i[w])
+        uni   += popcount(q[w] | b_i[w])
+    s_i = inter / uni
+topK = indices of the K largest s_i
+```
+
+**Complexity.** Scoring is `Θ(N · FP_WORDS)` integer ops — `Θ(N)` for fixed width.
+Serial on a CPU this is `N · 32` word-pairs, each ~2 popcounts. The top-K step is
+`Θ(N log K)` with a partial sort. The scoring dominates for large `N`, and its
+`N` independent iterations are exactly what we hand to the GPU.
 
 ## 4. The GPU mapping
 
-TODO(theory): How the algorithm becomes **threads / blocks / grids**.
-- Thread-to-data mapping (which thread owns which element).
-- Launch configuration and the reasoning (block size, grid size).
-- Memory hierarchy used and **why**: global / shared / registers / constant /
-  texture. Where is the bandwidth bottleneck? What is the occupancy story?
-- Which CUDA library (cuBLAS / cuFFT / cuRAND / cuSOLVER / Thrust) does what,
-  and what it would take to write that step by hand (no black boxes — §6.1.6).
+**Decomposition.** One thread owns one library molecule. With block size
+`B = 256` and `N` molecules we launch `ceil(N/B)` blocks (capped, see below).
+Thread `(blockIdx.x, threadIdx.x)` starts at `i = blockIdx.x·B + threadIdx.x`.
 
 ```
-TODO(theory): an ASCII or Mermaid diagram of the grid/block decomposition.
+  library (row-major, N x 32 words)         threads
+  ┌───────────────────────────────┐         t0 -> row 0
+  │ b0:  w0 w1 ... w31             │         t1 -> row 1
+  │ b1:  w0 w1 ... w31             │         t2 -> row 2
+  │ ...                            │          .
+  │ bN-1:w0 w1 ... w31             │         t(N-1) -> row N-1
+  └───────────────────────────────┘
+        query q (32 words) lives in __constant__ memory, read by ALL threads
 ```
+
+**Memory hierarchy — the two teaching points:**
+
+- **Constant memory for the query.** Every thread reads all 32 query words and
+  none writes them, and they are identical for the whole launch. `__constant__`
+  memory has a dedicated cache that **broadcasts** one address to an entire warp
+  in a single transaction. Putting `q` there (via `cudaMemcpyToSymbol`) avoids 32
+  redundant global loads per thread. (256 bytes — trivially within the 64 KB
+  constant bank.)
+- **`__popcll` intrinsic.** 64-bit population count compiles to the hardware
+  `POPC` instruction — one instruction per word, versus a multi-step bit-twiddle.
+
+**Grid-stride loop.** Rather than require one thread per molecule, the kernel
+loops `for (i = tid; i < n; i += gridDim.x*blockDim.x)`. This lets a **fixed,
+modest grid** (we cap at 1024 blocks) cover a library of *any* size, keeps all SMs
+busy, and is the idiomatic CUDA pattern for "map over a big array."
+
+**Occupancy & bandwidth.** Each thread reads 32 × 8 = 256 bytes of library data
+and does ~64 popcounts + 64 boolean ops — this is **memory-bound** at scale, so
+performance tracks global-memory bandwidth. Block size 256 gives 8 warps/block,
+enough to hide memory latency; registers and shared memory are not limiting (no
+shared memory is used). Coalescing: consecutive threads read consecutive *rows*
+(stride 32 words), so a warp's word-`w` accesses are 32×8 = 256 bytes apart —
+**Exercise 3** (transposing the library to column-major) explores improving this.
+
+**Which library does what.** This teaching version hand-rolls the kernel. In
+production: **Thrust** `device_vector` holds the library; **cub::DeviceRadixSort**
+does the on-device top-K; **Faiss** provides approximate (LSH/IVF) search when
+exact brute force is too slow. We keep top-K on the host because, at the sizes a
+learner runs, the scoring kernel is the whole story.
 
 ## 5. Numerical considerations
 
-TODO(theory): Precision (FP32 vs FP64) and why. Stability. Race conditions and
-whether atomics are used. **Determinism**: does the parallel reduction reorder
-floating-point sums? If so, say so and quantify the caveat.
+- **Precision.** `inter` and `uni` are integers in `[0, 2048]`, exactly
+  representable as `float`. The only floating-point op is the final division.
+- **Determinism.** There is **no reduction across threads** — each thread writes
+  its own `out[i]` independently — so there is no atomic reordering and no
+  floating-point non-determinism. CPU and GPU perform the *same* integer
+  popcounts and the *same* IEEE-754 single-precision division (fast-math is OFF in
+  the `.vcxproj`), so the results are **bit-identical** (`max_abs_err = 0`).
+- **Edge case.** Two all-zero fingerprints give `0/0`; we define that as `0` to
+  avoid `NaN` (both implementations guard it identically).
 
 ## 6. How we verify correctness
 
-TODO(theory): The CPU reference (`src/reference_cpu.cpp`), the **tolerance** and
-why that value, and the edge cases checked. Explain why agreement between an
-independent serial implementation and the GPU implementation is convincing
-evidence of correctness.
+`main.cu` runs `tanimoto_cpu` (an obviously-correct serial loop using Kernighan's
+popcount) and `tanimoto_gpu`, then reports `max_abs_err = max_i |s_i^{cpu} −
+s_i^{gpu}|`. The demo asserts it is within `1e-6`; in practice it is exactly `0`.
+Agreement between two independent implementations — one trivial, one parallel — is
+strong evidence the kernel is correct. The committed sample is engineered so
+similarities span the whole `[0,1]` range, exercising the division and the top-K
+ordering (including ties, which break by lower index).
 
 ## 7. Where this sits in the real world
 
-TODO(theory): How production tools (named in the catalog "Prior art") do this
-differently — what they add (scale, accuracy, features) that this teaching
-version omits. If this is a 🔴 frontier project shipped as a reduced-scope
-teaching version, describe the full approach here.
-
----
+`gpusimilarity` and FPSim2 do the same core computation but add: streaming
+libraries larger than GPU memory, multi-GPU sharding, on-device top-K, and
+folding/unfolding of sparse fingerprints. Approximate methods (LSH, Faiss IVF)
+trade exactness for sub-linear query time on billion-scale sets. The chemistry
+upstream — generating good fingerprints (ECFP radius, bit count, counts vs.
+binary) — matters as much as the search itself, and is handled by RDKit.
 
 ## References
 
-TODO(theory): Papers, docs, and the starter repos from the catalog, with one
-line each on what to learn from them.
+- Rogers & Hahn, *Extended-Connectivity Fingerprints*, J. Chem. Inf. Model. 2010 — the ECFP definition.
+- Schrödinger **gpusimilarity** — production CUDA brute-force Tanimoto search (the direct analogue).
+- **RDKit** docs, *Morgan Fingerprints* — how the bit-vectors we consume are built.
+- NVIDIA CUDA C++ Programming Guide — constant memory, intrinsics (`__popcll`), grid-stride loops.

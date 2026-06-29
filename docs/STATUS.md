@@ -2,15 +2,15 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 0/301 projects done (0.0%) | todo 301 | in-progress 0 | missing 0
+**Progress:** 1/301 projects done (0.3%) | todo 300 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
-| 🟢 Beginner | 67 | 0 | 0 | 67 |
+| 🟢 Beginner | 67 | 1 | 0 | 66 |
 | 🟡 Intermediate | 206 | 0 | 0 | 206 |
 | 🔴 Advanced | 28 | 0 | 0 | 28 |
 
-## 1. Drug Discovery & Molecular Design  (0/35 done)
+## 1. Drug Discovery & Molecular Design  (1/35 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -25,7 +25,7 @@
 | 1.09 | ML Interatomic Potentials (Neural Network Potentials) | 🟢 Beginner | Established | [ ] todo | - | - |
 | 1.10 | De Novo Generative Molecular Design | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 1.11 | QSAR / Property Prediction | 🟢 Beginner | Established | [ ] todo | - | - |
-| 1.12 | Molecular Fingerprint Similarity Search | 🟢 Beginner | Established | [ ] todo | - | - |
+| 1.12 | Molecular Fingerprint Similarity Search | 🟢 Beginner | Established | [x] done | lead | main |
 | 1.13 | Pharmacophore & 3D Shape Screening | 🟢 Beginner | Established | [ ] todo | - | - |
 | 1.14 | Conformer Ensemble Generation | 🟢 Beginner | Established | [ ] todo | - | - |
 | 1.15 | Protein-Ligand Binding Affinity Scoring (ML) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

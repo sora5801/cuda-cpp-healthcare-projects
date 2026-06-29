@@ -1,33 +1,27 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  How to get REAL fingerprints (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 1.12 -- Molecular Fingerprint Similarity Search   (template skeleton)
+# Project 1.12 : Molecular Fingerprint Similarity Search
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# Prints the RDKit recipe; downloads nothing and needs no credentials. Use
+# make_synthetic.py for an offline stand-in (CLAUDE.md section 8).
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
 echo "[download_data] Project 1.12 -- Molecular Fingerprint Similarity Search"
-echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    ChEMBL (https://www.ebi.ac.uk/chembl/); ZINC20 (https://zinc20.docking.org); PubChem Compound — 115M+ compounds (https://pubchem.ncbi.nlm.nih.gov); Enamine REAL (https://enamine.net)."
+echo "Real fingerprints are generated from a molecule library with RDKit:"
+echo "  1) Get SMILES, e.g. ChEMBL (https://www.ebi.ac.uk/chembl/) or"
+echo "     ZINC20 (https://zinc20.docking.org)."
+echo "  2) pip install rdkit"
+echo "  3) ECFP4 = AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048)"
+echo "  4) Pack each 2048-bit vector into 32 little-endian uint64 words and write"
+echo "     the hex format in data/README.md (1 query line + n library lines)."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Offline stand-in (no download, fully reproducible):"
+echo "  python scripts/make_synthetic.py --n 1000000"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Keep FP_WORDS (=32, i.e. 2048 bits) consistent with src/reference_cpu.h."
+echo "Target data dir: $PROJECT_ROOT/data"
