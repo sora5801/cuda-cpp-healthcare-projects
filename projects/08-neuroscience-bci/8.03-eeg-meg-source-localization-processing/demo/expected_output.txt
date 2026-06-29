@@ -1,5 +1,12 @@
-8.3 -- EEG/MEG Source Localization & Processing
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+8.3 -- EEG/MEG Spectral Processing (cuFFT)
+EEG spectral analysis: 8 channels, 256 samples, fs=256 Hz (cuFFT batched FFT)
+band power per channel [delta theta alpha beta gamma] -> dominant:
+  ch0 : 0.000119 0.000178 0.247628 0.000989 0.003259  -> alpha
+  ch1 : 0.000020 0.000214 0.000077 0.251629 0.002450  -> beta
+  ch2 : 0.000107 0.251678 0.000277 0.000698 0.002414  -> theta
+  ch3 : 0.246659 0.000160 0.000128 0.000442 0.003118  -> delta
+  ch4 : 0.000157 0.000213 0.000297 0.000482 0.255165  -> gamma
+  ch5 : 0.000117 0.000259 0.205148 0.065185 0.002219  -> alpha
+  ch6 : 0.000208 0.204088 0.000198 0.000691 0.044354  -> theta
+  ch7 : 0.000144 0.000134 0.064809 0.162613 0.002720  -> beta
+RESULT: PASS (cuFFT band powers match CPU DFT within rtol=1e-3)

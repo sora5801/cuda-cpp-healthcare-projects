@@ -2,11 +2,11 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 6/301 projects done (2.0%) | todo 295 | in-progress 0 | missing 0
+**Progress:** 7/301 projects done (2.3%) | todo 294 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
-| 🟢 Beginner | 67 | 3 | 0 | 64 |
+| 🟢 Beginner | 67 | 4 | 0 | 63 |
 | 🟡 Intermediate | 206 | 3 | 0 | 203 |
 | 🔴 Advanced | 28 | 0 | 0 | 28 |
 
@@ -239,13 +239,13 @@
 | 7.18 | Retinal Fundus AI Screening | 🟢 Beginner | Established | [ ] todo | - | - |
 | 7.19 | Polygenic Risk Score Computation at Scale | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 
-## 8. Neuroscience & Brain-Computer Interfaces  (0/16 done)
+## 8. Neuroscience & Brain-Computer Interfaces  (1/16 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
 | 8.01 | Real-Time Neural Decoding for BCIs | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 8.02 | Spike Sorting | 🟢 Beginner | Established | [ ] todo | - | - |
-| 8.03 | EEG/MEG Source Localization & Processing | 🟢 Beginner | Established | [ ] todo | - | - |
+| 8.03 | EEG/MEG Source Localization & Processing | 🟢 Beginner | Established | [x] done | lead | main |
 | 8.04 | Connectomics / EM Image Reconstruction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 8.05 | Neural Mass / Whole-Brain Dynamics Models | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 8.06 | Deep Brain Stimulation / Neurostimulation Modeling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

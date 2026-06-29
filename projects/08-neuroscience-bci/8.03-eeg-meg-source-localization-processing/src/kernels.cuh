@@ -1,52 +1,33 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU spectral-processing interface (cuFFT + power kernel)
 // ---------------------------------------------------------------------------
-// Project 8.3 -- EEG/MEG Source Localization & Processing   (template skeleton)
+// Project 8.03 : EEG/MEG Spectral Processing (cuFFT)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (seventh flagship pattern: USING A CUDA LIBRARY)
+//   The Fast Fourier Transform is a solved problem with a superb GPU library --
+//   cuFFT. The lesson here is how to use a library kernel WITHOUT it being a
+//   black box: kernels.cu documents exactly what cufftExecR2C computes, the
+//   batched layout it expects, and what it would take to hand-roll. We add only
+//   a tiny custom kernel for the magnitude-squared (the power spectrum).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   cuFFT batches one real-to-complex FFT PER CHANNEL in a single call -- the
+//   natural mapping for multi-channel EEG.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   kernels.cu defines the kernel + wrapper. main.cu calls spectrum_gpu().
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // EegData (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Device kernel: power[i] = |X[i]|^2 / N^2.  X is the cuFFT output (float2 ==
+// cufftComplex: .x real, .y imag). One thread per (channel, frequency-bin).
+__global__ void power_kernel(const float2* __restrict__ X, int total, float invN2,
+                             float* __restrict__ power);
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Host wrapper: batched real-to-complex FFT of all channels via cuFFT, then the
+// power kernel. Returns the per-channel power spectrum (size n_ch*(n/2+1)) and
+// the GPU time of the FFT + power step.
+void spectrum_gpu(const EegData& d, std::vector<float>& power, float* kernel_ms);

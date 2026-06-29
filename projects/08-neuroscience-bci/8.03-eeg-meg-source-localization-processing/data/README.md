@@ -1,37 +1,39 @@
-# Data — 8.3 EEG/MEG Source Localization & Processing
+# Data — 8.03 EEG/MEG Spectral Processing (cuFFT)
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/eeg_sample.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
-| License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Origin | **Synthetic** multi-channel EEG (`scripts/make_synthetic.py`, seed 5) |
+| License | Public domain (CC0) — synthetic |
+| Contents | 8 channels × 256 samples, fs = 256 Hz; each channel a known dominant rhythm |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+### File format
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+```
+<n_ch> <n> <fs>            # channels, samples per channel, sampling rate (Hz)
+<channel 0: n samples>     # one row per channel
+<channel 1: ...>
+... (n_ch rows)
+```
+
+Each channel is one or two sinusoids in a target band (delta/theta/alpha/beta/
+gamma) plus low-level noise. With `fs == n`, a frequency of `f` Hz lands exactly
+on FFT bin `f`, so the band powers are clean and the dominant band is obvious.
 
 ## Full dataset
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+Real EEG/MEG recordings come from open archives (export channels as rows):
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+- **PhysioNet** (<https://physionet.org>) — EEG databases (CHB-MIT, Sleep-EDF, ...).
+- **MNE-Python sample data** (<https://mne.tools>) — EEG/MEG with electrode montages.
+- **OpenNeuro** (<https://openneuro.org>) — BIDS-formatted EEG/MEG datasets.
 
-Catalog dataset notes (verbatim):
+`scripts/download_data.ps1` / `.sh` point to these. For a longer window:
+`python scripts/make_synthetic.py --n 512 --fs 512`.
 
-> OpenNeuro EEG/MEG datasets in BIDS (https://openneuro.org); DANDI neurophysiology archive (https://dandiarchive.org); Human Connectome Project MEG (https://db.humanconnectome.org); TUAB / TUEG Temple University Hospital EEG corpus (https://isip.piconepress.com/projects/tuh_eeg/).
+## Provenance & honesty
 
-## Provenance & field meanings
-
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+The sample is **synthetic** and labeled as such — clean sinusoids in known bands,
+not a real recording, and of no diagnostic meaning. It exists to make the cuFFT
+band-power result interpretable and verifiable.

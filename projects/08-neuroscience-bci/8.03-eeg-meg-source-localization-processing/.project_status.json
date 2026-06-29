@@ -2,8 +2,8 @@
   "id": "8.3",
   "id_padded": "8.03",
   "project": "EEG/MEG Source Localization & Processing",
-  "status": "todo",
-  "owner": "",
-  "branch": "",
+  "status": "done",
+  "owner": "lead",
+  "branch": "main",
   "skeleton": true
 }

@@ -1,33 +1,21 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
-# ---------------------------------------------------------------------------
-# Project 8.3 -- EEG/MEG Source Localization & Processing   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# scripts/download_data.sh  --  Real EEG/MEG sources (Linux/macOS)
+# Project 8.03 : EEG/MEG Spectral Processing (cuFFT). Downloads nothing.
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
-echo "[download_data] Project 8.3 -- EEG/MEG Source Localization & Processing"
-echo "[download_data] Target data dir: $DATA_DIR"
+echo "[download_data] Project 8.03 -- EEG/MEG Spectral Processing (cuFFT)"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    OpenNeuro EEG/MEG datasets in BIDS (https://openneuro.org); DANDI neurophysiology archive (https://dandiarchive.org); Human Connectome Project MEG (https://db.humanconnectome.org); TUAB / TUEG Temple University Hospital EEG corpus (https://isip.piconepress.com/projects/tuh_eeg/)."
+echo "Real EEG/MEG (export channels as rows of samples; prepend 'n_ch n fs'):"
+echo "  PhysioNet  : https://physionet.org   (CHB-MIT, Sleep-EDF, ...)"
+echo "  MNE-Python : https://mne.tools        (sample EEG/MEG + montages)"
+echo "  OpenNeuro  : https://openneuro.org    (BIDS EEG/MEG datasets)"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Tip: use one analysis window of length n per FFT (a power of two is fastest)."
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Longer synthetic window (no download):"
+echo "  python scripts/make_synthetic.py --n 512 --fs 512"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

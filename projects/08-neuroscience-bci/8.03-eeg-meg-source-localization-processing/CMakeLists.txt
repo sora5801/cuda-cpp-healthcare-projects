@@ -31,3 +31,7 @@ add_executable(eeg-meg-source-localization-processing
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(eeg-meg-source-localization-processing PRIVATE src)
+
+# This flagship links the cuFFT library (see kernels.cu).
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(eeg-meg-source-localization-processing PRIVATE CUDA::cufft)

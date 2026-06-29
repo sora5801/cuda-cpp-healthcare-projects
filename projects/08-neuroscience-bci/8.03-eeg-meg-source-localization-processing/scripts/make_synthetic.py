@@ -1,48 +1,70 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate a synthetic multi-channel EEG window
 # ---------------------------------------------------------------------------
-# Project 8.3 -- EEG/MEG Source Localization & Processing   (template skeleton)
+# Project 8.03 : EEG/MEG Spectral Processing (cuFFT)
 #
-# WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+# Builds an 8-channel EEG window where each channel has a KNOWN dominant rhythm
+# (so the band-power result is interpretable and the dominant band is obvious),
+# plus low-level noise. With fs == n, frequency f Hz lands exactly on FFT bin f.
+# Real EEG comes from PhysioNet/MNE (see download_data.*).
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
-#
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# OUTPUT (data/README.md format):
+#   header: "n_ch n fs"  then n_ch rows of n float samples.
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py
+#   python scripts/make_synthetic.py --n 512 --fs 512
 # ===========================================================================
 import argparse
+import math
+import random
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "data" / "sample" / "eeg_sample.txt"
+
+# Per channel: list of (frequency_Hz, amplitude). The strongest sets the band.
+#   delta~2  theta~6  alpha~10  beta~20  gamma~40
+CHANNELS = [
+    [(10, 1.0)],                 # ch0 alpha
+    [(20, 1.0)],                 # ch1 beta
+    [(6, 1.0)],                  # ch2 theta
+    [(2, 1.0)],                  # ch3 delta
+    [(40, 1.0)],                 # ch4 gamma
+    [(11, 0.9), (18, 0.5)],      # ch5 alpha-dominant, some beta
+    [(6, 0.9), (35, 0.4)],       # ch6 theta-dominant, some gamma
+    [(22, 0.8), (9, 0.5)],       # ch7 beta-dominant, some alpha
+]
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
+    ap = argparse.ArgumentParser(description="Generate a synthetic multi-channel EEG window.")
+    ap.add_argument("--n", type=int, default=256, help="samples per channel (FFT length)")
+    ap.add_argument("--fs", type=float, default=256.0, help="sampling rate (Hz)")
+    ap.add_argument("--noise", type=float, default=0.10, help="per-sample noise std")
+    ap.add_argument("--seed", type=int, default=5)
+    ap.add_argument("--out", default=str(OUT))
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    rng = random.Random(args.seed)
+    n, fs = args.n, args.fs
+    rows = []
+    for comps in CHANNELS:
+        row = []
+        for t in range(n):
+            v = 0.0
+            for (f, amp) in comps:
+                v += amp * math.sin(2.0 * math.pi * f * t / fs)
+            v += rng.gauss(0.0, args.noise)
+            row.append(v)
+        rows.append(" ".join(f"{v:.6f}" for v in row))
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    header = f"{len(CHANNELS)} {n} {fs:g}"
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    Path(args.out).write_text(header + "\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    print(f"[make_synthetic] wrote {args.out}  ({len(CHANNELS)} channels x {n} samples, "
+          f"fs={fs:g}; SYNTHETIC EEG, seed={args.seed})")
 
 
 if __name__ == "__main__":

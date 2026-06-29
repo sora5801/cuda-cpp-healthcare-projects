@@ -1,5 +1,6 @@
 # Changelog — newest first; each entry links to its push-note in `push-notes/`.
 
+- 2026-06-29 #00 -- [flagship 8.03 cufft-eeg](push-notes/2026-06-29-00-flagship-8-03-cufft-eeg.md)
 - 2026-06-28 #06 -- [flagship 7.10 signal-conv](push-notes/2026-06-28-06-flagship-7-10-signal-conv.md)
 - 2026-06-28 #05 -- [flagship 6.04 lattice-boltzmann](push-notes/2026-06-28-05-flagship-6-04-lattice-boltzmann.md)
 - 2026-06-28 #04 -- [flagship 5.01 monte-carlo-dose](push-notes/2026-06-28-04-flagship-5-01-monte-carlo-dose.md)
