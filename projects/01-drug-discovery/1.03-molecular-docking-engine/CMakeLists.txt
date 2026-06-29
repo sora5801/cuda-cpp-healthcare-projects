@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.3 -- Molecular Docking Engine   (template skeleton)
+# Project 1.3 -- Molecular Docking Engine  (reduced-scope teaching version)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/molecular-docking-engine.sln (CLAUDE.md §5). Both

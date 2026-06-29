@@ -1,5 +1,9 @@
 1.11 -- QSAR / Property Prediction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+GCN inference: 5 molecules, 23 atoms total (F_IN=6, F_HID=8, F_OUT=4)
+  mol  0 ( 4 atoms): predicted property = -0.582784
+  mol  1 ( 6 atoms): predicted property = -0.651793
+  mol  2 ( 4 atoms): predicted property = -0.554825
+  mol  3 ( 4 atoms): predicted property = -0.536602
+  mol  4 ( 5 atoms): predicted property = -0.641983
+top-ranked molecule: mol 3 (property = -0.536602)
+RESULT: PASS (GPU predictions match CPU within 1e-04)

@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 1.2 -- Particle-Mesh Ewald Electrostatics   (template skeleton)
+# Project 1.2 -- Particle-Mesh Ewald Electrostatics
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# expected size, and NEVER bypasses credentials/registration. The real PME
+# benchmark systems (CHARMM-GUI boxes, MemProtMD membranes, Anton trajectories)
+# require registration and/or are large; this script only prints how to obtain
+# them and defers to scripts/make_synthetic.py for the offline demo stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,24 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.2 -- Particle-Mesh Ewald Electrostatics"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    CHARMM-GUI solvation benchmark sets — pre-built periodic protein-water boxes (https://charmm-gui.org); D. E. Shaw Research Anton trajectories — ms-scale trajectory archives (available via DE Shaw); ion channel benchmark systems (MemProtMD, https://memprotmd.bioch.ox.ac.uk)."
+Write-Host "This project ships a TINY committed SYNTHETIC sample (an NaCl-like ionic"
+Write-Host "crystal) so the demo runs offline. No download is required to learn PME."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real periodic MD benchmark systems (for a larger, realistic run):"
+Write-Host "  * CHARMM-GUI Archive  -- pre-built solvated protein-water boxes (PSF/PDB)."
+Write-Host "      https://charmm-gui.org/?doc=archive   (free account required)"
+Write-Host "  * MemProtMD           -- membrane-protein systems in periodic boxes."
+Write-Host "      https://memprotmd.bioch.ox.ac.uk/"
+Write-Host "  * D. E. Shaw Research Anton trajectories -- ms-scale MD archives."
+Write-Host "      Request access from DE Shaw Research (not redistributable here)."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  These formats (PSF/PDB/DCD) carry per-atom charges and box vectors. A real"
+Write-Host "  loader would parse charges + coordinates + the periodic box from them; our"
+Write-Host "  loader uses a plain '<n> <box>' + 'x y z q' text format (see data/README.md)."
+Write-Host "  Respect every dataset's license; none are redistributed in this repo."
+Write-Host ""
+Write-Host "  For a larger SYNTHETIC system right now (e.g. an 8x8x8 = 512-ion lattice):"
+Write-Host "    python scripts/make_synthetic.py --reps 8 --box 16.0"
+Write-Host ""
+Write-Host "[download_data] Nothing to download; synthetic sample already present."

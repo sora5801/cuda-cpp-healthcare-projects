@@ -1,11 +1,13 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.14 -- Conformer Ensemble Generation   (template skeleton)
+# Project 1.14 : Conformer Ensemble Generation
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/conformer-ensemble-generation.sln (CLAUDE.md §5). Both
-# compile the SAME src/ files, so they stay in lockstep.
+# compile the SAME src/ files (main.cu, kernels.cu, reference_cpu.cpp; the headers
+# conformer.h / reference_cpu.h / kernels.cuh / util/* are pulled in by #include),
+# so they stay in lockstep.
 #
 #   cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build/cmake

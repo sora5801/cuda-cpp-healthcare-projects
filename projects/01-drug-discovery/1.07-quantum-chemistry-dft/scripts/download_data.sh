@@ -1,33 +1,36 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Pointers to the FULL datasets (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 1.7 -- Quantum Chemistry / DFT   (template skeleton)
+# Project 1.7 : Quantum Chemistry / DFT  (reduced-scope RHF/SCF)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# This project's DEMO needs NO download: it runs on the tiny committed molecule
+# in data/sample/ (a hand-written H2 geometry). This script does NOT fetch
+# anything automatically -- the catalog's reference datasets are large research
+# corpora of precomputed quantum-chemistry results, used to BENCHMARK or TRAIN
+# models, not to drive this teaching SCF. It prints where to get them and how they
+# relate to this project. Respect each dataset's license (CLAUDE.md section 8).
 # ===========================================================================
 set -euo pipefail
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
+cat <<'EOF'
 
-echo "[download_data] Project 1.7 -- Quantum Chemistry / DFT"
-echo "[download_data] Target data dir: $DATA_DIR"
-echo
+Project 1.7 - Quantum Chemistry / DFT : full reference datasets
+-----------------------------------------------------------------
+The demo runs offline on data/sample/h2.txt. The datasets below are large
+corpora of precomputed DFT/CCSD(T) results (for ML and benchmarking), NOT inputs
+to this SCF. Listed for further study only:
 
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    QM9 — DFT-computed properties of 134k organic molecules (https://doi.org/10.6084/m9.figshare.978904); ANI-1ccx — CCSD(T)-level energies for diverse organic molecules (https://github.com/isayev/ANI1ccx_dataset); PubChemQC — DFT calculations for ~3M PubChem molecules (http://pubchemqc.riken.jp); CSD — Cambridge Structural Database for crystal structures (https://www.ccdc.cam.ac.uk)."
-echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
-echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+  QM9        134k organic molecules with DFT-computed properties
+             https://doi.org/10.6084/m9.figshare.978904
+  ANI-1ccx   CCSD(T)-level energies for diverse organic molecules
+             https://github.com/isayev/ANI1ccx_dataset
+  PubChemQC  DFT calculations for ~3M PubChem molecules
+             http://pubchemqc.riken.jp
+  CSD        Cambridge Structural Database (crystal structures; licensed)
+             https://www.ccdc.cam.ac.uk
+
+To make more inputs for THIS project (H/He molecules), use:
+  python scripts/make_synthetic.py --mol heh+
+
+No files were downloaded (by design).
+EOF

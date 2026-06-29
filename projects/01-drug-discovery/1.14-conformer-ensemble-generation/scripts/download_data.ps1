@@ -1,12 +1,16 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Pointers to the real datasets (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 1.14 -- Conformer Ensemble Generation   (template skeleton)
+# Project 1.14 : Conformer Ensemble Generation
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# access notes, and NEVER bypasses credentials/registration.
+#
+# IMPORTANT: this teaching demo is SELF-CONTAINED -- the molecule is fixed in
+# src/conformer.h and the committed data/sample/conformer_params.txt is all the
+# demo needs. There is therefore NOTHING to download to run this project. The
+# datasets below are what you would use to VALIDATE a production conformer
+# generator (compare generated shapes/energies to crystallographic / DFT data).
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +20,23 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.14 -- Conformer Ensemble Generation"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    GEOM — 37M conformers of drug-like molecules with DFT energies (https://github.com/learningmatter-mit/geom); CSD torsion library (https://www.ccdc.cam.ac.uk); COD (Crystallography Open Database) — crystal structures for torsion validation (https://www.crystallography.net); PDB small molecule conformations (https://www.rcsb.org)."
+Write-Host "This project needs NO download to run: data/sample/conformer_params.txt"
+Write-Host "plus the compile-time molecule in src/conformer.h are sufficient."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real-world reference datasets (for validating a production generator):"
+Write-Host "  * GEOM   - 37M conformers of drug-like molecules with DFT energies."
+Write-Host "             https://github.com/learningmatter-mit/geom"
+Write-Host "             MIT-licensed data; large (tens of GB). Follow the repo's"
+Write-Host "             instructions to fetch the .msgpack archives."
+Write-Host "  * CSD torsion library - experimental torsion preferences (ETKDGv3 'ET')."
+Write-Host "             https://www.ccdc.cam.ac.uk"
+Write-Host "             REQUIRES a CCDC license -- this script will NOT bypass it."
+Write-Host "             Register/obtain a licence via the CCDC website."
+Write-Host "  * COD    - open crystal structures for torsion validation."
+Write-Host "             https://www.crystallography.net"
+Write-Host "  * PDB    - small-molecule conformations from deposited structures."
+Write-Host "             https://www.rcsb.org"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "To customize the offline (synthetic) demo parameters instead, run:"
+Write-Host "    python scripts/make_synthetic.py --rmsd 1.0 --top 5"

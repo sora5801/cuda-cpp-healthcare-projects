@@ -1,12 +1,14 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Point at the FULL QSAR datasets (Windows)
 # ---------------------------------------------------------------------------
-# Project 1.11 -- QSAR / Property Prediction   (template skeleton)
+# Project 1.11 : QSAR / Property Prediction
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The real QSAR benchmarks ship as
+# SMILES + labels and must be featurized into atom/bond graphs with RDKit, which
+# is a Python step outside this C++ demo. So this script does NOT auto-download:
+# it prints exactly where to get each dataset and how to convert it, and defers
+# to scripts/make_synthetic.py for the offline stand-in that the demo uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +18,27 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.11 -- QSAR / Property Prediction"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    MoleculeNet — curated ML benchmark for 17+ molecular datasets (https://moleculenet.org); ChEMBL bioactivity data (https://www.ebi.ac.uk/chembl/); TDC (Therapeutics Data Commons) — 66 tasks for drug discovery ML (https://tdcommons.ai); PCBA (PubChem BioAssay) — 128 bioassays on 440k compounds (https://moleculenet.org)."
+Write-Host "The committed sample (data/sample/molecules_sample.txt) is a tiny SYNTHETIC"
+Write-Host "molecule batch and is all the demo needs. To study REAL QSAR data:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  MoleculeNet  (curated ML benchmarks; ESOL, FreeSolv, Lipophilicity, BBBP, ...)"
+Write-Host "    https://moleculenet.org   (CSV of SMILES + labels; no login)"
+Write-Host "  ChEMBL  (measured bioactivities for ~2.4M compounds)"
+Write-Host "    https://www.ebi.ac.uk/chembl/   (bulk download; no login)"
+Write-Host "  Therapeutics Data Commons (TDC)  (66 ready-made drug-discovery ML tasks)"
+Write-Host "    https://tdcommons.ai   (pip install PyTDC; programmatic access)"
+Write-Host "  PCBA  (128 PubChem BioAssays over ~440k compounds)"
+Write-Host "    https://moleculenet.org"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  These ship as SMILES + labels. To turn them into the CSR graph format"
+Write-Host "  this project reads (see data/README.md), featurize with RDKit, e.g.:"
+Write-Host "    pip install rdkit pandas"
+Write-Host "    # for each SMILES: atoms -> 6-dim feature rows, bonds -> edge list,"
+Write-Host "    # then emit 'num_mols num_nodes num_edges' + features + counts + edges."
+Write-Host ""
+Write-Host "  For a larger SYNTHETIC batch without any download, run:"
+Write-Host "    python scripts/make_synthetic.py"
+Write-Host ""
+Write-Host "  When wiring a real fetch, keep it idempotent: skip if the file exists"
+Write-Host "  with the right SHA256; print URL + size + checksum; never store secrets."

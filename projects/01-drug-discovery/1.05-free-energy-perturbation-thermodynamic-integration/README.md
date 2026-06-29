@@ -4,105 +4,174 @@
 
 > **🟢 Beginner · Established** — Domain 1: Drug Discovery & Molecular Design · Catalog ID `1.5`
 >
-> _Educational only — not for clinical use (see CLAUDE.md §8)._
-
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
+> _Educational only — not for clinical use (see CLAUDE.md §8). This is a
+> **reduced-scope teaching version** (CLAUDE.md §13): a 1-D model whose answer is
+> known in closed form, so the method can be verified exactly._
 
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Free Energy Perturbation (FEP) and Thermodynamic Integration (TI) answer the
+make-or-break question in lead optimisation: *is ligand B a tighter binder than
+ligand A?* They do it by running simulations along a fictitious **alchemical
+λ-pathway** that morphs molecule A into molecule B and measuring the free-energy
+change ΔG along the way. This project teaches the machinery on a model small enough
+to check against a formula: the two "ligands" are two harmonic springs of different
+stiffness, and TI recovers their exact free-energy difference. The headline GPU idea
+is that **each λ-window is an independent Monte-Carlo job**, so we give each window
+its own GPU thread — the same parallel pattern that, scaled up, runs production FEP
+one GPU per window.
 
 ## What this computes & why the GPU helps
 
-FEP and TI compute binding free energy differences (ΔΔG) between two ligands by running MD along an alchemical λ-pathway that slowly transforms one molecule into another. Each λ-window requires independent GPU MD trajectories; the collection of windows is trivially parallel across GPUs. The critical computational cost is the length and number of λ-windows required for convergence (typically 12–24 windows × 2–5 ns each). GPU-accelerated pmemd.cuda and NAMD-FEP achieve >10× speedup over CPU, reducing multi-day calculations to hours on a single A100. Relative FEP (RBFE) is now a standard tool in lead optimization pipelines at major pharmaceutical companies.
+We estimate `ΔG = ∫₀¹ ⟨∂U/∂λ⟩_λ dλ` (the TI identity) for an alchemical path between
+two harmonic states. The integral is discretised into **W λ-windows**; in each
+window we run a **Metropolis Monte-Carlo chain** to estimate the equilibrium average
+`⟨∂U/∂λ⟩`, then integrate over λ with the trapezoid rule.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The bottleneck that parallelises:** the W windows are *mutually independent* — each
+is its own equilibrium sampling problem at its own coupling λ. Sampling is the
+expensive part (thousands–millions of steps per window), and there is no
+communication between windows until the final integral. That is a textbook
+**embarrassingly parallel** workload: one GPU thread per window runs an entire chain
+in registers and writes one number. (In real FEP the same axis is parallelised across
+*GPUs*, with a full MD simulation inside each window.)
 
 ## The algorithm in brief
 
-Alchemical λ-coupling, soft-core potentials (Beutler/Zacharias), multi-state Bennett acceptance ratio (MBAR), thermodynamic integration quadrature, replica exchange with solute tempering (REST2), overlap matrix assessment.
+- **Alchemical coupling:** `U(x,λ) = (1−λ)·U_A(x) + λ·U_B(x)` linearly morphs state A
+  (λ=0) into state B (λ=1).
+- **Metropolis Monte Carlo** per window: propose `x' = x + (2u−1)·step`, accept with
+  probability `min(1, exp(−ΔE/kT))`, accumulate `∂U/∂λ = U_B(x) − U_A(x)` after burn-in.
+- **Thermodynamic Integration:** trapezoid-integrate the per-window `⟨∂U/∂λ⟩` over λ.
+- **Counter-based RNG** (SplitMix64 hash of `(window, step, channel)`) so CPU and GPU
+  draw identical random streams → reproducible, exactly comparable results.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+See [`THEORY.md`](THEORY.md) for the statistical mechanics, the closed-form answer,
+and the GPU mapping in depth.
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3** — the ratified
+repo toolchain (see [`docs/BUILD_GUIDE.md`](../../../docs/BUILD_GUIDE.md)).
 
-1. Open `build/free-energy-perturbation-thermodynamic-integration.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/free-energy-perturbation-thermodynamic-integration.exe`.
+1. Open [`build/free-energy-perturbation-thermodynamic-integration.sln`](build/free-energy-perturbation-thermodynamic-integration.sln) in Visual Studio 2026.
+2. Select **`Release | x64`**.
+3. **Build → Build Solution** (`Ctrl+Shift+B`). The `.exe` lands in
+   `build/x64/Release/`.
 
-Command-line alternative (Developer PowerShell):
+Command-line equivalent (Developer PowerShell):
 
 ```powershell
-msbuild build\free-energy-perturbation-thermodynamic-integration.sln /p:Configuration=Release /p:Platform=x64
+& "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" `
+  build\free-energy-perturbation-thermodynamic-integration.sln /p:Configuration=Release /p:Platform=x64 /m
 ```
+
+Linux/macOS learners can use the optional [`CMakeLists.txt`](CMakeLists.txt)
+(`cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release && cmake --build build/cmake`);
+the Visual Studio solution is the required deliverable.
 
 ## Run the demo
 
-```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
-```
+One command builds (if needed), runs on the committed sample, and checks the result:
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+```powershell
+.\demo\run_demo.ps1            # Windows
+```
+```bash
+./demo/run_demo.sh             # Linux/macOS (CMake path)
+```
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: Merck FEP benchmark set — 8 targets with experimental ΔΔG (available via OpenFE; https://github.com/OpenFreeEnergy/openfe); FEP+ validation set (Schrodinger, verify URL); PDB-bind — experimental binding affinities (http://www.pdbbind.org.cn); ChEMBL activity data for target families (https://www.ebi.ac.uk/chembl/).
+The committed sample [`data/sample/alchemy_sample.txt`](data/sample/alchemy_sample.txt)
+is **synthetic** (generated by [`scripts/make_synthetic.py`](scripts/make_synthetic.py)):
+the 10 parameters of the harmonic alchemical model — see
+[`data/README.md`](data/README.md) for every field's meaning and units. It is *not*
+real molecular data; a faithful FEP run needs a full MD engine and a force field. The
+sample is engineered so the answer is a known constant (`kA=1, kB=4, kT=1` →
+`ΔG = ½·ln(4) = ln 2 ≈ 0.693147`). To fetch/study real FEP benchmarks (Merck/OpenFE,
+PDBbind, ChEMBL) run [`scripts/download_data.ps1`](scripts/download_data.ps1) — it
+prints links and never bypasses any registration.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+`demo/run_demo` diffs the program's **stdout** against
+[`demo/expected_output.txt`](demo/expected_output.txt). Success looks like:
+
+```
+1.5 -- Free Energy Perturbation / Thermodynamic Integration
+alchemical TI: stateA(k=1.000) -> stateB(k=4.000) at kT=1.000, 11 windows
+MC sampling: 2000 equil + 20000 samples per window, step=0.600
+TI curve <dU/dlambda> per window (lambda -> mean):
+  w0  lambda=0.00  <dU/dlambda>=  +3.63892
+  w1  lambda=0.10  <dU/dlambda>=  +2.17333
+  ...
+  w10 lambda=1.00  <dU/dlambda>=  -0.11909
+DeltaG_TI       = +0.71099  (trapezoid over lambda)
+DeltaG_analytic = +0.69315  (= 1/2 kT ln(kB/kA))
+RESULT: PASS (GPU==CPU within 1e-09; TI within 5e-02 of analytic)
+```
+
+**Two correctness checks** (both must pass):
+1. **GPU vs CPU** — the GPU per-window averages match the serial CPU reference
+   (`reference_cpu.cpp`) to `≤ 1e-9` (same code + same counter-based RNG → essentially
+   exact; the tiny slack is `exp`/FMA differences between host and device compilers).
+2. **TI vs analytic** — the integrated ΔG matches the closed form `½·kT·ln(kB/kA)` to
+   `5e-2`. The small gap (`0.711` vs `0.693`) is the **trapezoid discretisation bias**
+   from a coarse 11-window grid — a real, visible teaching point, not a bug.
+
+Timing and diagnostics go to **stderr** (shown, never diffed), since they vary run to
+run.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/alchemy.h`](src/alchemy.h) — the shared `__host__ __device__` core: the
+   potentials, the counter-based RNG, **`run_chain()`** (one MC chain), the trapezoid
+   integrator, and the analytic ΔG. *This is the heart of the project.*
+2. [`src/main.cu`](src/main.cu) — the 5-step driver: load → CPU reference → GPU → verify
+   (twice) → report (stdout deterministic, stderr timing).
+3. [`src/kernels.cu`](src/kernels.cu) — the GPU ensemble: one thread per λ-window, each
+   calling the same `run_chain()`.
+4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the serial baseline (config loader
+   + a plain loop over windows) the GPU is checked against.
 
 ## Prior art & further reading
 
-OpenFE (https://github.com/OpenFreeEnergy/openfe) — open FEP toolkit supporting GROMACS and OpenMM backends; GROMACS FEP (https://github.com/gromacs/gromacs) — GPU-accelerated FEP with MBAR post-processing via alchemlyb; OpenMMTools (https://github.com/choderalab/openmmtools) — alchemical replica exchange on GPU via OpenMM; AMBER pmemd.cuda TI (https://ambermd.org/GPUSupport.php) — softcore TI on NVIDIA GPUs.
+From the catalog (study these; we reimplement didactically rather than copying):
 
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
-
-## CUDA pattern used here
-
-Full MD engine on GPU (cuFFT PME + custom force kernels); embarrassingly parallel λ-window array across multiple GPUs; NCCL for REMD communication; CPU post-processing via alchemlyb/MBAR. --
+- **[OpenFE](https://github.com/OpenFreeEnergy/openfe)** — open FEP toolkit (GROMACS/
+  OpenMM backends); ships the Merck benchmark. *Learn: how λ-windows and estimators are
+  orchestrated.*
+- **[GROMACS FEP](https://github.com/gromacs/gromacs)** + `alchemlyb` — production
+  GPU FEP with MBAR post-processing. *Learn: soft-core potentials and BAR/MBAR.*
+- **[OpenMMTools](https://github.com/choderalab/openmmtools)** — alchemical replica
+  exchange on GPU. *Learn: REST2 / Hamiltonian replica exchange.*
+- **AMBER `pmemd.cuda` TI** — softcore TI on NVIDIA GPUs. *Learn: a mature TI engine.*
+- `pymbar` / `alchemlyb` — the estimator libraries (BAR, MBAR, TI) every pipeline uses.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Finer λ-grid.** Regenerate the sample with `--windows 41` and watch `DeltaG_TI`
+   converge toward `0.693147` — quantify the trapezoid bias vs window count.
+2. **Tune the move size.** Change `step` (e.g. 0.3, 1.2) and observe the printed MC
+   acceptance and how `⟨∂U/∂λ⟩` noise changes. What's the sweet spot?
+3. **Change the answer.** Set `--kB 9`; predict `ΔG = ½·ln 9 ≈ 1.0986` *before* running.
+4. **Add the FEP (Zwanzig) estimator.** Accumulate `exp(−(U_{λ+Δ}−U_λ)/kT)` between
+   neighbouring windows and compare exponential-averaging FEP to TI.
+5. **Block averaging / error bars.** Split each chain into blocks to estimate the
+   statistical uncertainty on each `⟨∂U/∂λ⟩` and propagate it to ΔG.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced scope.** This is a 1-D harmonic toy, *not* a molecular simulation: no
+  solvent, no force field, no MD, no soft-core potentials. It teaches the FEP/TI
+  *method* and its GPU mapping, and `THEORY.md` describes the full production version.
+- **Synthetic data**, labelled synthetic everywhere; no clinical or affinity-prediction
+  validity is implied.
+- **Bias is real and shown.** The 11-window trapezoid over-estimates ΔG by ~0.018; we
+  print the gap rather than hiding it behind a loose tolerance.
+- **Timing is a teaching artifact, not a benchmark.** With only 11 windows the kernel
+  is launch-bound and *slower* than the CPU here; the GPU's advantage grows with the
+  number of windows and chain length (`THEORY.md` "honest timing").

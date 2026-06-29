@@ -18,16 +18,20 @@ echo "[download_data] Project 1.3 -- Molecular Docking Engine"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
 
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    DUD-E — directory of useful decoys enhanced, 102 targets with actives and decoys (https://dude.docking.org); ChEMBL — bioactivity database with >2M compounds (https://www.ebi.ac.uk/chembl/); PDB-bind — curated protein-ligand complexes with binding affinities (http://www.pdbbind.org.cn); CASF benchmark — comparative assessment of scoring functions (http://www.pdbbind.org.cn/casf.php)."
+# This teaching project runs on SYNTHETIC input (scripts/make_synthetic.py). Real
+# docking data is not auto-fetched: it requires receptor/ligand preparation and an
+# AutoGrid map computation that are outside this didactic scope. We print pointers.
+echo "  This project's committed sample is SYNTHETIC (data/sample/) and runs the demo offline."
+echo "  No real dataset is auto-downloaded -- real docking needs receptor + ligand prep."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  Real datasets to study (respect each license):"
+echo "    DUD-E    102 targets, actives + decoys      https://dude.docking.org"
+echo "    ChEMBL   >2M bioactive compounds            https://www.ebi.ac.uk/chembl/"
+echo "    PDBbind  protein-ligand complexes + Kd/Ki   http://www.pdbbind.org.cn"
+echo "    CASF     scoring-function benchmark         http://www.pdbbind.org.cn/casf.php"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "  To dock a real complex you would: prepare receptor+ligand to PDBQT (AutoDockTools/Meeko),"
+echo "  precompute energy maps with AutoGrid, then run AutoDock-GPU or Vina (see THEORY.md)."
+echo
+echo "  For a larger SYNTHETIC problem instead, run e.g.:"
+echo "    python scripts/make_synthetic.py --n-trans 15 --n-rot 6 --n-grid 32"

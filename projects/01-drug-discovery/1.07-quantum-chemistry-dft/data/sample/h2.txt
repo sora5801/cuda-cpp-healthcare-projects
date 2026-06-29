@@ -1,0 +1,7 @@
+# SYNTHETIC sample molecule: H2 (standard equilibrium geometry).
+# Line 1: "<natoms> <charge>"   charge = net molecular charge.
+# Then one line per atom: "<Z> <x> <y> <z>"   coordinates in BOHR (atomic units).
+# Reference STO-3G RHF total energy ~ -1.1167 Hartree (textbook). NOT patient data.
+2 0
+1 0.0 0.0 0.0
+1 0.0 0.0 1.4

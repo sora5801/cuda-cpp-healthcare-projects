@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.7 -- Quantum Chemistry / DFT   (template skeleton)
+# Project 1.7 -- Quantum Chemistry / DFT   (reduced-scope RHF/SCF)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/quantum-chemistry-dft.sln (CLAUDE.md §5). Both
@@ -31,3 +31,8 @@ add_executable(quantum-chemistry-dft
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(quantum-chemistry-dft PRIVATE src)
+
+# This project links cuSOLVER for the generalized symmetric eigensolve
+# (cusolverDnDsygvd, see src/kernels.cu); cuSOLVER pulls in cuBLAS and cuSPARSE.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(quantum-chemistry-dft PRIVATE CUDA::cusolver CUDA::cublas CUDA::cusparse)

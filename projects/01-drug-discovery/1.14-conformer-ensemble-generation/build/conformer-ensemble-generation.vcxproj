@@ -151,6 +151,7 @@
     <CudaCompile Include="..\src\main.cu" />
     <CudaCompile Include="..\src\kernels.cu" />
     <ClCompile Include="..\src\reference_cpu.cpp" />
+    <ClInclude Include="..\src\conformer.h" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />

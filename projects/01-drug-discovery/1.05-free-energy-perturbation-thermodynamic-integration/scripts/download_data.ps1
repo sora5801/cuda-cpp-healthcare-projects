@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 1.5 -- Free Energy Perturbation / Thermodynamic Integration   (template skeleton)
+# Project 1.5 : Free Energy Perturbation / Thermodynamic Integration
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. This project is a REDUCED-SCOPE teaching
+# model with no real dataset to fetch -- a faithful FEP/TI run needs a full MD
+# engine + force field. So this script only prints links and defers to the
+# committed synthetic sample (scripts/make_synthetic.py) for an offline run.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,21 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 1.5 -- Free Energy Perturbation / Thermodynamic Integration"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Merck FEP benchmark set — 8 targets with experimental ΔΔG (available via OpenFE; https://github.com/OpenFreeEnergy/openfe); FEP+ validation set (Schrodinger, verify URL); PDB-bind — experimental binding affinities (http://www.pdbbind.org.cn); ChEMBL activity data for target families (https://www.ebi.ac.uk/chembl/)."
+Write-Host "This is a REDUCED-SCOPE teaching model: it samples a 1-D harmonic"
+Write-Host "alchemical system whose DeltaG has a CLOSED FORM, so no external data"
+Write-Host "is required. The committed synthetic sample runs the demo offline."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real FEP/TI benchmarks to study (each needs a full MD engine):"
+Write-Host "  * Merck FEP benchmark set (open, via OpenFE):"
+Write-Host "      https://github.com/OpenFreeEnergy/openfe"
+Write-Host "  * FEP+ validation set (Schrodinger; registration required) -- links only."
+Write-Host "  * PDBbind experimental binding affinities:  http://www.pdbbind.org.cn"
+Write-Host "  * ChEMBL bioactivity data:                  https://www.ebi.ac.uk/chembl/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "For a different SYNTHETIC problem, run:"
+Write-Host "    python scripts/make_synthetic.py --kB 9 --windows 21"
+Write-Host ""
+Write-Host "NOTE: credentialed sets (FEP+, some PDBbind tiers) require you to"
+Write-Host "register and accept their license yourself; this script will never"
+Write-Host "attempt to bypass that."

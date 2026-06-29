@@ -1,5 +1,12 @@
 1.2 -- Particle-Mesh Ewald Electrostatics
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+system: 64 charges in a cubic box of side 8.0000 (reduced units)
+PME params: grid 16x16x16, B-spline order 4, beta 0.750000, rcut 4.000000
+E_recip (GPU SPME) = 2.02433442
+E_recip (CPU SPME) = 2.02433454
+E_recip (direct Ewald) = 2.02433454
+E_real = -2.90499951   E_self = 27.08110001
+E_total (real + recip - self) = -27.96176498
+CHECK GPU==CPU SPME      : PASS (rel 6.15e-08 <= 1e-04)
+CHECK SPME~=direct Ewald : PASS (rel 7.46e-12 <= 5e-03)
+CHECK total invariant to beta : PASS (rel 2.62e-05 <= 2e-02)
+RESULT: PASS

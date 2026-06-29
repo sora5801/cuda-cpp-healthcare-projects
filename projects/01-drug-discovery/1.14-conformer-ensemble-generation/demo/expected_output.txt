@@ -1,5 +1,12 @@
 1.14 -- Conformer Ensemble Generation
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+molecule: chain of 8 atoms, 5 rotatable torsions, 3 rotamers each
+enumerated 243 conformers; pruned to 81 distinct (RMSD >= 1.00 A)
+global minimum: conformer #0  E = 0.105969 kcal/mol
+  torsions (deg): +180 +180 +180 +180 +180
+ensemble (top 5 representatives by energy):
+  #1  conformer 0  E = 0.105969 kcal/mol
+  #2  conformer 1  E = 0.557316 kcal/mol
+  #3  conformer 2  E = 0.557316 kcal/mol
+  #4  conformer 54  E = 0.561138 kcal/mol
+  #5  conformer 27  E = 0.561138 kcal/mol
+RESULT: PASS (GPU matches CPU within tol=1.0e-09)

@@ -1,48 +1,65 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate the tiny molecule input files
 # ---------------------------------------------------------------------------
-# Project 1.7 -- Quantum Chemistry / DFT   (template skeleton)
+# Project 1.7 : Quantum Chemistry / DFT  (reduced-scope RHF/SCF)
 #
-# WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+# WHAT THIS DOES
+#   Emits the committed sample molecule(s) used by demo/run_demo. These are NOT
+#   experimental data -- they are STANDARD, PUBLIC textbook geometries (equilibrium
+#   bond lengths) written out in the project's simple input format. Nothing here is
+#   patient-derived; everything is synthetic/public (CLAUDE.md section 8).
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
-#
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# THE FORMAT (see data/README.md)
+#   line 1: "<natoms> <charge>"      charge = net molecular charge
+#   then natoms lines: "<Z> <x> <y> <z>"   coordinates in BOHR (atomic units)
+#   '#' comment lines and blank lines are ignored by the loader.
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py                 # writes data/sample/h2.txt
+#   python scripts/make_synthetic.py --mol heh+      # writes a HeH+ cation
+#   python scripts/make_synthetic.py --mol he        # writes a He atom
+#
+# This teaching build ships only H and He basis sets, so only those elements work.
 # ===========================================================================
 import argparse
-from pathlib import Path
+import os
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+# Equilibrium geometries in BOHR (1 Bohr = 0.52917721 Angstrom). These are common
+# textbook values used to reproduce the canonical STO-3G energies.
+MOLECULES = {
+    # name : (charge, [(Z, x, y, z), ...], reference STO-3G total energy in Hartree)
+    "h2":   (0, [(1, 0.0, 0.0, 0.0), (1, 0.0, 0.0, 1.4)], -1.1167),
+    "heh+": (1, [(2, 0.0, 0.0, 0.0), (1, 0.0, 0.0, 1.4632)], -2.8606),
+    "he":   (0, [(2, 0.0, 0.0, 0.0)], -2.8077),
+}
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
+def write_molecule(path: str, name: str) -> None:
+    """Write one molecule file in the project's text format."""
+    charge, atoms, e_ref = MOLECULES[name]
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(f"# SYNTHETIC sample molecule: {name.upper()} (standard equilibrium geometry).\n")
+        f.write('# Line 1: "<natoms> <charge>"   charge = net molecular charge.\n')
+        f.write('# Then one line per atom: "<Z> <x> <y> <z>"   coordinates in BOHR (atomic units).\n')
+        f.write(f"# Reference STO-3G RHF total energy ~ {e_ref:.4f} Hartree (textbook). NOT patient data.\n")
+        f.write(f"{len(atoms)} {charge}\n")
+        for (Z, x, y, z) in atoms:
+            f.write(f"{Z} {x} {y} {z}\n")
+    print(f"[make_synthetic] wrote {path}  ({name.upper()}, ref ~ {e_ref:.4f} Ha)")
+
+
+def main() -> None:
+    here = os.path.dirname(os.path.abspath(__file__))
+    ap = argparse.ArgumentParser(description="Generate a tiny synthetic molecule input.")
+    ap.add_argument("--mol", default="h2", choices=sorted(MOLECULES.keys()),
+                    help="which molecule to write (default: h2)")
+    ap.add_argument("--out", default=None,
+                    help="output path (default: data/sample/<mol>.txt)")
     args = ap.parse_args()
-
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
-
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    out = args.out or os.path.join(here, "..", "data", "sample", f"{args.mol}.txt")
+    write_molecule(os.path.normpath(out), args.mol)
 
 
 if __name__ == "__main__":

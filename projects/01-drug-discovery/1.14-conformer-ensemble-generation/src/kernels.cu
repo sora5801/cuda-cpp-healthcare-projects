@@ -1,94 +1,83 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  GPU conformer-energy kernel + host wrapper
 // ---------------------------------------------------------------------------
-// Project 1.14 -- Conformer Ensemble Generation   (template skeleton)
+// Project 1.14 : Conformer Ensemble Generation
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// This is the GPU twin of enumerate_energies_cpu() in reference_cpu.cpp. main.cu
+// runs both and asserts they agree. The actual physics (index -> torsions -> 3D
+// coordinates -> energy) lives in conformer.h as __host__ __device__ inline
+// functions, so the kernel below is mostly the parallel BOOKKEEPING -- mapping
+// threads to conformers -- around a single call to conformer_energy().
+// See ../THEORY.md "GPU mapping".
 // ===========================================================================
+#include "conformer.h"           // conformer_energy (the shared HD physics)
 #include "kernels.cuh"
-#include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "util/cuda_check.cuh"    // CUDA_CHECK, CUDA_CHECK_LAST
+#include "util/timer.cuh"         // GpuTimer
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// 128 threads/block. A multiple of the 32-lane warp, and a good fit here: each
+// thread holds a small fixed work set in registers/local memory (the N_ATOMS=8
+// position array + scratch), so a moderate block size keeps register pressure low
+// while still giving the scheduler several warps to hide the latency of the cos/
+// sin/sqrt the embedding does. (Tune per GPU; see THEORY "GPU mapping".)
+static constexpr int THREADS_PER_BLOCK = 128;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
+// energies_kernel: one logical thread per conformer, via a grid-stride loop so a
+// fixed-size grid still covers an arbitrarily large conformer count.
+//   Launch config (set in energies_gpu):
+//     grid  = min(ceil(n / THREADS_PER_BLOCK), cap) blocks
 //     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+//   Thread-to-data map: thread (blockIdx.x, threadIdx.x) starts at
+//     c = blockIdx.x * blockDim.x + threadIdx.x  and strides by the total thread
+//     count until c >= n -- so every conformer index is handled exactly once.
+//   Memory: each thread builds this conformer's coordinates entirely in its own
+//     registers/local memory (conformer_energy allocates a tiny N_ATOMS array on
+//     the stack); the ONLY global-memory traffic is the single out[c] store, which
+//     is coalesced because consecutive threads write consecutive indices. No
+//     shared memory and no atomics are needed -- the conformers are independent.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
+__global__ void energies_kernel(long n, double* __restrict__ out) {
+    const long stride = static_cast<long>(blockDim.x) * gridDim.x;   // total threads
+    for (long c = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
+         c < n; c += stride) {
+        // The entire per-conformer computation is one call into the shared core.
+        // out_pos = nullptr: we want only the scalar energy here (the GPU does not
+        // need to return coordinates; the CPU clustering step rebuilds them).
+        out[c] = conformer_energy(c, nullptr);
     }
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
+// energies_gpu: the five canonical CUDA steps, minus an input copy (there is no
+// input array -- a conformer is fully described by its integer index, which the
+// kernel derives from its thread id). We time ONLY the kernel (CUDA events), not
+// the D2H copy (that is discussed separately in THEORY "GPU mapping").
+//   (1) allocate the device output  (2) [no inputs to copy]
+//   (3) launch the kernel            (4) copy energies D2H
 //   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void energies_gpu(std::vector<double>& energy, float* kernel_ms) {
+    const long n = N_CONFORMER;
+    energy.assign(static_cast<std::size_t>(n), 0.0);
+    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(double);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // (1) Device output buffer. The d_ prefix marks a DEVICE pointer (CLAUDE.md
+    //     §12): dereferencing it on the host would crash, so the naming matters.
+    double* d_out = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_out, bytes));   // can fail: out of device memory
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
-
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // (3) Launch. Enough blocks to cover n one-thread-per-conformer, capped so the
+    //     grid stays modest; the grid-stride loop in the kernel covers any larger n.
+    int blocks = static_cast<int>((n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK);
+    if (blocks > 1024) blocks = 1024;        // cap: grid-stride handles the rest
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    energies_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, d_out);
+    *kernel_ms = timer.stop_ms();            // GPU-measured kernel time
+    CUDA_CHECK_LAST("energies_kernel");      // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
+    // (4) Bring the energies back to the host vector, then (5) free the buffer.
+    CUDA_CHECK(cudaMemcpy(energy.data(), d_out, bytes, cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaFree(d_out));
 }

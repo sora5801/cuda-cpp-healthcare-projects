@@ -1,122 +1,156 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: FEP/TI free-energy estimate, verified two ways
 // ---------------------------------------------------------------------------
-// Project 1.5 -- Free Energy Perturbation / Thermodynamic Integration   (template skeleton)
+// Project 1.5 : Free Energy Perturbation / Thermodynamic Integration
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// WHAT THIS PROGRAM COMPUTES
+//   The free-energy difference DeltaG between two harmonic "states" A and B of a
+//   1-D model system, via Thermodynamic Integration (TI) over an alchemical
+//   lambda-pathway. For each of W lambda-windows we estimate the equilibrium
+//   average < dU/dlambda > by Metropolis Monte Carlo, then integrate those over
+//   lambda with the trapezoid rule:  DeltaG_TI = integral_0^1 < dU/dlambda > dlambda.
+//   (See ../THEORY.md for the science, the math, and why this is reduced-scope.)
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// THE 5-STEP SHAPE EVERY PROJECT IN THIS REPO FOLLOWS
+//   1. Load the AlchemyConfig (from data/sample, or a built-in fallback).
+//   2. CPU reference: sample every window serially            (reference_cpu.cpp).
+//   3. GPU: one thread per window, same MC chain each         (kernels.cu).
+//   4. VERIFY twice:
+//        (a) GPU per-window averages match the CPU reference  (same RNG+math),
+//        (b) the TI estimate matches the CLOSED-FORM DeltaG    (the science).
+//   5. REPORT: deterministic result -> stdout; timing/diagnostics -> stderr.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+//   stdout is kept byte-for-byte deterministic (fixed precision; counter-based
+//   RNG) so demo/run_demo can diff it against demo/expected_output.txt. Anything
+//   that varies run-to-run (wall-clock timings) goes to stderr.
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then alchemy.h (model + RNG + MC sampler), kernels.cu
+// (the GPU ensemble), reference_cpu.cpp (the serial baseline).
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // integrate_gpu, AlchemyConfig
+#include "reference_cpu.h"    // load_config, integrate_cpu
+#include "alchemy.h"          // trapezoid_ti, analytic_delta_g, window_lambda
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "1.5";
 static const char* PROJECT_NAME = "Free Energy Perturbation / Thermodynamic Integration";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// --- Verification tolerances (PATTERNS.md §4: be honest about floating point) -
+// CPU and GPU run the IDENTICAL double-precision MC chain with the IDENTICAL
+// counter-based RNG, so per-window averages agree to round-off. We allow a tiny
+// slack for the only legitimate divergence: the device and host math libraries
+// (exp) and FMA contraction can differ in the last ~1-2 ulp, which over a long
+// chain stays far below 1e-9. So this is "essentially exact".
+static constexpr double TOL_CPU_GPU = 1.0e-9;
+// The TI estimate is a STATISTICAL quantity (finite MC sampling + trapezoid
+// discretisation of lambda), so it only approaches the analytic DeltaG. The
+// committed sample is engineered so the bias is small; we accept agreement to
+// this physical tolerance and PRINT the gap so the learner sees the convergence.
+static constexpr double TOL_TI_ANALYTIC = 5.0e-2;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// Built-in synthetic problem used when no data file is supplied. Chosen so the
+// answer is interpretable: stiffening the spring from kA=1 to kB=4 at kT=1 gives
+// the clean analytic DeltaG = 1/2 * ln(4) = ln(2) ~ 0.693147. (Same numbers as
+// data/sample/alchemy_sample.txt so stdout matches with or without an argument.)
+static AlchemyConfig make_synthetic() {
+    AlchemyConfig c;
+    c.kA = 1.0;  c.x0A = 0.0;        // state A: soft spring at origin
+    c.kB = 4.0;  c.x0B = 1.0;        // state B: 4x stiffer spring, shifted to x=1
+    c.kT = 1.0;                      // temperature in energy units (kB=1)
+    c.windows = 11;                  // lambda = 0.0, 0.1, ..., 1.0
+    c.equil   = 2000;                // burn-in MC steps (discarded)
+    c.samples = 20000;               // averaged MC steps
+    c.step    = 0.6;                 // trial-move half-width (~50% acceptance)
+    c.x_init  = 0.0;                 // every chain starts at x=0
+    return c;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
+    // ---- 1. Load -----------------------------------------------------------
+    AlchemyConfig c;
+    const char* source;
+    if (argc > 1) {
+        try {
+            c = load_config(argv[1]);
+            source = argv[1];
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[error] %s\n", e.what());
+            return 2;
+        }
     } else {
-        make_synthetic(n, a, x, y);
+        c = make_synthetic();
+        source = "synthetic (built-in)";
     }
+    const int W = n_windows(c);
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<double> dvals_cpu;
+    std::vector<long long> acc_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    integrate_cpu(c, dvals_cpu, acc_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU ensemble (kernel timed) -----------------------------------
+    std::vector<double> dvals_gpu;
+    std::vector<long long> acc_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    integrate_gpu(c, dvals_gpu, acc_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4a. Verify GPU == CPU (per window) -------------------------------
+    double worst = 0.0;
+    for (int w = 0; w < W; ++w)
+        worst = std::fmax(worst, std::fabs(dvals_cpu[w] - dvals_gpu[w]));
+    const bool pass_cpu_gpu = worst <= TOL_CPU_GPU;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 4b. TI integral + analytic check ---------------------------------
+    // Integrate the (GPU) per-window averages over lambda -> DeltaG_TI.
+    const double dG_ti       = trapezoid_ti(dvals_gpu.data(), W);
+    const double dG_analytic = analytic_delta_g(c);
+    const double ti_err      = std::fabs(dG_ti - dG_analytic);
+    const bool pass_ti       = ti_err <= TOL_TI_ANALYTIC;
+
+    const bool pass = pass_cpu_gpu && pass_ti;
+
+    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) ----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("alchemical TI: stateA(k=%.3f) -> stateB(k=%.3f) at kT=%.3f, %d windows\n",
+                c.kA, c.kB, c.kT, W);
+    std::printf("MC sampling: %d equil + %d samples per window, step=%.3f\n",
+                c.equil, c.samples, c.step);
+    std::printf("TI curve <dU/dlambda> per window (lambda -> mean):\n");
+    for (int w = 0; w < W; ++w) {
+        std::printf("  w%-2d lambda=%.2f  <dU/dlambda>=%+10.5f\n",
+                    w, window_lambda(c, w), dvals_gpu[w]);
+    }
+    std::printf("DeltaG_TI       = %+.5f  (trapezoid over lambda)\n", dG_ti);
+    std::printf("DeltaG_analytic = %+.5f  (= 1/2 kT ln(kB/kA))\n", dG_analytic);
+    std::printf("RESULT: %s (GPU==CPU within %.0e; TI within %.0e of analytic)\n",
+                pass ? "PASS" : "FAIL", TOL_CPU_GPU, TOL_TI_ANALYTIC);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
+    long long acc_total = 0, steps_total = 0;
+    for (int w = 0; w < W; ++w) {
+        acc_total   += acc_gpu[w];
+        steps_total += static_cast<long long>(c.equil) + c.samples;
+    }
+    std::fprintf(stderr, "[data]   source: %s  (%d windows)\n", source, W);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- few windows are "
+                         "launch-bound; the GPU edge grows with #windows/chain length.\n");
+    std::fprintf(stderr, "[mc]     overall MC acceptance = %.1f%% (tune `step` to "
+                         "trade acceptance vs exploration)\n",
+                 steps_total ? 100.0 * acc_total / steps_total : 0.0);
+    std::fprintf(stderr, "[verify] worst |CPU-GPU| per window = %.3e (tol %.1e)\n",
+                 worst, TOL_CPU_GPU);
+    std::fprintf(stderr, "[verify] |TI - analytic|            = %.3e (tol %.1e)\n",
+                 ti_err, TOL_TI_ANALYTIC);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

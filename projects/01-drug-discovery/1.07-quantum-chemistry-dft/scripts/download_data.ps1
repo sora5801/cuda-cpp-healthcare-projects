@@ -1,33 +1,32 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Pointers to the FULL datasets (Windows)
 # ---------------------------------------------------------------------------
-# Project 1.7 -- Quantum Chemistry / DFT   (template skeleton)
+# Project 1.7 : Quantum Chemistry / DFT  (reduced-scope RHF/SCF)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
-#
-# Usage:  ./scripts/download_data.ps1
+# This project's DEMO needs NO download: it runs on the tiny committed molecule
+# in data/sample/ (a hand-written H2 geometry). This script does NOT fetch
+# anything automatically -- the catalog's reference datasets are large research
+# corpora of precomputed quantum-chemistry results, used to BENCHMARK or TRAIN
+# models, not to drive this teaching SCF. It prints where to get them and how they
+# relate to this project. Respect each dataset's license (CLAUDE.md section 8).
 # ===========================================================================
-$ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DataDir = Join-Path $ProjectRoot "data"
-
-Write-Host "[download_data] Project 1.7 -- Quantum Chemistry / DFT"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    QM9 — DFT-computed properties of 134k organic molecules (https://doi.org/10.6084/m9.figshare.978904); ANI-1ccx — CCSD(T)-level energies for diverse organic molecules (https://github.com/isayev/ANI1ccx_dataset); PubChemQC — DFT calculations for ~3M PubChem molecules (http://pubchemqc.riken.jp); CSD — Cambridge Structural Database for crystal structures (https://www.ccdc.cam.ac.uk)."
+Write-Host "Project 1.7 - Quantum Chemistry / DFT : full reference datasets" -ForegroundColor Cyan
+Write-Host "-----------------------------------------------------------------"
+Write-Host "The demo runs offline on data/sample/h2.txt. The datasets below are"
+Write-Host "large corpora of precomputed DFT/CCSD(T) results (for ML and benchmarking),"
+Write-Host "NOT inputs to this SCF. Listed for further study only:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  QM9        134k organic molecules with DFT-computed properties"
+Write-Host "             https://doi.org/10.6084/m9.figshare.978904"
+Write-Host "  ANI-1ccx   CCSD(T)-level energies for diverse organic molecules"
+Write-Host "             https://github.com/isayev/ANI1ccx_dataset"
+Write-Host "  PubChemQC  DFT calculations for ~3M PubChem molecules"
+Write-Host "             http://pubchemqc.riken.jp"
+Write-Host "  CSD        Cambridge Structural Database (crystal structures; licensed)"
+Write-Host "             https://www.ccdc.cam.ac.uk"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "To make more inputs for THIS project (H/He molecules), use:"
+Write-Host "  python scripts/make_synthetic.py --mol heh+"
+Write-Host ""
+Write-Host "No files were downloaded (by design)." -ForegroundColor Yellow

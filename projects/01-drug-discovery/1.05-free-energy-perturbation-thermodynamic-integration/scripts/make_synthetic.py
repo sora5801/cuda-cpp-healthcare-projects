@@ -1,48 +1,65 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate the synthetic FEP/TI sample input
 # ---------------------------------------------------------------------------
-# Project 1.5 -- Free Energy Perturbation / Thermodynamic Integration   (template skeleton)
+# Project 1.5 : Free Energy Perturbation / Thermodynamic Integration
 #
 # WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+#   Real FEP benchmark sets (Merck/OpenFE, FEP+, PDBbind) are full molecular
+#   systems that need a complete MD engine + force field -- far beyond this
+#   reduced-scope teaching model, and several are license- or registration-gated
+#   (see data/README.md and scripts/download_data.*). So the committed sample is
+#   a tiny, clearly-SYNTHETIC config for our 1-D harmonic alchemical model, whose
+#   free-energy difference has a CLOSED FORM the demo verifies against.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
+#   The model morphs harmonic state A (k=kA) into state B (k=kB) along a linear
+#   lambda-path; the exact answer is  DeltaG = 1/2 * kT * ln(kB / kA)  (THEORY.md).
+#   The default kA=1, kB=4, kT=1 gives DeltaG = 1/2 ln(4) = ln(2) ~ 0.693147 --
+#   a memorable target the TI estimate should reproduce.
 #
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# OUTPUT FORMAT (one whitespace-separated record; see data/README.md):
+#   kA x0A kB x0B kT windows equil samples step x_init
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py                 # default sample
+#   python scripts/make_synthetic.py --windows 21    # finer lambda-grid
+#   python scripts/make_synthetic.py --kB 9          # DeltaG = 1/2 ln(9) ~ 1.0986
 # ===========================================================================
 import argparse
+import math
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+OUT = ROOT / "data" / "sample" / "alchemy_sample.txt"
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
+    ap = argparse.ArgumentParser(description="Generate the synthetic FEP/TI sample.")
+    ap.add_argument("--kA", type=float, default=1.0, help="state-A spring constant")
+    ap.add_argument("--x0A", type=float, default=0.0, help="state-A well centre")
+    ap.add_argument("--kB", type=float, default=4.0, help="state-B spring constant")
+    ap.add_argument("--x0B", type=float, default=1.0, help="state-B well centre")
+    ap.add_argument("--kT", type=float, default=1.0, help="temperature (energy units)")
+    ap.add_argument("--windows", type=int, default=11, help="number of lambda-windows")
+    ap.add_argument("--equil", type=int, default=2000, help="MC burn-in steps")
+    ap.add_argument("--samples", type=int, default=20000, help="MC averaged steps")
+    ap.add_argument("--step", type=float, default=0.6, help="MC trial half-width")
+    ap.add_argument("--x_init", type=float, default=0.0, help="chain start position")
     ap.add_argument("--out", default=str(OUT), help="output path")
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    fields = [args.kA, args.x0A, args.kB, args.x0B, args.kT,
+              args.windows, args.equil, args.samples, args.step, args.x_init]
+    line = " ".join(repr(v) if isinstance(v, float) else str(v) for v in fields)
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    header = ("# SYNTHETIC FEP/TI sample (Project 1.5) -- NOT real molecular data.\n"
+              "# fields: kA x0A kB x0B kT windows equil samples step x_init\n")
+    Path(args.out).write_text(header + line + "\n", encoding="utf-8")
+
+    dG = 0.5 * args.kT * math.log(args.kB / args.kA)
+    print(f"[make_synthetic] wrote {args.out}  (SYNTHETIC)")
+    print(f"[make_synthetic] analytic DeltaG = 1/2*{args.kT}*ln({args.kB}/{args.kA}) = {dG:.6f}")
 
 
 if __name__ == "__main__":

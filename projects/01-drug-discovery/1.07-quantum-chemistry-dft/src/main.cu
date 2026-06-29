@@ -1,122 +1,163 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: build integrals, run SCF on CPU + GPU, verify
 // ---------------------------------------------------------------------------
-// Project 1.7 -- Quantum Chemistry / DFT   (template skeleton)
+// Project 1.7 : Quantum Chemistry / DFT  (reduced-scope RHF/SCF -- see THEORY.md)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the same skeleton as every flagship):
+//   1. Load the molecule (data/sample), build the basis + cheap 1-electron matrices.
+//   2. Build the O(N^4) two-electron tensor BOTH ways:
+//        - CPU reference (build_eri_cpu)
+//        - GPU kernel    (build_eri_gpu)   <-- the project's headline kernel
+//      and VERIFY they agree to ~machine precision (the integrals are the crux).
+//   3. Run the SCF loop with the CPU eigensolver (run_scf) -> reference energy.
+//   4. Run the SAME SCF loop with the cuSOLVER eigensolver -> GPU energy.
+//   5. VERIFY the two total energies agree within tolerance; REPORT the energy,
+//      orbital levels, and HOMO-LUMO gap deterministically to stdout.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
-//
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then gaussian_integrals.h (the shared formulas),
+//   reference_cpu.cpp (basis + SCF), kernels.cu (the GPU ERI kernel + cuSOLVER).
+//   The science / GPU-mapping lives in ../THEORY.md.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // build_eri_gpu, cusolver_generalized
+#include "reference_cpu.h"    // load_molecule, build_*, run_scf, build_density/fock
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "1.7";
-static const char* PROJECT_NAME = "Quantum Chemistry / DFT";
+static const char* PROJECT_NAME = "Quantum Chemistry / DFT (reduced-scope RHF/SCF)";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// SCF + verification controls.
+static constexpr int    MAX_ITER   = 50;       // SCF cycle cap (converges in < 20)
+static constexpr double E_TOL      = 1.0e-9;   // SCF energy convergence (Hartree)
+static constexpr double ERI_TOL    = 1.0e-12;  // GPU-vs-CPU integral agreement
+static constexpr double ENERGY_TOL = 1.0e-9;   // GPU-vs-CPU final energy agreement
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
+// ---------------------------------------------------------------------------
+// run_scf_gpu: the identical RHF self-consistent loop as run_scf(), but the
+//   per-cycle generalized eigensolve is done by cuSOLVER (cusolver_generalized)
+//   instead of the CPU Jacobi path. Lives here (not in kernels.cu) because it just
+//   orchestrates host-side helpers + one GPU library call per iteration. Proving
+//   THIS converges to the same energy as the CPU loop is the end-to-end check that
+//   the whole GPU pipeline (integrals + eigensolver) is correct.
+// ---------------------------------------------------------------------------
+static ScfResult run_scf_gpu(const std::vector<double>& S, const std::vector<double>& Hcore,
+                             const std::vector<double>& eri, int N, int n_occ,
+                             double e_nuclear, int max_iter, double e_tol) {
+    ScfResult res;
+    res.e_nuclear = e_nuclear;
+    std::vector<double> F = Hcore;            // core guess
+    std::vector<double> C, eps, P;
+    double e_elec_prev = 0.0;
+
+    for (int iter = 1; iter <= max_iter; ++iter) {
+        cusolver_generalized(F, S, N, C, eps);          // 1. orbitals (GPU eigensolve)
+        build_density(C, N, n_occ, P);                  // 2. density from occ. MOs
+        build_fock(Hcore, P, eri, N, F);                // 3. new Fock matrix
+        double e_elec = 0.0;                            // 4. electronic energy
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N; ++j)
+                e_elec += 0.5 * P[(size_t)i * N + j] *
+                          (Hcore[(size_t)i * N + j] + F[(size_t)i * N + j]);
+        res.iterations = iter;
+        res.orbital_energies = eps;
+        res.e_electronic = e_elec;
+        if (std::fabs(e_elec - e_elec_prev) < e_tol) { res.converged = true; break; }
+        e_elec_prev = e_elec;
     }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+    res.e_total = res.e_electronic + e_nuclear;
+    if (n_occ - 1 >= 0 && n_occ - 1 < N) res.homo = res.orbital_energies[n_occ - 1];
+    if (n_occ < N)                       res.lumo = res.orbital_energies[n_occ];
+    return res;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load molecule, build basis + one-electron matrices ------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/h2.txt";
+    Molecule mol;
+    try {
+        mol = load_molecule(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const Basis bs = build_basis(mol);
+    const int N = static_cast<int>(bs.size());     // # basis functions (= # atoms here)
+    const int n_occ = mol.n_electrons / 2;         // doubly-occupied orbitals
+    const double e_nuc = nuclear_repulsion(mol);
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
-    util::CpuTimer cpu_timer;
-    cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    std::vector<double> S, Hcore;
+    build_overlap(bs, N, S);
+    build_core_hamiltonian(bs, mol, N, Hcore);
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
-    float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    // ---- 2. Two-electron tensor: CPU reference + GPU kernel, then verify ---
+    std::vector<double> eri_cpu, eri_gpu;
+    util::CpuTimer cpu_eri_timer;
+    cpu_eri_timer.start();
+    build_eri_cpu(bs, N, eri_cpu);
+    const double cpu_eri_ms = cpu_eri_timer.stop_ms();
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    float gpu_eri_ms = 0.0f;
+    build_eri_gpu(bs, N, eri_gpu, &gpu_eri_ms);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    double worst_eri = 0.0;
+    const size_t n4 = static_cast<size_t>(N) * N * N * N;
+    for (size_t t = 0; t < n4; ++t)
+        worst_eri = std::fmax(worst_eri, std::fabs(eri_cpu[t] - eri_gpu[t]));
+    const bool eri_pass = worst_eri <= ERI_TOL;
+
+    // ---- 3. CPU SCF (reference energy) ------------------------------------
+    util::CpuTimer cpu_scf_timer;
+    cpu_scf_timer.start();
+    ScfResult cpu = run_scf(S, Hcore, eri_cpu, N, n_occ, e_nuc, MAX_ITER, E_TOL);
+    const double cpu_scf_ms = cpu_scf_timer.stop_ms();
+
+    // ---- 4. GPU SCF (cuSOLVER eigensolver, GPU-built integrals) ------------
+    util::CpuTimer gpu_scf_timer;
+    gpu_scf_timer.start();
+    ScfResult gpu = run_scf_gpu(S, Hcore, eri_gpu, N, n_occ, e_nuc, MAX_ITER, E_TOL);
+    const double gpu_scf_ms = gpu_scf_timer.stop_ms();
+
+    // ---- 5. Verify energies agree -----------------------------------------
+    const double e_diff = std::fabs(cpu.e_total - gpu.e_total);
+    const bool energy_pass = e_diff <= ENERGY_TOL;
+    const bool pass = eri_pass && energy_pass && cpu.converged && gpu.converged;
+
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    // We print the GPU result (verified == CPU). Energies in Hartree, fixed width.
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("molecule: %d atoms, %d electrons, basis STO-3G (N=%d functions)\n",
+                static_cast<int>(mol.atoms.size()), mol.n_electrons, N);
+    std::printf("SCF converged in %d iterations\n", gpu.iterations);
+    std::printf("nuclear repulsion : %12.8f Ha\n", gpu.e_nuclear);
+    std::printf("electronic energy : %12.8f Ha\n", gpu.e_electronic);
+    std::printf("TOTAL ENERGY      : %12.8f Ha\n", gpu.e_total);
+    std::printf("orbital energies (Ha):");
+    for (int k = 0; k < N; ++k) std::printf(" %9.5f", gpu.orbital_energies[k]);
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("HOMO = %9.5f Ha   LUMO = %9.5f Ha   gap = %9.5f Ha\n",
+                gpu.homo, gpu.lumo, gpu.lumo - gpu.homo);
+    std::printf("ERI verify (GPU vs CPU): %s   energy verify (GPU vs CPU): %s\n",
+                eri_pass ? "PASS" : "FAIL", energy_pass ? "PASS" : "FAIL");
+    std::printf("RESULT: %s\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail / timings -> STDERR ---------------------------
+    std::fprintf(stderr, "[data]   source: %s  (N=%d basis fns, %lld ERIs)\n",
+                 path.c_str(), N, static_cast<long long>(n4));
+    std::fprintf(stderr, "[timing] ERI build  CPU: %.3f ms   GPU(kernel): %.3f ms\n",
+                 cpu_eri_ms, gpu_eri_ms);
+    std::fprintf(stderr, "[timing] SCF loop   CPU: %.3f ms   GPU: %.3f ms\n",
+                 cpu_scf_ms, gpu_scf_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- at N=%d the GPU is launch-bound; "
+                 "the O(N^4) ERI kernel's edge explodes with basis size (real molecules: "
+                 "N in the hundreds-to-thousands).\n", N);
+    std::fprintf(stderr, "[verify] worst |ERI_cpu - ERI_gpu| = %.3e (tol %.1e)\n",
+                 worst_eri, ERI_TOL);
+    std::fprintf(stderr, "[verify] |E_cpu - E_gpu| = %.3e (tol %.1e)  E_cpu = %.8f Ha\n",
+                 e_diff, ENERGY_TOL, cpu.e_total);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

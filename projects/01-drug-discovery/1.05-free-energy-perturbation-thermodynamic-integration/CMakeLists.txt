@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.5 -- Free Energy Perturbation / Thermodynamic Integration   (template skeleton)
+# Project 1.5 -- Free Energy Perturbation / Thermodynamic Integration
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/free-energy-perturbation-thermodynamic-integration.sln (CLAUDE.md §5). Both

@@ -26,6 +26,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\src\conformer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\kernels.cuh">
       <Filter>Header Files</Filter>
     </ClInclude>

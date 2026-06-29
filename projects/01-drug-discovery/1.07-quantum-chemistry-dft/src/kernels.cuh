@@ -1,52 +1,61 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface (the O(N^4) ERIs + the eigensolve)
 // ---------------------------------------------------------------------------
-// Project 1.7 -- Quantum Chemistry / DFT   (template skeleton)
+// Project 1.7 : Quantum Chemistry / DFT  (reduced-scope RHF/SCF -- see THEORY.md)
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   The "what the GPU offers" header. The GPU does the two expensive jobs of a
+//   quantum-chemistry calculation:
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//     (1) build_eri_gpu()  -- the TWO-ELECTRON INTEGRAL tensor (ij|kl). There are
+//         N^4 of them and every one is independent, so we give EACH integral its
+//         own GPU thread (a flat grid over the N^4 quartets). This is the project's
+//         headline kernel and the catalog's named O(N^4) bottleneck. It calls the
+//         SAME `eri_primitive()` formula (gaussian_integrals.h) the CPU uses, so
+//         the GPU and CPU tensors are bitwise identical (verification is exact).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//     (2) cusolver_generalized() -- each SCF cycle must solve F C = S C eps, a
+//         small DENSE generalized symmetric eigenproblem. That is a solved library
+//         problem (PATTERNS.md §5 "use the library, but no black box"), so we hand
+//         it to cuSOLVER's Dsygvd. We document exactly what it computes below.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+//   main.cu orchestrates: it builds the cheap one-electron matrices on the CPU,
+//   builds the ERI tensor BOTH ways (CPU + GPU) and verifies they match, then runs
+//   the SCF loop with the cuSOLVER eigensolver. kernels.cu implements (1) and (2).
+//
+//   This header contains a __global__ declaration, so only .cu files may include
+//   it (the plain C++ compiler must never see __global__) -- that is why the CPU
+//   reference lives in the separate pure-C++ reference_cpu.h.
+//
+// READ THIS AFTER: gaussian_integrals.h (the shared formulas), util/cuda_check.cuh,
+//   util/timer.cuh. Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // Basis / ContractedGaussian (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ---------------------------------------------------------------------------
+// build_eri_gpu: compute the full [N^4] two-electron repulsion tensor on the GPU.
+//   The contracted basis is flattened into plain arrays (centers, exponents,
+//   coefficients, and a per-function primitive offset) so it can be uploaded to
+//   device memory and indexed by the kernel without any STL containers.
+//     bs        : the contracted basis (host side; flattened internally)
+//     N         : number of basis functions
+//     eri       : OUTPUT, resized to N^4, eri[((i*N+j)*N+k)*N+l] = (ij|kl)
+//     kernel_ms : OUTPUT, GPU time of the ERI kernel itself (CUDA events)
+//   Mirrors build_eri_cpu() exactly; main.cu diffs the two tensors.
+// ---------------------------------------------------------------------------
+void build_eri_gpu(const Basis& bs, int N, std::vector<double>& eri, float* kernel_ms);
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// ---------------------------------------------------------------------------
+// cusolver_generalized: solve the generalized symmetric eigenproblem
+//   F C = S C eps  with cuSOLVER's divide-and-conquer Dsygvd (itype=1).
+//   F, S : [N*N] symmetric matrices (row-major; symmetric so layout-agnostic)
+//   C    : OUTPUT [N*N], MO coefficients (column k = orbital k), ascending eps
+//   eps  : OUTPUT [N], orbital energies ascending
+//   This is the per-iteration eigensolve of the SCF loop, the GPU counterpart of
+//   the CPU solve_generalized(). main.cu passes this as the SCF's eigensolver.
+// ---------------------------------------------------------------------------
+void cusolver_generalized(const std::vector<double>& F, const std::vector<double>& S,
+                          int N, std::vector<double>& C, std::vector<double>& eps);

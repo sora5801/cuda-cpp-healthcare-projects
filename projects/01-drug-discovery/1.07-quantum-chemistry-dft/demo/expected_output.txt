@@ -1,5 +1,10 @@
-1.7 -- Quantum Chemistry / DFT
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+1.7 -- Quantum Chemistry / DFT (reduced-scope RHF/SCF)
+molecule: 2 atoms, 2 electrons, basis STO-3G (N=2 functions)
+SCF converged in 2 iterations
+nuclear repulsion :   0.71428571 Ha
+electronic energy :  -1.83100004 Ha
+TOTAL ENERGY      :  -1.11671432 Ha
+orbital energies (Ha):  -0.57820   0.67027
+HOMO =  -0.57820 Ha   LUMO =   0.67027 Ha   gap =   1.24847 Ha
+ERI verify (GPU vs CPU): PASS   energy verify (GPU vs CPU): PASS
+RESULT: PASS

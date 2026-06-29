@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Fetch the FULL dataset (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 1.5 -- Free Energy Perturbation / Thermodynamic Integration   (template skeleton)
+# Project 1.5 : Free Energy Perturbation / Thermodynamic Integration
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. This project is a REDUCED-SCOPE teaching
+# model with no real dataset to fetch -- a faithful FEP/TI run needs a full MD
+# engine + force field. So this script only prints links and defers to the
+# committed synthetic sample (scripts/make_synthetic.py) for an offline run.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,19 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 1.5 -- Free Energy Perturbation / Thermodynamic Integration"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    Merck FEP benchmark set — 8 targets with experimental ΔΔG (available via OpenFE; https://github.com/OpenFreeEnergy/openfe); FEP+ validation set (Schrodinger, verify URL); PDB-bind — experimental binding affinities (http://www.pdbbind.org.cn); ChEMBL activity data for target families (https://www.ebi.ac.uk/chembl/)."
+echo "This is a REDUCED-SCOPE teaching model: it samples a 1-D harmonic"
+echo "alchemical system whose DeltaG has a CLOSED FORM, so no external data"
+echo "is required. The committed synthetic sample runs the demo offline."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Real FEP/TI benchmarks to study (each needs a full MD engine):"
+echo "  * Merck FEP benchmark set (open, via OpenFE):"
+echo "      https://github.com/OpenFreeEnergy/openfe"
+echo "  * FEP+ validation set (Schrodinger; registration required) -- links only."
+echo "  * PDBbind experimental binding affinities:  http://www.pdbbind.org.cn"
+echo "  * ChEMBL bioactivity data:                  https://www.ebi.ac.uk/chembl/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "For a different SYNTHETIC problem, run:"
+echo "    python scripts/make_synthetic.py --kB 9 --windows 21"
+echo
+echo "NOTE: credentialed sets (FEP+, some PDBbind tiers) require you to register"
+echo "and accept their license yourself; this script will never bypass that."

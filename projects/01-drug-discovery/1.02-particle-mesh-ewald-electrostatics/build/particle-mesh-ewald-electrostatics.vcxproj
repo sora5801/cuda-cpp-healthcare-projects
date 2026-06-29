@@ -95,9 +95,11 @@
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Console</SubSystem>
-      <!-- cudart_static.lib = the CUDA runtime; its folder is on the search
-           path thanks to the CUDA .props import above. -->
-      <AdditionalDependencies>cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- cudart_static.lib = the CUDA runtime; cufft.lib = NVIDIA's FFT library,
+           which performs the 3D real-to-complex transform of the charge grid in
+           kernels.cu (the reciprocal-space step of PME). Both libraries' folders
+           are on the search path thanks to the CUDA .props import above. -->
+      <AdditionalDependencies>cufft.lib;cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
@@ -133,7 +135,8 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- cufft.lib (the 3D FFT) + cudart_static.lib (the CUDA runtime). -->
+      <AdditionalDependencies>cufft.lib;cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
@@ -153,6 +156,7 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <ClInclude Include="..\src\pme.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

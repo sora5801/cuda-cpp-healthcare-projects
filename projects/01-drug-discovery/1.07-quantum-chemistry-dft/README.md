@@ -6,29 +6,49 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
+> **Reduced-scope teaching version (CLAUDE.md §13).** A production DFT code is
+> research-grade. This project ships the **transparent kernel of the same method**:
+> **restricted Hartree–Fock (RHF)** self-consistent field on a **minimal STO-3G
+> Gaussian basis** for closed-shell H/He molecules. It exercises the *identical*
+> pattern as full DFT — build integral matrices, then solve a generalized
+> eigenproblem self-consistently — and the same O(N⁴) two-electron bottleneck.
+> [`THEORY.md §7`](THEORY.md) spells out exactly what full DFT adds.
 
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+This project computes the ground-state electronic energy of a small molecule
+**from first principles** — only the nuclear charges and positions go in. It
+expands the molecular orbitals in a fixed Gaussian basis, builds the one- and
+two-electron integral matrices, and solves the **Roothaan equations**
+`F C = S C ε` **self-consistently** (the electron field depends on the density,
+which depends on the field, so we iterate). The expensive part — the **O(N⁴)
+two-electron repulsion integrals (ERIs)** — runs on the GPU with one thread per
+integral; the per-cycle generalized eigensolve uses **cuSOLVER**. For H₂ it lands
+on the textbook STO-3G energy **−1.1167 Hartree**.
 
 ## What this computes & why the GPU helps
 
 Density Functional Theory (DFT) calculates electronic structure by solving the Kohn-Sham equations self-consistently on a basis set (plane waves or Gaussians). The dominant cost is the construction of the Fock/Kohn-Sham matrix via electron repulsion integrals (ERIs) — an O(N^4) bottleneck that GPUs reduce substantially by computing integrals in batches. TeraChem pioneered GPU-accelerated DFT and can achieve 100× speedup over single-CPU codes. Applications in drug discovery include geometry optimization of drug fragments, calculation of electrostatic potential maps for pharmacophore generation, and QM-derived force field parameterization.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** the **two-electron repulsion integral tensor**
+`(μν|λσ)`. For N basis functions there are **N⁴** of these integrals and **each one
+is independent**, so the GPU computes them all at once — one thread per integral
+(see [`src/kernels.cu`](src/kernels.cu)). This is the step that dominates any real
+quantum-chemistry calculation, and it is the textbook "embarrassingly parallel"
+workload the catalog highlights.
 
 ## The algorithm in brief
 
-Kohn-Sham SCF, B3LYP/ωB97X-D exchange-correlation functionals, resolution-of-identity (RI) approximation for ERIs, DIIS convergence acceleration, plane-wave pseudopotential (PW-PP), linear-scaling DFT.
+- **Gaussian basis + analytic integrals** — overlap, kinetic, nuclear-attraction,
+  and two-electron integrals over s-type Gaussians, all closed-form via the
+  Gaussian product theorem and the **Boys function**.
+- **Roothaan / Hartree–Fock SCF** — iterate: solve `F C = S C ε`, form the density
+  `P`, rebuild the Fock matrix `F = H^core + G(P)` (Coulomb − exchange), recompute
+  the energy, until it stops changing.
+- **Generalized symmetric eigensolve** each cycle (`cusolverDnDsygvd` on the GPU;
+  symmetric-orthogonalization + Jacobi on the CPU reference).
+- Catalog keywords this teaches the foundation of: *Kohn–Sham SCF, exchange,
+  RI/DIIS/linear-scaling DFT* (the production extensions; see THEORY §7).
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
 derivation.
@@ -36,7 +56,8 @@ derivation.
 ## Build
 
 Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)). This project links
+**cuSOLVER** (+ cuBLAS/cuSPARSE) for the eigensolve.
 
 1. Open `build/quantum-chemistry-dft.sln` in Visual Studio 2026.
 2. Select the **`Release|x64`** configuration.
@@ -56,53 +77,116 @@ msbuild build\quantum-chemistry-dft.sln /p:Configuration=Release /p:Platform=x64
 ./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+The demo builds if needed, runs on `data/sample/h2.txt`, prints the energy report,
+shows the GPU-vs-CPU agreement checks (integrals **and** final energy), and prints
+timing lines on stderr.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
+- **Sample (committed):** `data/sample/h2.txt` — the hydrogen molecule, a tiny
+  offline input so the demo runs with zero downloads. Generated by
+  `scripts/make_synthetic.py`; format documented in [data/README.md](data/README.md).
+- **More inputs:** `python scripts/make_synthetic.py --mol heh+` (or `he`).
+- **Full datasets:** `scripts/download_data.ps1` / `.sh` only *print pointers* —
+  the catalog's corpora (QM9, ANI-1ccx, PubChemQC, CSD) are precomputed-results
+  datasets, not inputs to this SCF.
 
 Catalog dataset notes: QM9 — DFT-computed properties of 134k organic molecules (https://doi.org/10.6084/m9.figshare.978904); ANI-1ccx — CCSD(T)-level energies for diverse organic molecules (https://github.com/isayev/ANI1ccx_dataset); PubChemQC — DFT calculations for ~3M PubChem molecules (http://pubchemqc.riken.jp); CSD — Cambridge Structural Database for crystal structures (https://www.ccdc.cam.ac.uk).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt):
+
+```
+1.7 -- Quantum Chemistry / DFT (reduced-scope RHF/SCF)
+molecule: 2 atoms, 2 electrons, basis STO-3G (N=2 functions)
+SCF converged in 2 iterations
+nuclear repulsion :   0.71428571 Ha
+electronic energy :  -1.83100004 Ha
+TOTAL ENERGY      :  -1.11671432 Ha
+orbital energies (Ha):  -0.57820   0.67027
+HOMO =  -0.57820 Ha   LUMO =   0.67027 Ha   gap =   1.24847 Ha
+ERI verify (GPU vs CPU): PASS   energy verify (GPU vs CPU): PASS
+RESULT: PASS
+```
+
+The program builds the ERI tensor on **both** the GPU ([`src/kernels.cu`](src/kernels.cu))
+and a **CPU reference** ([`src/reference_cpu.cpp`](src/reference_cpu.cpp)) and
+asserts they agree to ~machine precision; it then runs the SCF with the cuSOLVER
+eigensolver and checks the final energy matches the CPU path. Independently, the
+**−1.1167 Ha** result is the published textbook value for H₂/STO-3G — so the
+science is validated, not just CPU==GPU agreement.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — orchestrates: load molecule, build matrices,
+   build the ERI tensor CPU+GPU, run the SCF both ways, verify, report.
+2. [`src/gaussian_integrals.h`](src/gaussian_integrals.h) — **the shared
+   `__host__ __device__` per-integral formulas** (overlap/kinetic/nuclear/ERI +
+   Boys function). The heart of CPU/GPU parity.
+3. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — basis construction, the
+   integral assembly, the transparent eigensolve, and the SCF loop (the baseline).
+4. [`src/kernels.cuh`](src/kernels.cuh) / [`src/kernels.cu`](src/kernels.cu) — the
+   GPU ERI kernel (one thread per integral) and the cuSOLVER generalized eigensolve.
+5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, the CUDA-event timer, I/O helpers.
 
 ## Prior art & further reading
 
-TeraChem (https://www.petachem.com) — GPU-native DFT, commercial but widely cited; PySCF (https://github.com/pyscf/pyscf) — pure Python quantum chemistry with GPU4PySCF extension; CP2K (https://github.com/cp2k/cp2k) — GPU-accelerated mixed Gaussian/plane-wave DFT; NWChem (https://github.com/nwchemgit/nwchem) — parallel quantum chemistry with GPU-accelerated modules.
+- **PySCF** (https://github.com/pyscf/pyscf) — pure-Python quantum chemistry with a
+  GPU4PySCF extension; the most readable production code to learn the algorithm
+  structure this project mirrors.
+- **TeraChem** (https://www.petachem.com) — GPU-native DFT, the code that proved
+  GPUs win for ERIs (~100× over single-CPU); study what their shell-pair kernels do.
+- **CP2K** (https://github.com/cp2k/cp2k) — GPU-accelerated mixed Gaussian/plane-wave
+  DFT; learn the plane-wave + cuFFT route for periodic systems.
+- **NWChem** (https://github.com/nwchemgit/nwchem) — parallel quantum chemistry with
+  GPU-accelerated modules; a reference for distributed-memory scaling.
 
-Study these to learn the production approach; **do not copy code wholesale** —
+Study these for the production approach; **do not copy code wholesale** —
 reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-Custom CUDA kernels for ERI computation (two-electron integrals in shared memory); cuBLAS for matrix diagonalization; cuFFT for plane-wave FFT; warp-level parallelism over shell pairs. --
+**Custom CUDA kernel for the ERIs** (one thread per two-electron integral; the
+catalog's "two-electron integrals" step) **+ cuSOLVER** for the per-cycle
+generalized eigensolve (the dense-linear-algebra pattern, PATTERNS.md §1, shared
+with flagship `2.06`). Production codes additionally stage shell-pair quartets
+through **shared memory** with warp-level parallelism, and use **cuFFT** for the
+plane-wave variant — described in THEORY §7.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Run HeH⁺ and He.** `python scripts/make_synthetic.py --mol heh+`, then pass
+   `data/sample/heh+.txt` to the exe. Check the energy against the references in
+   `make_synthetic.py`. Why does the SCF take more iterations for HeH⁺?
+2. **Bond-dissociation curve.** Loop the H₂ geometry over R = 0.8…4.0 Bohr (edit the
+   sample or script), plot total energy vs R, and find the minimum and well depth.
+   Where does RHF famously go wrong at large R? (Hint: restricted vs unrestricted.)
+3. **Add DIIS.** The current SCF uses a plain update. Implement Pulay's DIIS
+   (commutator `[F, P S]` as the error vector) and watch the iteration count drop on
+   harder cases.
+4. **Add a bigger basis.** Add the STO-3G **2s** function for a heavier element (or a
+   second function per H) so N > #atoms — then watch the N⁴ ERI count, and the GPU's
+   relative advantage, grow.
+5. **Shell-pair tiling.** Refactor the ERI kernel to one block per (shell-pair,
+   shell-pair) and stage the primitive data through shared memory, the way TeraChem
+   does. Compare occupancy and timing in Nsight.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced scope:** this is **Hartree–Fock, not DFT** — there is no
+  exchange-correlation functional or integration grid (THEORY §7 explains the
+  difference; the SCF skeleton is identical). It is the honest didactic core.
+- **Tiny basis:** only **s-type STO-3G** functions, one per atom, and only **H and
+  He** are parameterized — enough for H₂, He, HeH⁺. Higher angular momenta (p, d)
+  and heavier elements need the integral recursions, which are out of scope here.
+- **No screening / RI / linear scaling:** every one of the N⁴ integrals is computed,
+  which is exactly why the GPU's parallelism is the lesson — but it would not scale
+  to large molecules without the production tricks named above.
+- **Synthetic, public input:** the molecule geometries are standard textbook
+  constants, labeled synthetic everywhere. Nothing is patient-derived and no output
+  is a clinical or diagnostic claim.
+- **Timing is a teaching artifact, never a benchmark:** at N = 2 the GPU is
+  launch-bound; the win is an asymptotic O(N⁴) story (CLAUDE.md §12).

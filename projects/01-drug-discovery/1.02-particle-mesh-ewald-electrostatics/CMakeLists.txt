@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 1.2 -- Particle-Mesh Ewald Electrostatics   (template skeleton)
+# Project 1.2 -- Particle-Mesh Ewald Electrostatics
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/particle-mesh-ewald-electrostatics.sln (CLAUDE.md §5). Both
@@ -29,5 +29,11 @@ add_executable(particle-mesh-ewald-electrostatics
   src/reference_cpu.cpp
 )
 
-# So #include "kernels.cuh" and "util/..." resolve from src/.
+# So #include "kernels.cuh", "pme.h" and "util/..." resolve from src/.
 target_include_directories(particle-mesh-ewald-electrostatics PRIVATE src)
+
+# This project links cuFFT for the 3D real-to-complex FFT of the charge grid
+# (the reciprocal-space step of PME; see src/kernels.cu). CUDA::cufft is the
+# imported target the CUDA toolkit provides.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(particle-mesh-ewald-electrostatics PRIVATE CUDA::cufft)

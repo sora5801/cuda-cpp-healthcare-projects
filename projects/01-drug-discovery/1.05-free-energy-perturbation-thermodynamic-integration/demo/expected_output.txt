@@ -1,5 +1,18 @@
 1.5 -- Free Energy Perturbation / Thermodynamic Integration
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+alchemical TI: stateA(k=1.000) -> stateB(k=4.000) at kT=1.000, 11 windows
+MC sampling: 2000 equil + 20000 samples per window, step=0.600
+TI curve <dU/dlambda> per window (lambda -> mean):
+  w0  lambda=0.00  <dU/dlambda>=  +3.63892
+  w1  lambda=0.10  <dU/dlambda>=  +2.17333
+  w2  lambda=0.20  <dU/dlambda>=  +1.20911
+  w3  lambda=0.30  <dU/dlambda>=  +0.86226
+  w4  lambda=0.40  <dU/dlambda>=  +0.56883
+  w5  lambda=0.50  <dU/dlambda>=  +0.32128
+  w6  lambda=0.60  <dU/dlambda>=  +0.18905
+  w7  lambda=0.70  <dU/dlambda>=  +0.10293
+  w8  lambda=0.80  <dU/dlambda>=  -0.00265
+  w9  lambda=0.90  <dU/dlambda>=  -0.07411
+  w10 lambda=1.00  <dU/dlambda>=  -0.11909
+DeltaG_TI       = +0.71099  (trapezoid over lambda)
+DeltaG_analytic = +0.69315  (= 1/2 kT ln(kB/kA))
+RESULT: PASS (GPU==CPU within 1e-09; TI within 5e-02 of analytic)

@@ -2,32 +2,32 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 20/301 projects done (6.6%) | todo 281 | in-progress 0 | missing 0
+**Progress:** 26/301 projects done (8.6%) | todo 275 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
-| 🟢 Beginner | 67 | 12 | 0 | 55 |
+| 🟢 Beginner | 67 | 18 | 0 | 49 |
 | 🟡 Intermediate | 206 | 7 | 0 | 199 |
 | 🔴 Advanced | 28 | 1 | 0 | 27 |
 
-## 1. Drug Discovery & Molecular Design  (7/35 done)
+## 1. Drug Discovery & Molecular Design  (13/35 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
 | 1.01 | Molecular Dynamics Engine | 🟢 Beginner | Established | [x] done | worker | main |
-| 1.02 | Particle-Mesh Ewald Electrostatics | 🟢 Beginner | Established | [ ] todo | - | - |
-| 1.03 | Molecular Docking Engine | 🟢 Beginner | Established | [ ] todo | - | - |
+| 1.02 | Particle-Mesh Ewald Electrostatics | 🟢 Beginner | Established | [x] done | - | - |
+| 1.03 | Molecular Docking Engine | 🟢 Beginner | Established | [x] done | - | - |
 | 1.04 | Ultra-Large Virtual Screening | 🟢 Beginner | Established | [x] done | worker | main |
-| 1.05 | Free Energy Perturbation / Thermodynamic Integration | 🟢 Beginner | Established | [ ] todo | - | - |
+| 1.05 | Free Energy Perturbation / Thermodynamic Integration | 🟢 Beginner | Established | [x] done | - | - |
 | 1.06 | Enhanced Sampling — Metadynamics & Replica Exchange | 🟢 Beginner | Established | [ ] todo | - | - |
-| 1.07 | Quantum Chemistry / DFT | 🟢 Beginner | Established | [ ] todo | - | - |
+| 1.07 | Quantum Chemistry / DFT | 🟢 Beginner | Established | [x] done | - | - |
 | 1.08 | Semi-Empirical & Tight-Binding Quantum Methods | 🟢 Beginner | Established | [ ] todo | - | - |
 | 1.09 | ML Interatomic Potentials (Neural Network Potentials) | 🟢 Beginner | Established | [ ] todo | - | - |
 | 1.10 | De Novo Generative Molecular Design | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 1.11 | QSAR / Property Prediction | 🟢 Beginner | Established | [ ] todo | - | - |
+| 1.11 | QSAR / Property Prediction | 🟢 Beginner | Established | [x] done | - | - |
 | 1.12 | Molecular Fingerprint Similarity Search | 🟢 Beginner | Established | [x] done | lead | main |
 | 1.13 | Pharmacophore & 3D Shape Screening | 🟢 Beginner | Established | [x] done | worker | main |
-| 1.14 | Conformer Ensemble Generation | 🟢 Beginner | Established | [ ] todo | - | - |
+| 1.14 | Conformer Ensemble Generation | 🟢 Beginner | Established | [x] done | - | - |
 | 1.15 | Protein-Ligand Binding Affinity Scoring (ML) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 1.16 | ADMET / Toxicity Prediction | 🟢 Beginner | Established | [x] done | worker | main |
 | 1.17 | Markov State Models from MD | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

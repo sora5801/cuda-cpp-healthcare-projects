@@ -1,52 +1,42 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU GCN inference interface
 // ---------------------------------------------------------------------------
-// Project 1.11 -- QSAR / Property Prediction   (template skeleton)
+// Project 1.11 : QSAR / Property Prediction
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA  (pattern: PER-OUTPUT GATHER over a CSR graph -- PATTERNS.md §1)
+//   A GCN layer recomputes every node's feature row from its neighbors. We give
+//   each OUTPUT NODE its own GPU thread; that thread walks the node's neighbor
+//   list (CSR slice) and accumulates the normalized, W-projected messages. Two
+//   layers = two kernel launches over all nodes. A third kernel gives each
+//   MOLECULE a thread to mean-pool its atoms and apply the linear head.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Because each thread writes ONLY its own node/molecule, there is NO atomic
+//   scatter and NO race -- and the neighbor sum runs in the SAME CSR order as the
+//   CPU reference, so GPU and CPU agree to fp32 rounding. The per-node math is
+//   the shared gcn.h (GCN_HD) code, identical on both sides (PATTERNS.md §2).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   kernels.cu defines the kernels + the host wrapper gcn_predict_gpu(); main.cu
+//   calls the wrapper and compares against gcn_predict_cpu().
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: gcn.h, reference_cpu.h, util/cuda_check.cuh, util/timer.cuh.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // Graph, Model (plain C++, safe to include in .cu)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// ---------------------------------------------------------------------------
+// gcn_predict_gpu: run the full 2-layer GCN + readout on the GPU.
+//   Inputs : the batched graph `g` and the fixed weights `m`.
+//   Output : `pred` (num_mols predictions), filled to match gcn_predict_cpu().
+//   `kernel_ms` receives the GPU time for the three kernels (CUDA events),
+//   reported to STDERR as a teaching artifact (never a benchmark claim).
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   The wrapper owns all device memory: it uploads the CSR + features + weights
+//   once, launches layer-1, layer-2, then the readout kernel, and copies the
+//   predictions back. See kernels.cu for the launch configs and the thread->data
+//   mapping.
+// ---------------------------------------------------------------------------
+void gcn_predict_gpu(const Graph& g, const Model& m,
+                     std::vector<float>& pred, float* kernel_ms);
