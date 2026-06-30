@@ -1,5 +1,10 @@
-2.16 -- ΔΔG Stability Prediction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+2.16 -- Delta-Delta-G Stability Prediction
+Saturation mutagenesis scan: protein 'synthetic_core_helix', 24 residues x 20 AA = 480 mutations
+top-5 most DESTABILISING mutations (most negative ddG):
+  #1  W17G   ddG =  -7.9373 kcal/mol
+  #2  Y9G   ddG =  -7.7487 kcal/mol
+  #3  F13G   ddG =  -7.7326 kcal/mol
+  #4  Y5G   ddG =  -7.7283 kcal/mol
+  #5  F18G   ddG =  -7.7137 kcal/mol
+summary: 376 of 456 non-self mutations are destabilising (ddG<0); mean ddG = -1.7295 kcal/mol
+RESULT: PASS (GPU matches CPU within tol=1.0e-03 kcal/mol)

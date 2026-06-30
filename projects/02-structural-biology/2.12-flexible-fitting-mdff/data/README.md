@@ -1,37 +1,72 @@
 # Data — 2.12 Flexible Fitting / MDFF
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/mdff_problem.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
+| File | `sample/mdff_problem.txt` |
+| Origin | **Synthetic** fitting problem (`scripts/make_synthetic.py`) |
 | License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Size | < 2 KB |
+| Setup | 27-atom 3×3×3 lattice, misfitted from its target inside a 32³ density map |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+The "data" is the **fitting problem**, not a patient map: a small atomic model
+that has been displaced from its target, together with the parameters of a
+cryo-EM-style density *simulated* from that target. The program rebuilds the
+density grid from the targets, so the committed file stays tiny (atoms, not a
+full 24³ voxel grid). This lets `demo/run_demo` run **offline, zero downloads**
+(CLAUDE.md §8).
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+### File format
 
-## Full dataset
+```
+nx ny nz vox w_dens k_rest step iters natoms sigma      <- line 1 (header)
+x0_x x0_y x0_z                                          <- natoms start lines
+...
+tx   ty   tz                                            <- natoms target lines
+...
+```
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+| Field | Meaning | Units |
+|---|---|---|
+| `nx ny nz` | density-map grid dimensions | voxels |
+| `vox` | voxel size (isotropic); grid origin at world (0,0,0) | world-units/voxel |
+| `w_dens` | weight on the density (fitting) force | force per density-slope |
+| `k_rest` | harmonic-restraint stiffness (MD-force-field stand-in) | force/length |
+| `step` | overdamped steepest-descent step size | length·time/force |
+| `iters` | number of fitting iterations | — |
+| `natoms` | number of atoms in the model | — |
+| `sigma` | Gaussian blob width used to simulate the density | world units |
+| `x0_*` | **starting** (misfitted) atom position | world units |
+| `t*` | **ground-truth target** position (answer key; scoring only) | world units |
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+Default sample: `32 32 32 1 6 0.05 0.05 200 27 1.2` → the model starts ~1.41 units
+RMSD from target; the fit pulls it onto the density ridges (final RMSD ~0.03).
+The lattice is spaced (L=6) with narrow blobs (sigma=1.2) so each atom's density
+basin is separate — overlapping basins would make atoms collapse to the centre
+(a real MDFF over-fitting failure mode discussed in THEORY).
 
-Catalog dataset notes (verbatim):
+Regenerate or resize: `python scripts/make_synthetic.py --iters 400`.
 
-> EMDB reference maps for MDFF (https://www.ebi.ac.uk/emdb/); EMPIAR raw particle data (https://www.ebi.ac.uk/empiar/); ribosome MDFF benchmarks (PDB 3J7Y, 4V6X); viral capsid fitting datasets.
+## "Full dataset" / real cryo-EM fitting
 
-## Provenance & field meanings
+Real MDFF fits an experimental **cryo-EM density map** (EMDB) and a starting
+**atomic model** (PDB) — parsing MRC/CCP4 maps and PDB coordinates:
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+- **EMDB** — reference density maps: <https://www.ebi.ac.uk/emdb/>
+- **EMPIAR** — raw particle data: <https://www.ebi.ac.uk/empiar/>
+- **Ribosome MDFF benchmarks** — PDB `3J7Y`, `4V6X`.
+- **Viral capsid** fitting datasets (large complexes that motivate the GPU).
+
+`scripts/download_data.ps1` / `.sh` print these pointers; there is nothing to
+download for the demo (the sample is self-contained). Wiring a real map would add
+an MRC/CCP4 reader and a PDB reader, then feed `rho` and `x0` straight into the
+same kernel (see THEORY "Where this sits in the real world").
+
+## Provenance & honesty
+
+The model is a **synthetic lattice**, not a biomolecule, and the density is a
+simple Gaussian sum, not an experimental map. It demonstrates the MDFF /
+trilinear-gather GPU pattern; it is **not** a validated structure-determination
+pipeline and **not for clinical use**. Synthetic data is labelled synthetic
+everywhere it appears.

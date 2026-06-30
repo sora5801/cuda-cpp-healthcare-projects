@@ -1,5 +1,12 @@
-2.15 -- Antibody Structure Prediction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Antibody Structure Prediction (reduced: CDR screening)
+catalog ID 2.15 -- reduced-scope teaching version
+query antibody: query_Ab
+screened 24 library antibodies by CDR-weighted BLOSUM62 similarity
+(CDR-H3 weighted x3; higher score = more similar CDRs)
+top-5 hits:
+  #1  mAb_07      score =   516  (CDR-H3 contributes  303)
+  #2  mAb_18      score =   373  (CDR-H3 contributes  354)
+  #3  mAb_04      score =    25  (CDR-H3 contributes   -9)
+  #4  mAb_17      score =    23  (CDR-H3 contributes  -15)
+  #5  mAb_02      score =     1  (CDR-H3 contributes   -9)
+RESULT: PASS (GPU matches CPU exactly, integer scores)

@@ -4,31 +4,49 @@
 
 > **🟡 Intermediate · Active R&D** — Domain 2: Structural Biology & Protein Science · Catalog ID `2.13`
 >
-> _Educational only — not for clinical use (see CLAUDE.md §8)._
-
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
+> _Educational only — not for clinical use (see CLAUDE.md §8). All data here is synthetic._
 
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Before AlphaFold2 can predict a protein's structure, it must find that protein's
+evolutionary relatives and stack them into a **multiple sequence alignment
+(MSA)**. Finding those relatives means scanning a huge sequence database with a
+**profile hidden Markov model (HMM)** and the **Viterbi** dynamic program — a step
+that is famously CPU-bound (hours per query on UniRef90's 210 GB). This project
+teaches the GPU acceleration of that scan in a deliberately simplified form:
+one query profile HMM is scored against many database sequences **in parallel,
+one GPU block per sequence**. The GPU result is verified to match a plain CPU
+reference **exactly** (integer scoring → bit-for-bit), and the demo recovers a
+known motif planted in the synthetic data.
 
 ## What this computes & why the GPU helps
 
-Multiple sequence alignment (MSA) construction for AlphaFold2 is a major bottleneck: HHblits and Jackhmmer search the UniRef90 database (210GB) requiring hours of CPU time. GPU acceleration of profile hidden Markov model (HMM) search is an active area: GPU-HMMER uses CUDA to parallelize the Viterbi/Forward-Backward dynamic programming recursion over thousands of sequence targets simultaneously. Accelerating MSA generation could remove one of the last CPU-bound steps in the AF2 prediction pipeline, enabling rapid large-scale proteome annotation.
+Multiple sequence alignment (MSA) construction for AlphaFold2 is a major
+bottleneck: HHblits and Jackhmmer search the UniRef90 database (210 GB) requiring
+hours of CPU time. GPU acceleration of profile-HMM search is an active research
+area: GPU-HMMER and MMseqs2-GPU parallelise the Viterbi/Forward dynamic-programming
+recursion over thousands of sequence targets at once. Accelerating MSA generation
+removes one of the last CPU-bound steps in the AF2 prediction pipeline, enabling
+rapid large-scale proteome annotation.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** scoring the query profile against the database is `N`
+**independent** Viterbi dynamic programs — one per database sequence. Each is a
+small `O(T·L)` DP, and there are hundreds of millions of them. That independence is
+exactly what a GPU eats for breakfast: we give **each database sequence its own
+thread block**, keep the per-sequence DP rows in fast shared memory, and broadcast
+the profile from constant memory.
 
 ## The algorithm in brief
 
-Profile HMM Viterbi algorithm, Forward-Backward DP, Smith-Waterman alignment, position-specific scoring matrix (PSSM) search, k-mer seed hashing, HHblits iterated profile-profile alignment.
+- **Profile HMM** with match/insert/delete states and log-odds emission +
+  transition scores (a simplified Plan7 model).
+- **Viterbi dynamic program** per database sequence: a row-by-row max-plus
+  recurrence over the `(T+1)×(L+1)` state grid, kept to two ping-pong rows
+  (O(L) memory).
+- **Top-K hit selection**: rank sequences by their best Viterbi log-odds score —
+  the high scorers are the MSA candidates.
+- **Fixed-point (integer) scoring** so CPU and GPU agree exactly and the result is
+  deterministic.
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
 derivation.
@@ -49,60 +67,130 @@ Command-line alternative (Developer PowerShell):
 msbuild build\msa-generation-acceleration.sln /p:Configuration=Release /p:Platform=x64
 ```
 
+This project links only the CUDA runtime (`cudart_static.lib`) — no extra CUDA
+libraries — so there is nothing else to install.
+
 ## Run the demo
 
 ```powershell
 ./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.sh           # Linux/macOS (CMake build)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+The demo builds if needed, runs on `data/sample/profile_db_sample.txt`, prints the
+top-5 hits, shows the GPU-vs-CPU agreement check (must be exact), and prints a
+timing line.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
+- **Sample (committed):** `data/sample/profile_db_sample.txt` — a tiny, **synthetic**
+  profile HMM (L = 10) + 24 database sequences, so the demo runs offline with zero
+  downloads. Generated by `scripts/make_synthetic.py` (seed 2025).
+- **Full dataset:** `scripts/download_data.ps1` / `.sh` print pointers to the real
+  databases (they download nothing and bypass no credentials).
 - **Provenance & license:** see [data/README.md](data/README.md).
 
-Catalog dataset notes: UniRef90 — 210GB protein sequence database (https://www.uniprot.org/help/uniref); UniClust30 (https://uniclust.mmseqs.com); MGnify metagenomics sequences (https://www.ebi.ac.uk/metagenomics/); BFD — Big Fantastic Database (https://bfd.mmseqs.com).
+Real databases (not redistributed here): UniRef90 (210 GB,
+<https://www.uniprot.org/help/uniref>), UniClust30 (<https://uniclust.mmseqs.com>),
+MGnify (<https://www.ebi.ac.uk/metagenomics/>), BFD (<https://bfd.mmseqs.com>).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt):
+
+```
+2.13 -- MSA Generation Acceleration
+Profile-HMM Viterbi search: 1 query profile (L=10) vs 24 database sequences
+top-5 hits (by Viterbi log-odds score):
+  #1  seq[0]  score = 20000  (log-odds = 20.000)
+  #2  seq[1]  score = 17500  (log-odds = 17.500)
+  #3  seq[2]  score = 15500  (log-odds = 15.500)
+  #4  seq[10]  score = 6000  (log-odds = 6.000)
+  #5  seq[17]  score = 5000  (log-odds = 5.000)
+RESULT: PASS (GPU matches CPU exactly; max |diff| = 0)
+```
+
+The program scores every sequence on both the **GPU** (`src/kernels.cu`) and a
+**CPU reference** (`src/reference_cpu.cpp`) and asserts the two integer score
+vectors are **identical** (`max |diff| = 0`). Because both call the *same* integer
+recurrence in `src/hmm_core.h`, the tolerance is exactly 0 — not an approximation.
+The planted-motif sequences `0,1,2` topping the ranking is the second, scientific
+check that the search recovers homology, not noise.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/hmm_core.h`](src/hmm_core.h) — the shared `__host__ __device__` model and
+   the **one true Viterbi recurrence** both CPU and GPU call. Start here.
+2. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies (exact),
+   reports the top-K.
+3. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the one-block-per-
+   sequence mapping idea.
+4. [`src/kernels.cu`](src/kernels.cu) — the kernel (parallel M/I, serial D chain,
+   tree reduction) and host wrapper (constant + shared + global memory).
+5. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the dataset loader and the
+   trusted serial baseline.
+6. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
 
 ## Prior art & further reading
 
-MMseqs2 (https://github.com/soedinglab/MMseqs2) — ultra-fast protein search and clustering (GPU-capable via SIMD/GPU versions); ColabFold MSA server (https://github.com/sokrypton/ColabFold) — GPU-accelerated MSA for AlphaFold2; GPU-HMMER (verify URL) — CUDA Viterbi HMM search; Linclust (https://github.com/soedinglab/MMseqs2) — GPU-accelerated sequence clustering.
+- **MMseqs2** (<https://github.com/soedinglab/MMseqs2>) — ultra-fast protein search
+  and clustering (GPU/SIMD versions). Learn the **k-mer prefilter** that lets it
+  skip almost all of the database before any alignment.
+- **ColabFold MSA server** (<https://github.com/sokrypton/ColabFold>) —
+  GPU-accelerated MSA for AlphaFold2. Shows where this scan sits in the real
+  structure-prediction pipeline.
+- **HMMER / Jackhmmer** (<http://hmmer.org>) — the reference profile-HMM search
+  (Plan7 model, Forward scoring, E-values). The model this project simplifies.
+- **CUDASW++** — GPU Smith-Waterman; the warp/striped cell layouts a throughput
+  version of this kernel would adopt.
+- **Linclust** (part of MMseqs2) — GPU-accelerated linear-time sequence clustering.
 
 Study these to learn the production approach; **do not copy code wholesale** —
 reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-CUDA DP recursion for HMM Viterbi (row-parallel); GPU parallel Smith-Waterman via CUDASW++; warp-parallel query-vs-target scoring; GPU hash tables for k-mer seed lookup. --
+**Independent jobs · constant-memory profile · shared-memory DP** — one thread
+**block per database sequence** runs that sequence's Viterbi DP; threads within a
+block split the profile columns (parallel match/insert), one thread resolves the
+sequential delete chain, and a tree reduction takes the best score. The emission
+table lives in **constant memory** (broadcast to every block), the ping-pong DP
+rows live in **shared memory**, and the database is streamed from **global memory**
+in CSR layout. (Closest flagship exemplar: `1.12` Tanimoto — one query vs N items.)
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Forward scoring.** Replace the `max` in the recurrence with a log-sum-exp
+   (`Forward` algorithm) to compute the *total* probability over all paths, not
+   just the best one. Why is Forward more sensitive for remote homologs? (Hint:
+   you will need floats and a documented tolerance again — see §5 of THEORY.)
+2. **Traceback.** Store back-pointers and reconstruct the actual alignment of the
+   top hit, then print it as a 2-row query/target alignment.
+3. **Parallelise the delete chain.** The serial `D[k]` scan is the kernel's one
+   non-parallel phase. Replace it with a shared-memory **prefix-max (scan)** and
+   confirm the result is still bit-identical to the CPU.
+4. **Scale it.** Generate `--n 100000` sequences with `make_synthetic.py` and watch
+   the GPU's relative advantage grow as launch/copy overhead is amortised.
+5. **Per-column transitions.** Give each match column its own seven transition
+   scores (as real HMMs do) and thread them through `viterbi_step`. What changes in
+   the constant-memory layout?
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Synthetic data only.** The profile HMM, its log-odds, and every database
+  sequence are fabricated by `make_synthetic.py`. They carry **no biological
+  meaning** and must never be presented as a real search result.
+- **Reduced-scope model.** This is a simplified Plan7 HMM with *shared* (not
+  per-column) transitions, non-emitting insert states, no null model, no E-values,
+  and Viterbi (best-path) scoring only — not Forward. THEORY §7 details what real
+  tools add.
+- **No prefilter.** Production search is fast because a k-mer prefilter discards
+  most of the database first; we score *every* sequence to keep the DP front and
+  centre.
+- **Profile length cap.** `MAX_PROFILE_L = 256` (constant-memory + shared-memory
+  sizing); longer profiles need streaming. The loader rejects `L` over the cap.
+- **Timing is a teaching artifact.** On this tiny sample, launch/copy overhead
+  dominates; the GPU's edge appears only at database scale. Never read the printed
+  milliseconds as a benchmark claim.

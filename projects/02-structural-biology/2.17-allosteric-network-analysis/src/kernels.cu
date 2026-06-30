@@ -1,94 +1,114 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  The GPU DCC kernel and its host wrapper
 // ---------------------------------------------------------------------------
-// Project 2.17 -- Allosteric Network Analysis   (template skeleton)
+// Project 2.17 : Allosteric Network Analysis
 //
 // WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
+//   Implements dcc_kernel (one thread = one matrix entry) and dcc_matrix_gpu
+//   (the host glue: allocate, copy, launch, time, copy back). This is the GPU
+//   twin of dcc_matrix_cpu() in reference_cpu.cpp; main.cu runs both and asserts
+//   they agree exactly. Because BOTH call dcc_pair() from dcc_core.h, the device
+//   thread and the host loop execute the identical sequence of double-precision
+//   operations -> the GPU matrix is bit-for-bit equal to the CPU matrix.
 //
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// READ THIS AFTER: kernels.cuh (the launch idea), dcc_core.h (the per-pair math).
 // ===========================================================================
 #include "kernels.cuh"
+#include "dcc_core.h"            // dcc_pair, coord_index (shared __host__ __device__ math)
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// 2-D block geometry. 16x16 = 256 threads/block: a multiple of the 32-lane warp,
+// gives the scheduler 8 warps to hide the latency of the O(T) inner sum, and is
+// the canonical tile for "one thread per matrix element" launches on sm_75..89.
+static constexpr int BLOCK_X = 16;   // threads spanning the COLUMN (j) direction
+static constexpr int BLOCK_Y = 16;   // threads spanning the ROW    (i) direction
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// dcc_kernel: each thread computes exactly one C[row][col].
+//
+//   LAUNCH CONFIG (set in dcc_matrix_gpu):
+//     block = (BLOCK_X, BLOCK_Y)              -> 256 threads, a 16x16 tile
+//     grid  = (ceil(N/BLOCK_X), ceil(N/BLOCK_Y)) -> enough tiles to cover N x N
+//   THREAD -> DATA MAP:
+//     col = blockIdx.x*blockDim.x + threadIdx.x   (the residue j / matrix column)
+//     row = blockIdx.y*blockDim.y + threadIdx.y   (the residue i / matrix row)
+//   MEMORY: reads the whole trajectory and the means from GLOBAL memory; writes
+//     ONE float to C[row*N+col] in global memory. No shared memory and no atomics
+//     are needed because every thread owns a distinct output element -- there is
+//     no overlap to coordinate. (THEORY.md discusses a shared-memory tiling
+//     optimization that would cache each residue's track; we keep the naive,
+//     readable version because it teaches the mapping cleanly.)
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void dcc_kernel(const float* __restrict__ coords,
+                           const double* __restrict__ mean,
+                           int T, int N,
+                           float* __restrict__ C) {
+    // This thread's matrix coordinates.
+    const int col = blockIdx.x * blockDim.x + threadIdx.x;   // residue j
+    const int row = blockIdx.y * blockDim.y + threadIdx.y;   // residue i
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+    // GUARD THE RAGGED EDGE: N is rarely a multiple of 16, so the right/bottom
+    // tiles contain threads with row >= N or col >= N. They must do nothing, or
+    // they would read residues that do not exist and write outside C.
+    if (row >= N || col >= N) return;
+
+    // The entire per-entry computation is delegated to the SHARED physics in
+    // dcc_core.h. This is the crux of the project: the device thread runs the
+    // exact same dcc_pair() the CPU reference runs, so verification is exact.
+    const double c = dcc_pair(coords, mean, row, col, T, N);
+
+    // Store as float (the matrix is consumed downstream as float on both sides).
+    C[static_cast<std::size_t>(row) * N + col] = static_cast<float>(c);
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
+// dcc_matrix_gpu: host wrapper -- the five canonical steps of a CUDA computation:
 //   (1) allocate device memory  (2) copy inputs host->device
 //   (3) launch the kernel        (4) copy result device->host
 //   (5) free device memory
 // We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// cost, not the PCIe transfer cost (transfers are discussed separately in THEORY).
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void dcc_matrix_gpu(const Trajectory& traj, const std::vector<double>& mean,
+                    std::vector<float>& C, float* kernel_ms) {
+    const int N = traj.N, T = traj.T;
+    C.assign(static_cast<std::size_t>(N) * N, 0.0f);
+
+    // Byte sizes of the three device buffers.
+    const std::size_t coords_bytes = static_cast<std::size_t>(T) * N * 3 * sizeof(float);
+    const std::size_t mean_bytes   = static_cast<std::size_t>(N) * 3 * sizeof(double);
+    const std::size_t mat_bytes    = static_cast<std::size_t>(N) * N * sizeof(float);
 
     // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
     //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    float*  d_coords = nullptr;   // [T*N*3] trajectory
+    double* d_mean   = nullptr;   // [N*3]   per-residue means
+    float*  d_C      = nullptr;   // [N*N]   output matrix
+    CUDA_CHECK(cudaMalloc(&d_coords, coords_bytes));   // can fail: out of device memory
+    CUDA_CHECK(cudaMalloc(&d_mean,   mean_bytes));
+    CUDA_CHECK(cudaMalloc(&d_C,      mat_bytes));
 
     // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_coords, traj.coords.data(), coords_bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_mean,   mean.data(),        mean_bytes,   cudaMemcpyHostToDevice));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // (3) Launch over a 2-D grid that tiles the N x N matrix. The ceiling
+    //     division (N + B - 1) / B is integer "round up" so the grid fully
+    //     covers the matrix even when N is not a multiple of the block size.
+    const dim3 block(BLOCK_X, BLOCK_Y);
+    const dim3 grid((N + BLOCK_X - 1) / BLOCK_X, (N + BLOCK_Y - 1) / BLOCK_Y);
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
+    dcc_kernel<<<grid, block>>>(d_coords, d_mean, T, N, d_C);
     *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    CUDA_CHECK_LAST("dcc_kernel");         // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // (4) Bring the matrix back to the host vector.
+    CUDA_CHECK(cudaMemcpy(C.data(), d_C, mat_bytes, cudaMemcpyDeviceToHost));
 
     // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    CUDA_CHECK(cudaFree(d_coords));
+    CUDA_CHECK(cudaFree(d_mean));
+    CUDA_CHECK(cudaFree(d_C));
 }

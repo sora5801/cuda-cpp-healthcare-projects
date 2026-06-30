@@ -1,12 +1,12 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Fetch a REAL trajectory dataset (Windows)
 # ---------------------------------------------------------------------------
-# Project 2.17 -- Allosteric Network Analysis   (template skeleton)
+# Project 2.17 -- Allosteric Network Analysis
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The real allosteric-trajectory
+# archives are large and account-gated, so this script PRINTS INSTRUCTIONS only
+# and defers to scripts/make_synthetic.py for the offline stand-in the demo uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,26 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.17 -- Allosteric Network Analysis"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    GPCRmd allosteric trajectory archive (https://gpcrmd.org); MDAnalysis trajectory benchmarks (https://github.com/MDAnalysis/mdanalysis); ProDy benchmark datasets (https://github.com/prody/ProDy); allosteric dataset ASD (http://mdl.shsmu.edu.cn/ASD/)."
+Write-Host "The committed tiny sample (data/sample/trajectory.txt) is SYNTHETIC and is"
+Write-Host "all the demo needs. To study a REAL allosteric trajectory, obtain one of:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  * GPCRmd allosteric trajectory archive  https://gpcrmd.org"
+Write-Host "      Browse to a GPCR system, download the trajectory (.xtc/.dcd) +"
+Write-Host "      topology (.pdb/.psf). Free, but registration is required -- this"
+Write-Host "      script does NOT log in for you."
+Write-Host "  * MDAnalysis test trajectories          https://github.com/MDAnalysis/mdanalysis"
+Write-Host "  * ProDy benchmark structures/ensembles  https://github.com/prody/ProDy"
+Write-Host "  * Allosteric Database (ASD)             http://mdl.shsmu.edu.cn/ASD/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "CONVERT a real trajectory into this project's plain-text format (the"
+Write-Host "loader expects '# SITE_ALLO i', '# SITE_ACTIVE j', then 'N T', then T*N"
+Write-Host "lines of 'x y z' Calpha coordinates, frame-major) using MDAnalysis, e.g.:"
+Write-Host ""
+Write-Host "    import MDAnalysis as mda"
+Write-Host "    u = mda.Universe('topology.pdb', 'traj.xtc')"
+Write-Host "    ca = u.select_atoms('name CA')"
+Write-Host "    # write N T header, then loop frames writing ca.positions ..."
+Write-Host ""
+Write-Host "For a larger SYNTHETIC problem instead, run:"
+Write-Host "    python scripts/make_synthetic.py --residues 200 --frames 1000"

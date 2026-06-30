@@ -1,12 +1,14 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 2.14 -- Protein-Ligand Co-Folding   (template skeleton)
+# Project 2.14 : Protein-Ligand Co-Folding (reduced-scope teaching version)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs +
+# licensing, and NEVER bypasses credentials/registration. The committed tiny
+# SYNTHETIC sample (data/sample/complex_sample.txt) already runs the demo
+# offline, so this script only points at the real co-folding benchmarks for
+# learners who want to go further. It downloads nothing automatically because
+# those benchmarks carry their own licenses and are large.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +18,26 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.14 -- Protein-Ligand Co-Folding"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    PoseBusters benchmark — 428 recently released PDB complexes (https://github.com/maabuu/posebusters); PDB-bind v2020 (http://www.pdbbind.org.cn); Astex Diverse Set — 85 drug-like ligand complex structures (verify URL); CASF cross-docking benchmarks (http://www.pdbbind.org.cn/casf.php)."
+Write-Host "The committed sample (data/sample/complex_sample.txt) is SYNTHETIC and"
+Write-Host "is all the demo needs. The real co-folding benchmarks below are for"
+Write-Host "further study. This project's loader expects its own tiny token format"
+Write-Host "(see data/README.md); turning a real PDB complex into that format is"
+Write-Host "left as an exercise -- the point here is the diffusion+attention loop,"
+Write-Host "not a full structure parser."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real protein-ligand complex benchmarks (study these):"
+Write-Host "  * PoseBusters  : 428 recent PDB complexes for pose validation"
+Write-Host "                   https://github.com/maabuu/posebusters  (MIT; PDB data CC0-ish, check per entry)"
+Write-Host "  * PDBbind v2020: protein-ligand complexes + binding affinities"
+Write-Host "                   http://www.pdbbind.org.cn  (registration required; academic license)"
+Write-Host "  * Astex Diverse: 85 drug-like ligand complexes"
+Write-Host "                   https://www.ccdc.cam.ac.uk (verify current URL / terms)"
+Write-Host "  * CASF         : cross-docking scoring benchmarks"
+Write-Host "                   http://www.pdbbind.org.cn/casf.php"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "For a larger SYNTHETIC complex (more tokens / steps), run:"
+Write-Host "  python scripts/make_synthetic.py --n-protein 24 --n-ligand 9 --steps 240"
+Write-Host ""
+Write-Host "NOTE: PDBbind/Astex require accepting a license or registering. This"
+Write-Host "script will NOT bypass that -- follow each site's instructions yourself."

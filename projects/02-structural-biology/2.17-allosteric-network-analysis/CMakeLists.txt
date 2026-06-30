@@ -1,11 +1,14 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 2.17 -- Allosteric Network Analysis   (template skeleton)
+# Project 2.17 -- Allosteric Network Analysis
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/allosteric-network-analysis.sln (CLAUDE.md §5). Both
-# compile the SAME src/ files, so they stay in lockstep.
+# compile the SAME src/ files (main.cu, kernels.cu, reference_cpu.cpp -- which pull
+# in dcc_core.h / kernels.cuh / reference_cpu.h headers), so they stay in lockstep.
+# No extra CUDA libraries are linked: the DCC matrix uses a custom kernel, not
+# cuBLAS, so the default CUDA runtime is all that is required.
 #
 #   cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build/cmake

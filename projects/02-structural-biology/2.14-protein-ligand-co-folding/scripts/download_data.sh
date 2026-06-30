@@ -2,11 +2,14 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.14 -- Protein-Ligand Co-Folding   (template skeleton)
+# Project 2.14 : Protein-Ligand Co-Folding (reduced-scope teaching version)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs +
+# licensing, and NEVER bypasses credentials/registration. The committed tiny
+# SYNTHETIC sample (data/sample/complex_sample.txt) already runs the demo
+# offline, so this script only points at the real co-folding benchmarks for
+# learners who want to go further. It downloads nothing automatically because
+# those benchmarks carry their own licenses and are large.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +20,24 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 2.14 -- Protein-Ligand Co-Folding"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    PoseBusters benchmark — 428 recently released PDB complexes (https://github.com/maabuu/posebusters); PDB-bind v2020 (http://www.pdbbind.org.cn); Astex Diverse Set — 85 drug-like ligand complex structures (verify URL); CASF cross-docking benchmarks (http://www.pdbbind.org.cn/casf.php)."
+echo "The committed sample (data/sample/complex_sample.txt) is SYNTHETIC and is"
+echo "all the demo needs. The real co-folding benchmarks below are for further"
+echo "study. This project's loader expects its own tiny token format (see"
+echo "data/README.md); turning a real PDB complex into that format is left as an"
+echo "exercise -- the point here is the diffusion+attention loop, not a parser."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Real protein-ligand complex benchmarks (study these):"
+echo "  * PoseBusters  : 428 recent PDB complexes for pose validation"
+echo "                   https://github.com/maabuu/posebusters  (MIT; check per-entry PDB terms)"
+echo "  * PDBbind v2020: protein-ligand complexes + binding affinities"
+echo "                   http://www.pdbbind.org.cn  (registration required; academic license)"
+echo "  * Astex Diverse: 85 drug-like ligand complexes"
+echo "                   https://www.ccdc.cam.ac.uk (verify current URL / terms)"
+echo "  * CASF         : cross-docking scoring benchmarks"
+echo "                   http://www.pdbbind.org.cn/casf.php"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "For a larger SYNTHETIC complex (more tokens / steps), run:"
+echo "  python scripts/make_synthetic.py --n-protein 24 --n-ligand 9 --steps 240"
+echo
+echo "NOTE: PDBbind/Astex require accepting a license or registering. This script"
+echo "will NOT bypass that -- follow each site's instructions yourself."

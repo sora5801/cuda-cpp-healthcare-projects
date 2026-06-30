@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Pointers to the FULL datasets (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.13 -- MSA Generation Acceleration   (template skeleton)
+# Project 2.13 : MSA Generation Acceleration
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs + sizes,
+# and NEVER bypasses credentials/registration. The real MSA databases are huge
+# (UniRef90 ~210 GB) and are not redistributed here; this script prints where to
+# get them and defers to scripts/make_synthetic.py for an offline stand-in. The
+# committed tiny sample already lets the demo run with zero downloads.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,19 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 2.13 -- MSA Generation Acceleration"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    UniRef90 — 210GB protein sequence database (https://www.uniprot.org/help/uniref); UniClust30 (https://uniclust.mmseqs.com); MGnify metagenomics sequences (https://www.ebi.ac.uk/metagenomics/); BFD — Big Fantastic Database (https://bfd.mmseqs.com)."
+echo "The committed sample (data/sample/profile_db_sample.txt) is SYNTHETIC and"
+echo "is all the demo needs. The real MSA databases are not redistributed here:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  UniRef90    ~210 GB   https://www.uniprot.org/help/uniref"
+echo "  UniClust30            https://uniclust.mmseqs.com"
+echo "  MGnify                https://www.ebi.ac.uk/metagenomics/"
+echo "  BFD                   https://bfd.mmseqs.com"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "To build a real profile HMM and search, use HMMER/HHblits or MMseqs2:"
+echo "  https://github.com/soedinglab/MMseqs2   (GPU-capable search/clustering)"
+echo "  https://github.com/sokrypton/ColabFold  (GPU MSA server for AlphaFold2)"
+echo
+echo "For a larger SYNTHETIC problem that runs with this project as-is:"
+echo "    python scripts/make_synthetic.py --n 4096 --seed 7"
+echo
+echo "[download_data] Nothing to download; exiting cleanly."

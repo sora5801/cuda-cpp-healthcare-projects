@@ -1,12 +1,12 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 2.15 -- Antibody Structure Prediction   (template skeleton)
+# Project 2.15 : Antibody Structure Prediction  (reduced-scope: CDR screening)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The real antibody databases each have
+# their own access terms, so this script PRINTS INSTRUCTIONS ONLY and points at
+# scripts/make_synthetic.py for the offline stand-in the demo actually uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -14,20 +14,25 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $DataDir = Join-Path $ProjectRoot "data"
 
-Write-Host "[download_data] Project 2.15 -- Antibody Structure Prediction"
+Write-Host "[download_data] Project 2.15 -- Antibody Structure Prediction (CDR screening)"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    SAbDab — Structural Antibody Database (https://opig.stats.ox.ac.uk/webapps/newsabdab/sabdab/); OAS (Observed Antibody Space) — 2B antibody sequences (https://opig.stats.ox.ac.uk/webapps/newsabdab/sabdab/); CASP-Ab benchmarks; Thera-SAbDab — therapeutic antibody database (https://opig.stats.ox.ac.uk/webapps/newsabdab/therasabdab/)."
+Write-Host "This teaching project ships a SYNTHETIC sample (data/sample/antibodies_sample.txt)"
+Write-Host "so the demo runs offline. To work with REAL antibody CDR sequences/structures,"
+Write-Host "obtain them from the sources below and convert to the loader's text format"
+Write-Host "(see data/README.md). Each source has its own license -- respect it."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
+Write-Host "  SAbDab (Structural Antibody Database) -- IMGT-numbered antibody structures:"
+Write-Host "    https://opig.stats.ox.ac.uk/webapps/newsabdab/sabdab/"
+Write-Host "  Thera-SAbDab (therapeutic antibodies):"
+Write-Host "    https://opig.stats.ox.ac.uk/webapps/newsabdab/therasabdab/"
+Write-Host "  OAS (Observed Antibody Space) -- ~2 billion antibody sequences:"
+Write-Host "    https://opig.stats.ox.ac.uk/webapps/oas/"
+Write-Host ""
+Write-Host "  To convert a real set to the screen's format you would:"
+Write-Host "    1) IMGT-number each Fv (e.g. with ANARCI) to delimit the six CDR loops,"
+Write-Host "    2) emit one line per antibody: '<name> H1 H2 H3 L1 L2 L3' (amino-acid strings),"
+Write-Host "    3) put one antibody on a 'QUERY <name> ...' line to screen the rest against."
+Write-Host ""
+Write-Host "  For a larger SYNTHETIC problem right now (no download needed):"
 Write-Host "    python scripts/make_synthetic.py --n 1048576"
-Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"

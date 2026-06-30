@@ -6,32 +6,53 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+When you mutate a single amino acid in a protein, its fold becomes more or less
+stable. That change in folding free energy is **ΔΔG** (kcal/mol). This project
+runs a **saturation-mutagenesis scan**: for every residue position it predicts the
+ΔΔG of changing that residue to all 20 amino acids — an `L × 20` grid of
+independent predictions, the classic "deep mutational scan" heatmap. Every grid
+cell is computed by its own GPU thread. The per-mutation model here is a small,
+**fully transparent physics-inspired scoring function** (a reduced-scope teaching
+stand-in for a trained GNN like ThermoMPNN), so you can read exactly why each
+number comes out the way it does. The result is verified cell-by-cell against a
+plain-C++ reference.
 
 ## What this computes & why the GPU helps
 
-Predicting the thermodynamic stability change upon single amino acid mutation (ΔΔG) is critical for protein engineering, antibody optimization, and understanding disease variants. ML approaches train on experimental ΔΔG datasets (Protherm, Megascale) using structural features (ProteinMPNN ddG, ThermoMPNN), sequence language models (ESM-1v, EVmutation), or structure-sequence joint models. GPU training on millions of mutation datapoints and GPU inference for saturation mutagenesis scanning (all 20 AA × every position) makes library-scale ΔΔG feasible.
+Predicting the thermodynamic stability change upon single amino acid mutation
+(ΔΔG) is critical for protein engineering, antibody optimization, and
+understanding disease variants. Production approaches train on experimental ΔΔG
+datasets (Protherm, the Megascale set) using structural features (ProteinMPNN-ddG,
+ThermoMPNN) or sequence language models (ESM-1v, EVmutation). GPU inference for
+saturation-mutagenesis scanning — all 20 amino acids at every position — makes
+library-scale ΔΔG feasible.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** the scan is an `L × 20` grid of mutation scores, and
+**no cell depends on any other**. The dominant cost is simply evaluating the
+per-mutation model many times. That is an embarrassingly parallel "map": we launch
+one GPU thread per `(position, mutant-amino-acid)` cell — the "batched masked
+prediction" pattern real ΔΔG models use — and the whole grid is computed at once
+instead of looping `20L` times on a CPU. The GPU's edge grows with protein length
+and with a heavier (real, learned) per-mutation model.
 
 ## The algorithm in brief
 
-ProteinMPNN fixed-backbone energy decomposition, ESM-1v zero-shot log-likelihood scoring, Rosetta ddG monomer protocol (FoldX, Cartesian ddG), GNN per-residue embedding, saturation mutagenesis scanning.
+- Load a protein: per-residue **wild-type amino acid** + a **burial fraction**
+  (1 = buried core, 0 = solvent-exposed surface).
+- For each `(position p, amino acid a)`, score `ΔΔG = ddg_predict(wt_p, a, buried_p)`.
+- `ddg_predict` sums four interpretable physical terms (hydrophobic burial, packing
+  /volume strain, proline/glycine backbone penalty, buried-charge desolvation),
+  each gated by burial, then squashes with a bounded `tanh`.
+- Report the top-K most **destabilising** mutations and aggregate statistics.
+- Verify the GPU grid against the CPU reference within tolerance.
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+derivation (key algorithms named in the catalog: ProteinMPNN energy decomposition,
+ESM-1v zero-shot scoring, Rosetta/FoldX ddG, GNN per-residue embedding, saturation
+mutagenesis scanning — this project implements the **scanning** with a transparent
+scoring stand-in for the learned model).
 
 ## Build
 
@@ -49,6 +70,9 @@ Command-line alternative (Developer PowerShell):
 msbuild build\g-stability-prediction.sln /p:Configuration=Release /p:Platform=x64
 ```
 
+This project links only the CUDA runtime (`cudart_static.lib`); it uses no extra
+CUDA libraries — the kernel is hand-written so nothing is a black box.
+
 ## Run the demo
 
 ```powershell
@@ -56,53 +80,108 @@ msbuild build\g-stability-prediction.sln /p:Configuration=Release /p:Platform=x6
 ./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+The demo builds if needed, runs on `data/sample/protein_sample.txt`, prints the
+result, shows the GPU-vs-CPU agreement check, and prints a timing line (to stderr).
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
+- **Sample (committed):** `data/sample/protein_sample.txt` — a tiny **synthetic**
+  24-residue protein so the demo runs with zero downloads.
+- **Full datasets:** `scripts/download_data.ps1` / `.sh` print where to obtain the
+  real study sets (they do not bypass any registration/license).
+- **Provenance & license:** see [data/README.md](data/README.md). The sample is
+  generated by `scripts/make_synthetic.py` and is **labelled synthetic**.
 
-Catalog dataset notes: Protherm database — >25k experimental ΔΔG values (https://www.abren.net/protherm/); Megascale dataset — 2.5M thermodynamic stability measurements (https://github.com/Rocklin-Lab/cdna-display-proteolysis-datasets); ProteinGym substitutions benchmark (https://github.com/OATML-Markslab/ProteinGym); S669 curated stability benchmark (verify URL).
+Real study sets (for further learning): Protherm/ProThermDB (>25k experimental ΔΔG
+values), the Megascale dataset (~2.5M proteolysis-stability measurements),
+ProteinGym substitution benchmarks, and the S669 curated stability benchmark.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt):
+
+```
+2.16 -- Delta-Delta-G Stability Prediction
+Saturation mutagenesis scan: protein 'synthetic_core_helix', 24 residues x 20 AA = 480 mutations
+top-5 most DESTABILISING mutations (most negative ddG):
+  #1  W17G   ddG =  -7.9373 kcal/mol
+  ...
+RESULT: PASS (GPU matches CPU within tol=1.0e-03 kcal/mol)
+```
+
+The program computes the scan on both the **GPU** (`src/kernels.cu`) and a **CPU
+reference** (`src/reference_cpu.cpp`) and asserts they agree within `1e-3` kcal/mol
+— that agreement is the correctness guarantee. The most destabilising mutations are
+buried bulky hydrophobic residues → glycine, which correctly recovers the
+synthetic protein's designed core (see [demo/README.md](demo/README.md)).
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/ddg_model.h`](src/ddg_model.h) — **start here**: the shared
+   `__host__ __device__` scoring model and the per-residue property tables. This is
+   the science, and the single source of truth both CPU and GPU evaluate.
+2. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
+3. [`src/reference_cpu.h`](src/reference_cpu.h) / [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the data model, loader, and trusted serial scan.
+4. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
+5. [`src/kernels.cu`](src/kernels.cu) — the kernel (constant-memory features, 2-D grid) and host wrapper.
+6. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
 
 ## Prior art & further reading
 
-ThermoMPNN (https://github.com/Kuhlman-Lab/ThermoMPNN) — GPU ΔΔG prediction from ProteinMPNN; ProteinMPNN-ddG (https://github.com/PeptoneLtd/proteinmpnn_ddg) — saturation mutagenesis ΔΔG; ESM-1v (https://github.com/facebookresearch/esm) — zero-shot stability from language model; FoldX (https://foldxsuite.crg.eu) — fast empirical ΔΔG.
+- **ThermoMPNN** (<https://github.com/Kuhlman-Lab/ThermoMPNN>) — GPU ΔΔG prediction
+  on top of ProteinMPNN embeddings; the closest analogue to this project's scan.
+- **ProteinMPNN-ddG** (<https://github.com/PeptoneLtd/proteinmpnn_ddg>) — saturation
+  mutagenesis ΔΔG; study its batched per-position inference.
+- **ESM-1v** (<https://github.com/facebookresearch/esm>) — zero-shot stability from a
+  protein language model's log-likelihood (no structure needed).
+- **FoldX** (<https://foldxsuite.crg.eu>) — fast empirical force-field ΔΔG; the
+  physics-based counterpoint to the ML approaches.
 
 Study these to learn the production approach; **do not copy code wholesale** —
 reimplement didactically and credit the source (CLAUDE.md §2).
 
-## CUDA pattern used here
+### CUDA pattern used here
 
-GPU GNN inference for per-residue stability; batched language model forward passes (cuDNN attention); GPU saturation mutagenesis via batched masked prediction; PyTorch Distributed for large-scale training. --
+"Score one query vs N items, each independent" / **batched masked prediction**
+(`docs/PATTERNS.md` §1, exemplar flagship `1.12`): one thread per `(position,
+mutant-AA)` cell, read-only per-residue features in **constant memory**, no shared
+memory or atomics. The CPU/GPU parity comes from the shared `__host__ __device__`
+core (`docs/PATTERNS.md` §2).
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Pack the warp.** The kernel uses 32 amino-acid lanes but only 20 are real
+   (12 wasted). Repack so a 256-thread block covers `256/20` whole mutations with
+   no idle lanes, and compare occupancy/throughput on a long synthetic protein.
+2. **Make a real feature.** Replace the single `buried` scalar with a small feature
+   *vector* (e.g. burial + a secondary-structure one-hot + contact number) and a
+   tiny matrix-multiply scorer. Keep the `__host__ __device__` core so CPU==GPU
+   still holds.
+3. **Top-K on the GPU.** The host currently does the top-K ranking. Implement a
+   block-level reduction that returns the most destabilising mutation per position
+   directly from the device (compare against the host result).
+4. **Scale it.** Generate a 4096-residue protein
+   (`python scripts/make_synthetic.py --residues 4096`) and plot CPU vs GPU time as
+   `L` grows — watch the launch-overhead-dominated tiny case turn into a GPU win.
+5. **Second precision.** Add an FP64 build path for `ddg_predict` and measure how
+   much smaller the CPU/GPU `max_abs_err` becomes (and at what speed cost).
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **The model is a teaching stand-in, not a validated predictor.** It is a
+  hand-weighted four-term physics-inspired formula, *not* trained on any ΔΔG data.
+  Its numbers must **never** be used to choose real mutations or make any
+  biological/clinical decision.
+- **The protein is synthetic.** `data/sample/protein_sample.txt` is generated by
+  `scripts/make_synthetic.py` with a designed buried core; it is not a real
+  structure. It is labelled synthetic everywhere it appears.
+- **`buried` is a single scalar.** A real model uses a rich learned per-residue
+  embedding (structure graph, evolutionary context). We deliberately reduce that to
+  one burial fraction so the math stays readable.
+- **What would differ in production:** a trained GNN/transformer with loaded
+  weights, real structural features (RSA from DSSP, secondary structure, contacts),
+  proper benchmarking on S669/ProteinGym, and uncertainty estimates. The **CUDA
+  scan geometry**, however, would be essentially the same — that is the transferable
+  lesson here. See [THEORY.md](THEORY.md) "Where this sits in the real world".

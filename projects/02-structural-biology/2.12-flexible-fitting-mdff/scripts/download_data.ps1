@@ -1,12 +1,12 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real cryo-EM data pointers (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 2.12 -- Flexible Fitting / MDFF   (template skeleton)
+# Project 2.12 : Flexible Fitting / MDFF
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. There is NOTHING to download for the
+# demo -- the committed sample is a self-contained synthetic problem. This script
+# only points at the real public maps/structures a learner would fit for real.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -15,19 +15,22 @@ $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.12 -- Flexible Fitting / MDFF"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    EMDB reference maps for MDFF (https://www.ebi.ac.uk/emdb/); EMPIAR raw particle data (https://www.ebi.ac.uk/empiar/); ribosome MDFF benchmarks (PDB 3J7Y, 4V6X); viral capsid fitting datasets."
+Write-Host "There is no file to download: the demo runs on a self-contained"
+Write-Host "synthetic problem in data/sample/mdff_problem.txt (atoms + parameters;"
+Write-Host "the density grid is rebuilt by the program)."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "For REAL cryo-EM flexible fitting you need a density MAP + a starting MODEL:"
+Write-Host "  EMDB   : https://www.ebi.ac.uk/emdb/    (reference density maps, MRC/CCP4)"
+Write-Host "  EMPIAR : https://www.ebi.ac.uk/empiar/  (raw particle data)"
+Write-Host "  PDB    : ribosome MDFF benchmarks 3J7Y, 4V6X  (https://www.rcsb.org)"
+Write-Host "  Tools  : NAMD/VMD MDFF (https://www.ks.uiuc.edu/Research/namd/),"
+Write-Host "           phenix.real_space_refine, Coot."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Wiring a real map would add an MRC/CCP4 reader (-> rho) and a PDB reader"
+Write-Host "(-> x0); the fitting kernel itself is unchanged."
+Write-Host ""
+Write-Host "Larger SYNTHETIC problem (no download):"
+Write-Host "  python scripts/make_synthetic.py --iters 400"
+Write-Host ""
+Write-Host "Target data dir: $DataDir"

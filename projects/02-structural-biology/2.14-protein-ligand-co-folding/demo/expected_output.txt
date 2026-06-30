@@ -1,5 +1,12 @@
 2.14 -- Protein-Ligand Co-Folding
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+[reduced-scope teaching model: analytic-score diffusion, not a learned network]
+complex: 17 tokens (12 protein + 5 ligand), 160 denoising steps
+schedule: temp=0.500 step_frac=0.100 type_bias=1.000 noise_scale=1.000
+RMSD to native: start=1.5503  ->  final=0.0120 (Angstrom)
+ligand pose (final x y z):
+  atom 0: -3.6116 0.4861 0.9701
+  atom 1: -1.8000 -0.4999 1.8000
+  atom 2: 0.0000 0.4999 2.6000
+  atom 3: 1.8000 -0.4999 3.4000
+  atom 4: 3.5999 0.4999 4.2000
+RESULT: PASS (GPU==CPU within 1e-03; pose folded RMSD<0.5)

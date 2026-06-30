@@ -1,12 +1,13 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Fetch / point at the FULL datasets (Windows)
 # ---------------------------------------------------------------------------
-# Project 2.16 -- ΔΔG Stability Prediction   (template skeleton)
+# Project 2.16 : Delta-Delta-G Stability Prediction
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The real Delta-Delta-G study sets are
+# either large or governed by their own licenses, so this script only prints
+# instructions + links and defers to scripts/make_synthetic.py for an offline,
+# runnable stand-in. The committed tiny sample already runs the demo.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -14,20 +15,29 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $DataDir = Join-Path $ProjectRoot "data"
 
-Write-Host "[download_data] Project 2.16 -- ΔΔG Stability Prediction"
+Write-Host "[download_data] Project 2.16 -- Delta-Delta-G Stability Prediction"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Protherm database — >25k experimental ΔΔG values (https://www.abren.net/protherm/); Megascale dataset — 2.5M thermodynamic stability measurements (https://github.com/Rocklin-Lab/cdna-display-proteolysis-datasets); ProteinGym substitutions benchmark (https://github.com/OATML-Markslab/ProteinGym); S669 curated stability benchmark (verify URL)."
+Write-Host "The committed synthetic sample (data/sample/protein_sample.txt) is all"
+Write-Host "the demo needs. The datasets below are OPTIONAL study material; each has"
+Write-Host "its own license -- respect it. This script does NOT download or bypass any"
+Write-Host "registration; it prints where to get the data."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  1) Protherm / ProThermDB  (>25k experimental Delta-Delta-G values)"
+Write-Host "     https://www.abren.net/protherm/   (see ProThermDB for the successor)"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  2) Megascale stability dataset (Rocklin lab, ~2.5M measurements)"
+Write-Host "     https://github.com/Rocklin-Lab/cdna-display-proteolysis-datasets"
+Write-Host ""
+Write-Host "  3) ProteinGym substitution/indel benchmarks"
+Write-Host "     https://github.com/OATML-Markslab/ProteinGym"
+Write-Host ""
+Write-Host "  4) S669 curated single-mutation stability benchmark"
+Write-Host "     (verify the current canonical URL in the literature)"
+Write-Host ""
+Write-Host "To make a LARGER synthetic protein for scaling experiments, run e.g.:"
+Write-Host "    python scripts/make_synthetic.py --residues 512 --out data/sample/protein_big.txt"
+Write-Host ""
+Write-Host "To turn a real PDB structure into this project's input, compute a"
+Write-Host "per-residue burial fraction (relative solvent accessibility via DSSP or"
+Write-Host "freesasa) and emit '<AA> <buried>' lines -- see THEORY.md."

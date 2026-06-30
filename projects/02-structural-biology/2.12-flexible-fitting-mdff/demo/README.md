@@ -5,29 +5,38 @@
 Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
+2. **Run** it on `data/sample/mdff_problem.txt` (a 27-atom model misfitted from
+   its target inside a 32³ density map).
+3. **Verify** that the GPU MDFF fit and the CPU reference reach the same final
+   atom positions (within a physically-negligible tolerance), printing `PASS`/`FAIL`.
+4. **Report** the fit quality: RMSD-to-target and density cross-correlation,
+   **before vs after**, so you watch the model snap onto the density.
+5. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
    not a benchmark claim.
 
 The program splits its output deliberately:
 
 - **stdout** is byte-for-byte deterministic and is diffed against
   [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+- **stderr** carries the timing and the GPU-vs-CPU error (which vary run to run),
+  so it is shown but never diffed.
 
-## Expected result
+## Canonical output
 
-```
-2.12 -- Flexible Fitting / MDFF
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
+See [`expected_output.txt`](expected_output.txt). The headline numbers are the
+**RMSD start → final** (drops as the model fits onto the density) and the
+**cross-correlation start → final** (rises as atoms climb onto the density
+ridges). `RESULT: PASS` means the GPU and CPU fitted models agree to within
+`1e-4` on coordinates of magnitude ~10.
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+> **Numerical note:** on this machine the GPU and CPU agree to ~`1e-15` (the
+> shared `__host__ __device__` math compiles nearly identically here). We still
+> verify to a deliberately loose `1e-4` rather than bit-exactness, because the
+> GPU's fused-multiply-add (FMA) contraction *can* diverge from the host
+> compiler's by ~`1e-6` over hundreds of iterations on other toolchains/cards — a
+> real GPU-reproducibility lesson (see THEORY "Numerical considerations"). Don't
+> assume bit-identical floating point across GPUs.
+
+> The model is a **synthetic lattice** and the density a simple Gaussian sum —
+> a demonstration of the MDFF / trilinear-gather GPU pattern, **not** a validated
+> structure-determination pipeline and not for clinical use.

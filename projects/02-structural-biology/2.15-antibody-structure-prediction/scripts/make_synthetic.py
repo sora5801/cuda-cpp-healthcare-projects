@@ -1,48 +1,126 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate the synthetic antibody dataset
 # ---------------------------------------------------------------------------
-# Project 2.15 -- Antibody Structure Prediction   (template skeleton)
+# Project 2.15 : Antibody Structure Prediction  (reduced-scope: CDR screening)
 #
 # WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+#   The real antibody databases (SAbDab, OAS, Thera-SAbDab) require their own
+#   download + license handling (see scripts/download_data.*). So we ship a tiny,
+#   clearly-SYNTHETIC stand-in so the demo runs offline with zero downloads
+#   (CLAUDE.md §8). Synthetic data is labeled synthetic everywhere it appears.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
+# WHAT THE DATA IS
+#   One QUERY antibody plus N library antibodies. Each antibody is described by
+#   its six CDR loops (heavy H1,H2,H3 then light L1,L2,L3) as amino-acid strings.
+#   These sequences are INVENTED (random-but-deterministic), not real antibodies.
 #
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# THE EMBEDDED ANSWER (so the demo is interpretable -- PATTERNS.md §6)
+#   We make library entry "mAb_07" a near-copy of the query (its CDRs are the
+#   query's CDRs with a couple of point mutations), and give "mAb_18" the SAME
+#   CDR-H3 as the query but different framework-CDRs. Because the score weights
+#   CDR-H3 x3, the screen should rank mAb_07 and mAb_18 at the top -- recovering
+#   the planted "similar" antibodies. Every other antibody has unrelated CDRs.
+#
+# DETERMINISM
+#   A fixed RNG seed makes the output byte-identical every run, so the committed
+#   sample (and therefore demo/expected_output.txt) is stable.
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py                 # default n=24 library antibodies
+#   python scripts/make_synthetic.py --n 100000      # a library-scale synthetic set
+#   python scripts/make_synthetic.py --out other.txt
 # ===========================================================================
 import argparse
+import random
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+OUT = ROOT / "data" / "sample" / "antibodies_sample.txt"
+
+# The 20 standard amino acids (one-letter codes) -- the alphabet the loader knows.
+AA = "ARNDCQEGHILKMFPSTWYV"
+
+# Plausible per-CDR length ranges (residues). CDR-H3 is the longest/most variable;
+# the others are short and more conserved. These are TEACHING ranges, not a model.
+CDR_LEN = {
+    "H1": (5, 8),
+    "H2": (5, 8),
+    "H3": (8, 18),     # the hypervariable, specificity-driving loop
+    "L1": (5, 11),
+    "L2": (3, 4),
+    "L3": (7, 10),
+}
+CDR_ORDER = ["H1", "H2", "H3", "L1", "L2", "L3"]
+
+
+def rand_cdr(rng, name):
+    """A random amino-acid string of a length appropriate for CDR `name`."""
+    lo, hi = CDR_LEN[name]
+    L = rng.randint(lo, hi)
+    return "".join(rng.choice(AA) for _ in range(L))
+
+
+def mutate(rng, seq, n_mut):
+    """Return `seq` with `n_mut` random point substitutions (a near-copy)."""
+    s = list(seq)
+    for _ in range(n_mut):
+        i = rng.randrange(len(s))
+        s[i] = rng.choice(AA)
+    return "".join(s)
+
+
+def make_antibody(rng):
+    """A dict of the six CDR strings for one random synthetic antibody."""
+    return {name: rand_cdr(rng, name) for name in CDR_ORDER}
+
+
+def fmt(name, ab):
+    """Format one antibody as '<name> H1 H2 H3 L1 L2 L3'."""
+    return name + " " + " ".join(ab[c] for c in CDR_ORDER)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
+    ap = argparse.ArgumentParser(description="Generate the synthetic antibody CDR dataset.")
+    ap.add_argument("--n", type=int, default=24, help="number of LIBRARY antibodies")
+    ap.add_argument("--seed", type=int, default=215, help="RNG seed (determinism)")
     ap.add_argument("--out", default=str(OUT), help="output path")
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    rng = random.Random(args.seed)
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    # 1) The query antibody (its CDRs are what we screen the library against).
+    query = make_antibody(rng)
+
+    # 2) The library. Generate random antibodies, then plant two "hits":
+    #    - index 7  ("mAb_07"): a near-copy of the query (2 point mutations/CDR).
+    #    - index 18 ("mAb_18"): SAME CDR-H3 as the query, other CDRs random.
+    n = max(args.n, 20)            # need room for the planted indices
+    lib = []
+    for i in range(n):
+        ab = make_antibody(rng)
+        if i == 7:
+            ab = {c: mutate(rng, query[c], 2) for c in CDR_ORDER}   # near-copy
+        if i == 18:
+            ab = make_antibody(rng)
+            ab["H3"] = query["H3"]                                  # shared CDR-H3
+        lib.append((f"mAb_{i:02d}", ab))
+
+    # 3) Write the file (see data/README.md for the exact format).
+    lines = [
+        "# SYNTHETIC antibody CDR dataset -- NOT real antibodies, NOT for any clinical use.",
+        "# Project 2.15 (reduced-scope CDR screening). Generated by scripts/make_synthetic.py.",
+        "# Format: 'QUERY <name> H1 H2 H3 L1 L2 L3' then one line per library antibody.",
+        "# CDR order: heavy H1,H2,H3 then light L1,L2,L3. CDR-H3 is weighted x3 by the screen.",
+        "# Planted answer: mAb_07 is a near-copy of the query; mAb_18 shares the query's CDR-H3.",
+        "QUERY " + fmt("query_Ab", query),
+    ]
+    for name, ab in lib:
+        lines.append(fmt(name, ab))
+
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    print(f"[make_synthetic] wrote {args.out}  (1 query + {n} library antibodies; SYNTHETIC)")
 
 
 if __name__ == "__main__":

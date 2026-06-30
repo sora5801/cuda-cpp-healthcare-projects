@@ -6,103 +6,167 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+**Allostery** is how a protein transmits a signal from one site to a distant one —
+the mechanism behind cooperative binding and a huge share of drug targets. This
+project builds the numerical heart of computational allostery detection: from a
+molecular-dynamics trajectory it computes the **N×N Dynamical Cross-Correlation
+(DCC) matrix** (which residues move together) on the GPU, turns it into a weighted
+**residue communication network**, and finds the **shortest allosteric pathway**
+from the allosteric site to the active site — plus the **bottleneck residue** that
+gates it. The DCC matrix is computed on both the GPU and a CPU reference and the
+two are checked to agree **bit-for-bit**. Everything runs on a tiny **synthetic**
+trajectory engineered to contain a known pathway, so the answer is verifiable.
 
 ## What this computes & why the GPU helps
 
-Allostery — ligand binding at one site affecting activity at a distant site — is a major drug target mechanism. Computational allostery detection uses MD trajectory correlation analysis, perturbation response scanning, community detection on protein contact graphs, and causal DCC (dynamical cross-correlation). GPU-accelerated MD generates the long trajectories needed; GPU matrix operations parallelize the N×N residue-residue cross-correlation calculation. Community detection on large protein network graphs benefits from GPU graph algorithms. Applications include identifying cryptic allosteric pockets for undruggable targets.
-
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+The bottleneck of allosteric network analysis is the **DCC matrix**: for every pair
+of residues `(i, j)` we average, over all `T` trajectory frames, the dot product of
+their displacements from the mean, then normalize to a correlation in `[−1, 1]`.
+That is `O(N² · T)` work and, crucially, **every one of the `N²` entries is
+independent** — so we hand each matrix entry to its own GPU thread (a 2-D grid over
+the matrix). For real proteins (`N` in the hundreds–thousands, `T` up to `10⁶`
+frames) this is exactly where the time goes, and exactly what the GPU parallelizes.
+The downstream graph steps (contact network, all-pairs shortest path) are cheap and
+run once on the CPU from the verified matrix. See [THEORY.md](THEORY.md) for the
+full mapping.
 
 ## The algorithm in brief
 
-Dynamic cross-correlation matrix (DCC), mutual information between residue fluctuations, Linear Response Theory (LRT) perturbation scanning, graph community detection (Girvan-Newman, Louvain), protein contact network analysis, Shortest-path allostery communication (WORDOM).
+- **Per-residue means** `⟨r_i⟩` — the equilibrium structure (`O(N·T)`).
+- **DCC matrix** `C_{ij}` — variance-normalized time-averaged dot product of
+  displacements; a 3-D Pearson correlation (`O(N²·T)`, the GPU step).
+- **Contact graph** — an edge where mean Cα–Cα distance ≤ cutoff or backbone
+  neighbors (`O(N²)`).
+- **Communication weights** `w_{ij} = −log|C_{ij}|` — strong correlation → cheap edge.
+- **All-pairs shortest paths** (Floyd–Warshall, `O(N³)`) → the allosteric pathway
+  and its bottleneck (weakest-correlation) hop.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+Full derivation, complexity table, and the GPU thread→entry map are in
+[THEORY.md](THEORY.md).
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Prerequisites: **Visual Studio 2026** (v145 toolset, *Desktop development with C++*)
+and **CUDA Toolkit 13.3** — the repo's ratified toolchain (see
+[`docs/BUILD_GUIDE.md`](../../../docs/BUILD_GUIDE.md)).
 
 1. Open `build/allosteric-network-analysis.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/allosteric-network-analysis.exe`.
+2. Select **`Release|x64`** (or `Debug|x64`).
+3. **Build → Build Solution**. The `.exe` lands in `build/x64/<Config>/`.
 
-Command-line alternative (Developer PowerShell):
-
-```powershell
-msbuild build\allosteric-network-analysis.sln /p:Configuration=Release /p:Platform=x64
-```
+No manual path edits are needed — the project uses the CUDA `.props/.targets`
+integration and `$(CUDA_PATH)`. (A `Debug|x64` build adds `-G`/`-lineinfo` so you
+can step kernels in Nsight.) An optional `CMakeLists.txt` is provided for
+Linux/CMake users; the VS solution is the required deliverable.
 
 ## Run the demo
 
+From the project folder:
+
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File demo/run_demo.ps1
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+```bash
+# Linux / macOS (uses the optional CMake build)
+./demo/run_demo.sh
+```
+
+It builds if needed, runs on the committed sample, prints the result + GPU↔CPU
+check, and diffs stdout against `demo/expected_output.txt`.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
+The committed sample `data/sample/trajectory.txt` is a **tiny synthetic MD
+trajectory** (30 residues × 120 frames, generated by `scripts/make_synthetic.py`
+with a fixed seed — fully reproducible, standard library only). It is engineered so
+the analysis recovers a known allosteric pathway with a bottleneck at an
+engineered hinge. **It is synthetic — not real data, no clinical meaning.**
 
-Catalog dataset notes: GPCRmd allosteric trajectory archive (https://gpcrmd.org); MDAnalysis trajectory benchmarks (https://github.com/MDAnalysis/mdanalysis); ProDy benchmark datasets (https://github.com/prody/ProDy); allosteric dataset ASD (http://mdl.shsmu.edu.cn/ASD/).
+Real allosteric trajectories (GPCRmd, MDAnalysis, ProDy, ASD) are large and
+account-gated; `scripts/download_data.ps1` / `.sh` print where to get them and how
+to convert a real `.xtc/.dcd` into this project's text format — they never bypass
+any registration. Provenance and the exact file format are in
+[`data/README.md`](data/README.md).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+```
+2.17 -- Allosteric Network Analysis
+trajectory: 30 residues, 120 frames (synthetic)
+DCC matrix: 30x30  contact graph: 29 edges (cutoff 8.0 A)
+allosteric site: residue 2   active site: residue 27
+direct correlation C[2][27] = 0.8552
+communication path (26 residues, cost 5.9042): 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27
+bottleneck hop: 9-10  |C| = 0.4558
+C diagonal sample: 1.0000 1.0000 1.0000 1.0000
+RESULT: PASS (GPU DCC matrix matches CPU exactly)
+```
+
+**How correctness is checked.** `main.cu` builds the DCC matrix on the GPU
+(`kernels.cu`) and the CPU reference (`reference_cpu.cpp`) and asserts the worst
+entry-wise difference is **exactly `0.0`**. This exact tolerance is honest because
+both paths call the *same* `dcc_pair()` from `dcc_core.h` in `double` precision and
+the same order, so there is no floating-point divergence (PATTERNS.md §4). The
+recovered bottleneck at hop `9-10` is the engineered hinge — the analysis recovers
+the planted science. Timing goes to **stderr** (shown, not diffed).
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. **`src/main.cu`** — the 5-step orchestration: load → CPU DCC → GPU DCC → verify →
+   network analysis + report.
+2. **`src/dcc_core.h`** — the shared `__host__ __device__` per-pair physics
+   (`dcc_pair`, `comm_weight`). This single file is why CPU and GPU agree exactly.
+3. **`src/kernels.cuh` → `src/kernels.cu`** — the GPU path: one thread per matrix
+   entry, the 2-D grid launch, and the host wrapper.
+4. **`src/reference_cpu.cpp`** — the readable baseline + the contact graph and
+   Floyd–Warshall network analysis.
+5. **`src/util/`** — shared error-check (`cuda_check.cuh`), CUDA-event timing
+   (`timer.cuh`), and host helpers (`io.hpp`).
 
 ## Prior art & further reading
 
-ProDy (https://github.com/prody/ProDy) — allosteric analysis with ANM/DCC; MDAnalysis (https://github.com/MDAnalysis/mdanalysis) — trajectory analysis including correlation; PyInteraph2 (https://github.com/ELELAB/pyinteraph2) — protein interaction network analysis; Bio3D R package (https://thegrantlab.org/bio3d/) — cross-correlation and network analysis.
-
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
-
-## CUDA pattern used here
-
-GPU cross-correlation matrix via cuBLAS outer product; custom CUDA kernel for pairwise distance monitoring; GPU Louvain community detection via RAPIDS cuGraph; GPU-parallel trajectory featurization. --
+- **ProDy** — <https://github.com/prody/ProDy> — the reference Python library for
+  DCC/ANM-based allosteric analysis; study its `calcCrossCorr` and network tools.
+- **MDAnalysis** — <https://github.com/MDAnalysis/mdanalysis> — trajectory I/O and
+  correlation analysis; the recommended way to turn real MD into this project's
+  text format.
+- **PyInteraph2** — <https://github.com/ELELAB/pyinteraph2> — protein interaction
+  networks and signaling-path analysis; a richer view of the network step.
+- **Bio3D** (R) — <https://thegrantlab.org/bio3d/> — cross-correlation, community
+  detection, and the `−log|C|` correlation-network idiom this project borrows.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Mutual information instead of Pearson.** DCC misses *nonlinear* coupling and
+   orthogonal motions. Add a binned mutual-information `I(i;j)` measure and compare
+   the recovered pathway. (Add a second kernel; the per-pair map is identical.)
+2. **Shared-memory tiling.** The current kernel re-reads each residue's track many
+   times. Stage trajectory strips into `__shared__` memory across a 16×16 tile and
+   measure the bandwidth win (THEORY "GPU mapping").
+3. **GPU Floyd–Warshall.** For large `N`, port the `O(N³)` shortest-path step to a
+   blocked GPU Floyd–Warshall (or use RAPIDS cuGraph) and verify against the CPU.
+4. **Break the pathway.** Edit `make_synthetic.py` to decouple the hinge entirely
+   (`domain_coupling[1] = 0`) and confirm the path cost jumps / the sites disconnect.
+5. **Real trajectory.** Use MDAnalysis to convert a GPCRmd Cα trajectory to the
+   text format, annotate the known allosteric & orthosteric sites, and run it.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Synthetic data.** The committed trajectory is generated, not real MD; it is
+  labeled synthetic everywhere and carries **no biological or clinical meaning**.
+- **Reduced scope.** This is a *teaching* engine: it implements DCC + a clean
+  shortest-path network. Production allostery adds mutual information, perturbation
+  response scanning, community detection (Louvain/Girvan–Newman), and careful
+  trajectory **alignment** — all described in [THEORY.md](THEORY.md) but not coded.
+- **No alignment step.** Real trajectories must have global translation/rotation
+  removed before fluctuations mean anything; the synthetic data has none by
+  construction, so we skip it (a real pitfall to remember).
+- **Timing is a teaching artifact.** On this tiny sample the GPU is launch/transfer
+  bound and may not beat the CPU; its advantage grows with `N` and `T`. Never read
+  the millisecond figures as a benchmark claim (CLAUDE.md §12).

@@ -153,6 +153,9 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- ddg_model.h: the SHARED __host__ __device__ scoring model, included by
+         both reference_cpu.cpp (host) and kernels.cu (device) for CPU/GPU parity. -->
+    <ClInclude Include="..\src\ddg_model.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

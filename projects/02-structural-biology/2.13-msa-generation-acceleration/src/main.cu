@@ -1,122 +1,134 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load problem, run CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 2.13 -- MSA Generation Acceleration   (template skeleton)
+// Project 2.13 : MSA Generation Acceleration
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load the problem (one query profile HMM + a database of N sequences).
+//   2. Compute the CPU reference (reference_cpu.cpp)        -> trusted scores.
+//   3. Compute the GPU result    (kernels.cu)               -> the thing taught.
+//   4. VERIFY: assert GPU agrees with CPU EXACTLY            -> correctness.
+//   5. REPORT: deterministic top-K hits to stdout; timing to stderr.
 //
 //   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
 //   against demo/expected_output.txt. Anything that varies run-to-run (timings)
 //   goes to STDERR, which the demo shows but does not diff.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+//   WHY EXACT (tolerance == 0): every score is an integer (scaled log-odds, see
+//   hmm_core.h SCORE_SCALE), and CPU and GPU run the SAME integer recurrence
+//   (viterbi_step). Integer max/add is associative and order-independent, so the
+//   two paths agree bit-for-bit -- no floating-point drift (PATTERNS.md §4).
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// READ THIS FIRST in the code tour, then hmm_core.h, kernels.cuh -> kernels.cu,
+// and reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
 // ===========================================================================
+#include <algorithm>
 #include <cstdio>
+#include <numeric>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // viterbi_search_gpu (GPU path), MAX_PROFILE_L
+#include "reference_cpu.h"    // load_problem, viterbi_search_cpu (CPU baseline)
+#include "hmm_core.h"         // SCORE_SCALE, NEG_INF
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "2.13";
 static const char* PROJECT_NAME = "MSA Generation Acceleration";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// How many top hits to report. The MSA would keep the high-scoring database
+// sequences; here we print the best few so the result is small + deterministic.
+static constexpr int TOP_K = 5;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// ---------------------------------------------------------------------------
+// top_k_indices : indices of the K largest scores, ties broken by LOWER index.
+//   Deterministic ranking (so stdout is reproducible) via partial_sort on an
+//   index vector -- identical idiom to flagship 1.12.
+// ---------------------------------------------------------------------------
+static std::vector<int> top_k_indices(const std::vector<int>& score, int k) {
+    std::vector<int> idx(score.size());
+    std::iota(idx.begin(), idx.end(), 0);                  // 0,1,2,...,N-1
+    const int kk = std::min<int>(k, static_cast<int>(idx.size()));
+    std::partial_sort(idx.begin(), idx.begin() + kk, idx.end(),
+        [&](int a, int b) {
+            if (score[a] != score[b]) return score[a] > score[b];   // higher first
+            return a < b;                                           // tie -> lower idx
+        });
+    idx.resize(kk);
+    return idx;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load the problem -----------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/profile_db_sample.txt";
+    SearchProblem prob;
+    try {
+        prob = load_problem(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
+    }
+    if (prob.hmm.L > MAX_PROFILE_L) {
+        std::fprintf(stderr, "[error] profile length L=%d exceeds MAX_PROFILE_L=%d "
+                             "(raise the cap in kernels.cuh and rebuild)\n",
+                     prob.hmm.L, MAX_PROFILE_L);
+        return 2;
     }
 
     // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    std::vector<int> score_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    viterbi_search_cpu(prob, score_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU search (kernel timed inside the wrapper) -------------------
+    std::vector<int> score_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    viterbi_search_gpu(prob, score_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (EXACT integer agreement) -------------------------------
+    //   Largest absolute difference between the two integer score vectors. For a
+    //   correct implementation this is exactly 0 (same integer recurrence).
+    long long worst = 0;
+    bool same_size = (score_cpu.size() == score_gpu.size());
+    if (same_size) {
+        for (std::size_t i = 0; i < score_cpu.size(); ++i) {
+            long long d = std::llabs(static_cast<long long>(score_cpu[i]) -
+                                     static_cast<long long>(score_gpu[i]));
+            if (d > worst) worst = d;
+        }
+    }
+    const bool pass = same_size && (worst == 0);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT --------------------------------
+    //   Report the top-K database hits by GPU score, converting the scaled
+    //   integer back to a human-readable log-odds (bits-ish) for display. The
+    //   DISPLAYED float is derived deterministically from the integer score, so
+    //   stdout stays byte-identical across runs.
+    const std::vector<int> best = top_k_indices(score_gpu, TOP_K);
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("Profile-HMM Viterbi search: 1 query profile (L=%d) vs %d database sequences\n",
+                prob.hmm.L, prob.db.N);
+    std::printf("top-%d hits (by Viterbi log-odds score):\n", static_cast<int>(best.size()));
+    for (std::size_t r = 0; r < best.size(); ++r) {
+        const int i = best[r];
+        const double logodds = static_cast<double>(score_gpu[i]) / SCORE_SCALE;
+        std::printf("  #%zu  seq[%d]  score = %d  (log-odds = %.3f)\n",
+                    r + 1, i, score_gpu[i], logodds);
+    }
+    std::printf("RESULT: %s (GPU matches CPU exactly; max |diff| = %lld)\n",
+                pass ? "PASS" : "FAIL", worst);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
+    // ---- 5b. Varying detail -> STDERR --------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (L=%d profile, N=%d sequences)\n",
+                 path.c_str(), prob.hmm.L, prob.db.N);
     std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- this tiny database is dominated by "
+                         "launch/copy overhead; the GPU's edge grows with database size "
+                         "(real searches scan hundreds of millions of sequences).\n");
+    std::fprintf(stderr, "[verify] max |CPU-GPU| score difference = %lld  (must be 0)\n", worst);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

@@ -1,5 +1,9 @@
 2.13 -- MSA Generation Acceleration
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Profile-HMM Viterbi search: 1 query profile (L=10) vs 24 database sequences
+top-5 hits (by Viterbi log-odds score):
+  #1  seq[0]  score = 20000  (log-odds = 20.000)
+  #2  seq[1]  score = 17500  (log-odds = 17.500)
+  #3  seq[2]  score = 15500  (log-odds = 15.500)
+  #4  seq[10]  score = 6000  (log-odds = 6.000)
+  #5  seq[17]  score = 5000  (log-odds = 5.000)
+RESULT: PASS (GPU matches CPU exactly; max |diff| = 0)

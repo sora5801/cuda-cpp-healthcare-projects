@@ -1,52 +1,59 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU co-folding interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 2.14 -- Protein-Ligand Co-Folding   (template skeleton)
+// Project 2.14 : Protein-Ligand Co-Folding (reduced-scope teaching version)
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   The "what the GPU offers" header. main.cu calls simulate_gpu(); kernels.cu
+//   implements the host time loop plus the device attention kernel. Included
+//   only by .cu units (it declares a __global__), so the plain C++ compiler
+//   never sees it -- that is why the CPU reference lives in a separate pure-C++
+//   header (reference_cpu.h) and the shared math lives in cofold.h.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+// THE PATTERN (per-step ATTENTION, the real co-folding bottleneck)
+//   Co-folding is a reverse-diffusion loop; EACH step is a self-attention pass
+//   over the joint protein+ligand token sequence (deep-dive: "50-200 denoising
+//   steps, each requiring a full attention forward pass"). We map it as:
+//     * the HOST runs the T-step loop, launching one kernel per step and
+//       PING-PONGING two position buffers (read frozen state, write next, swap)
+//       -- the same double-buffer discipline as the stencil flagship 14.02;
+//     * the KERNEL assigns ONE BLOCK PER QUERY TOKEN. The block's threads
+//       cooperatively stream over all key tokens, doing a two-pass online
+//       softmax (max, then exp-weighted target sum) with a shared-memory
+//       reduction. This is the shape of FlashAttention -- parallel over the key
+//       dimension, O(1) extra storage per query -- taught at toy scale.
+//   The per-token math itself is denoise_token() from cofold.h, so the GPU
+//   reproduces the CPU result.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: cofold.h, util/cuda_check.cuh, util/timer.cuh. Then kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
+#include "reference_cpu.h"   // Complex, CofoldParams (pure C++, safe in a .cu)
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// attention_step_kernel: advance EVERY token one denoising step.
+//   Launch config: grid = n_tokens blocks, block = THREADS_PER_TOKEN threads.
+//   Block b updates query token b; its threads split the key loop and reduce in
+//   shared memory. Reads `pos` (frozen), `target`, `types`; writes `pos_next`.
+//   Passing CofoldParams by value puts the small schedule in constant-arg space.
+__global__ void attention_step_kernel(CofoldParams P,
+                                       const double* __restrict__ pos,
+                                       const double* __restrict__ target,
+                                       const int* __restrict__ types,
+                                       double* __restrict__ pos_next);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// simulate_gpu: run the whole reverse diffusion on the GPU.
+//   Allocates device buffers, copies the initial positions / target / types up,
+//   runs the T-step ping-pong loop launching attention_step_kernel each step,
+//   copies the final positions back, and reports the measured KERNEL-loop time
+//   (CUDA events) via *kernel_ms.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   C        : the complex (provides P, target, types).
+//   pos      : in = initial noised positions; out = final predicted positions
+//              (resized to n_tokens * D_POS by the caller, updated in place).
+//   kernel_ms: out-param, milliseconds spent in the denoising loop (not copies).
+void simulate_gpu(const Complex& C, std::vector<double>& pos, float* kernel_ms);

@@ -153,6 +153,10 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- mdff.h holds the shared __host__ __device__ physics + trilinear sampler
+         (compiled into BOTH main.cu/kernels.cu via nvcc AND reference_cpu.cpp via
+         the host compiler), so CPU and GPU run identical math. -->
+    <ClInclude Include="..\src\mdff.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />
