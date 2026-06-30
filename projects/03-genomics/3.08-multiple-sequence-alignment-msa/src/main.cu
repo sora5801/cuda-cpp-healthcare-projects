@@ -1,122 +1,121 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load sequences, align all-vs-all, assemble, verify
 // ---------------------------------------------------------------------------
-// Project 3.8 -- Multiple Sequence Alignment (MSA)   (template skeleton)
+// Project 3.8 : Multiple Sequence Alignment (MSA)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// The repo's 5-step shape, specialised to progressive MSA:
+//   1. Load N DNA sequences (data/sample, a multi-FASTA file).
+//   2. CPU reference: STAGE 1 pairwise NW score matrix (reference_cpu.cpp).
+//   3. GPU: the SAME score matrix, one thread block per pair (kernels.cu).
+//   4. VERIFY: the GPU score matrix equals the CPU score matrix, every cell,
+//      exactly (integer scores -> bit-identical; tolerance is literally 0).
+//   5. STAGES 2-3 + REPORT: from the (identical) matrix, build the center-star
+//      progressive alignment and print it deterministically to stdout; send all
+//      timing / run-varying numbers to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// The GPU teaching point is STAGE 1 (the embarrassingly-parallel all-vs-all NW
+// scoring). STAGES 2-3 are deterministic host bookkeeping done once on the shared
+// matrix -- so the printed multiple alignment is the same whether we feed it the
+// CPU or the GPU matrix (they are equal).
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then nw_core.h -> kernels.cuh -> kernels.cu, then
+// reference_cpu.* for the loader/assembly.
 // ===========================================================================
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // distance_matrix_gpu (STAGE 1 on the GPU)
+#include "reference_cpu.h"    // load_fasta, distance_matrix_cpu, build_msa, MSA
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "3.8";
 static const char* PROJECT_NAME = "Multiple Sequence Alignment (MSA)";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
-
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/sequences_sample.fasta";
+    SeqSet s;
+    try {
+        s = load_fasta(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference: STAGE 1 pairwise score matrix (timed) -----------
+    std::vector<int>    score_cpu;
+    std::vector<double> D_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    distance_matrix_cpu(s, score_cpu, D_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU: STAGE 1, one block per pair (timed via CUDA events) -------
+    std::vector<int>    score_gpu;
+    std::vector<double> D_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    distance_matrix_gpu(s, score_gpu, D_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify: the two score matrices must be IDENTICAL (exact ints) --
+    int mismatches = 0, max_abs_diff = 0;
+    for (std::size_t k = 0; k < score_cpu.size(); ++k) {
+        const int d = score_cpu[k] - score_gpu[k];
+        const int ad = d < 0 ? -d : d;
+        if (ad) { ++mismatches; if (ad > max_abs_diff) max_abs_diff = ad; }
+    }
+    const bool pass = (mismatches == 0);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5. STAGES 2-3: build the multiple alignment from the GPU matrix ----
+    //     (The CPU and GPU matrices are equal, so the alignment is the same; we
+    //      use the GPU's to demonstrate the full GPU-driven pipeline.)
+    const MSA msa = build_msa(s, D_gpu);
+
+    // ---- 5a. Deterministic report -> STDOUT --------------------------------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("input: %d DNA sequences, max length %d; scoring match=+%d mismatch=%d gap=%d\n",
+                s.n, s.max_len, NW_MATCH, NW_MISMATCH, NW_GAP);
+    std::printf("pairwise NW alignments (STAGE 1) = %d  (one GPU block each)\n",
+                s.n * (s.n - 1) / 2);
+    std::printf("center-star sequence (STAGE 2) = index %d (\"%s\")\n",
+                msa.center, s.names[msa.center].c_str());
+    std::printf("multiple alignment (STAGE 3): %d rows x %d columns, Sum-of-Pairs score = %lld\n",
+                msa.n, msa.width, msa.sp_score);
+
+    // Print the alignment block. Row label = sequence name (truncated), then the
+    // aligned row. Deterministic by construction (no RNG, fixed tie-breaks).
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    for (int i = 0; i < msa.n; ++i) {
+        // 10-char left-justified name field for a tidy, fixed-width block.
+        char label[11];
+        std::snprintf(label, sizeof(label), "%-10.10s", s.names[i].c_str());
+        std::printf("%s %s%s\n", label, msa.rows[i].c_str(),
+                    (i == msa.center) ? "  <- center" : "");
+    }
+
+    // A per-column conservation marker line ('*' = all rows identical & not gap).
+    std::string stars(static_cast<std::size_t>(msa.width), ' ');
+    for (int col = 0; col < msa.width; ++col) {
+        char c0 = msa.rows[0][col];
+        bool all_same = (c0 != '-');
+        for (int i = 1; i < msa.n && all_same; ++i)
+            if (msa.rows[i][col] != c0) all_same = false;
+        if (all_same) stars[col] = '*';
+    }
+    std::printf("%-10.10s %s\n", "conserv.", stars.c_str());
+
+    std::printf("\nRESULT: %s (GPU pairwise-score matrix matches CPU exactly)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 5b. Varying detail -> STDERR --------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (n=%d sequences, %zu residues total)\n",
+                 path.c_str(), s.n, s.data.size());
+    std::fprintf(stderr, "[timing] CPU STAGE-1 matrix: %.3f ms   GPU STAGE-1 kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact -- tiny N here means many small blocks; the\n"
+                         "         GPU's edge grows with N (the O(N^2) pair count) and sequence length.\n");
+    std::fprintf(stderr, "[verify] score-matrix mismatches = %d, max_abs_diff = %d (tolerance = 0)\n",
+                 mismatches, max_abs_diff);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

@@ -1,12 +1,12 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real BQSR-input pointers (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 3.25 -- Base Quality Score Recalibration (BQSR)   (template skeleton)
+# Project 3.25 : Base Quality Score Recalibration (BQSR)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. Real BQSR needs (a) an aligned BAM and (b)
+# known-variant VCFs; the committed synthetic sample stands in so the demo runs
+# offline. This script only prints where to get the real inputs.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,23 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 3.25 -- Base Quality Score Recalibration (BQSR)"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    dbSNP build 155 — known variant positions for masking (https://www.ncbi.nlm.nih.gov/snp/); GiaB known-variant VCFs (https://www.nist.gov/programs-projects/genome-bottle); Mills and 1000G indels — GATK bundle known indels (https://storage.googleapis.com/genomics-public-data/); 1000 Genomes high-coverage WGS (https://www.internationalgenome.org/data)."
+Write-Host "Real BQSR consumes an aligned BAM plus KNOWN-VARIANT VCFs for masking."
+Write-Host "This teaching project uses a small SYNTHETIC text alignment instead; to"
+Write-Host "experiment with real inputs, fetch these (most are open, no account):"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  dbSNP build 155 (known SNPs) : https://www.ncbi.nlm.nih.gov/snp/"
+Write-Host "  Mills & 1000G indels (GATK)  : https://storage.googleapis.com/genomics-public-data/"
+Write-Host "  GIAB known-variant VCFs      : https://www.nist.gov/programs-projects/genome-bottle"
+Write-Host "  1000 Genomes high-cov WGS    : https://www.internationalgenome.org/data"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Then convert a region to this project's text format (data/README.md):"
+Write-Host "  REF/KNOWN/READS lines; one read per line as 'pos bases q0..q(L-1)'."
+Write-Host ""
+Write-Host "No download needed for the demo. Bigger SYNTHETIC set:"
+Write-Host "  python scripts/make_synthetic.py --reads 50000"
+Write-Host ""
+Write-Host "Idempotent pattern when wiring a real fetch:"
+Write-Host "  1) skip if the file already exists with the expected SHA256"
+Write-Host "  2) print source URL + expected size + checksum"
+Write-Host "  3) for credentialed sets, print registration instructions ONLY"

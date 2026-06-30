@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 3.11 -- GWAS at Scale   (template skeleton)
+# Project 3.11 : GWAS at Scale
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# access terms, and NEVER bypasses credentials/registration. Real GWAS cohorts
+# are controlled-access and cannot be redistributed, so this script does NOT
+# download genotypes -- it prints exactly how to obtain them legally and defers
+# to scripts/make_synthetic.py for an offline stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,25 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 3.11 -- GWAS at Scale"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    UK Biobank — 500 k individuals, 800 k variants (https://www.ukbiobank.ac.uk/); GWAS Catalog — curated published associations (https://www.ebi.ac.uk/gwas/); dbGaP — controlled-access GWAS datasets (https://www.ncbi.nlm.nih.gov/gap/); gnomAD LD reference panels (https://gnomad.broadinstitute.org/)."
+Write-Host "Real GWAS cohorts are CONTROLLED-ACCESS and may NOT be redistributed."
+Write-Host "This script will not (and cannot) bypass that. To use real data:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  UK Biobank  (~500k individuals, ~800k variants)"
+Write-Host "    Apply for access: https://www.ukbiobank.ac.uk/enable-your-research/apply-for-access"
+Write-Host "    Genotypes ship as PLINK .bed/.bim/.fam or BGEN; convert with PLINK2."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  dbGaP  (controlled-access GWAS datasets)"
+Write-Host "    Data Access Request: https://www.ncbi.nlm.nih.gov/gap/"
+Write-Host ""
+Write-Host "  GWAS Catalog  (OPEN published summary statistics -- no genotypes)"
+Write-Host "    Browse / download: https://www.ebi.ac.uk/gwas/  (useful to cross-check hits)"
+Write-Host ""
+Write-Host "  gnomAD  (OPEN allele-frequency / LD reference panels)"
+Write-Host "    https://gnomad.broadinstitute.org/"
+Write-Host ""
+Write-Host "A real loader would read PLINK2 .bed/.pgen or BGEN, not this demo's text format."
+Write-Host ""
+Write-Host "The committed tiny SYNTHETIC sample (data/sample/gwas_sample.txt) already lets"
+Write-Host "the demo run offline. For a larger synthetic cohort, run:"
+Write-Host "    python scripts/make_synthetic.py --n 2000 --m 5000 --out data/sample/gwas_big.txt"

@@ -31,3 +31,9 @@ add_executable(gwas-at-scale
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(gwas-at-scale PRIVATE src)
+
+# Link cuBLAS: gpu_build_grm forms the genetic relatedness matrix
+# GRM = (1/M) Z Zᵀ with cublasDgemm (kernels.cu). CUDA::cublas is the modern
+# CMake target that pulls in the right include + lib paths automatically.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(gwas-at-scale PRIVATE CUDA::cublas)

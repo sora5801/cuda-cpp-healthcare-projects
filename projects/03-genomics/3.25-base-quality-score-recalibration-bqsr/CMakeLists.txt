@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 3.25 -- Base Quality Score Recalibration (BQSR)   (template skeleton)
+# Project 3.25 -- Base Quality Score Recalibration (BQSR)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/base-quality-score-recalibration-bqsr.sln (CLAUDE.md §5). Both

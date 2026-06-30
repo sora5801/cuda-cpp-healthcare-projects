@@ -5,29 +5,49 @@
 Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on the committed synthetic family in `data/sample/`.
+3. **Verify** the GPU pairwise-score matrix against the CPU reference
+   (`reference_cpu.cpp`) and print a clear `PASS`/`FAIL`.
+4. **Time** the GPU kernel (CUDA events) and the CPU baseline — a *teaching
+   artifact*, not a benchmark claim.
 
 The program splits its output deliberately:
 
 - **stdout** is byte-for-byte deterministic and is diffed against
   [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+- **stderr** carries the timing and run-varying detail, so it is shown but never
+  diffed.
 
-## Expected result
+## What you are looking at
 
 ```
 3.8 -- Multiple Sequence Alignment (MSA)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+input: 6 DNA sequences, max length 27; scoring match=+2 mismatch=-1 gap=-2
+pairwise NW alignments (STAGE 1) = 15  (one GPU block each)
+center-star sequence (STAGE 2) = index 1 ("seq1")
+multiple alignment (STAGE 3): 6 rows x 28 columns, Sum-of-Pairs score = 553
+
+seq0       -T-GTACGTACGTT-G-CAACGT-ATCG
+seq1       -TAGTACGTACGTT-G-CAACGT-ATCG  <- center
+seq2       TTAGTACGTACGTT-G-C--CGT-ATCG
+seq3       -TAGTACGTACGTT-G-CAACGT-ATCG
+seq4       -GAGTACGTCCGTTCGCCAACGTAATCG
+seq5       -TAGTACGTACGAT-GTCAACGT-ATAG
+conserv.      ****** ** * * *  *** ** *
+
+RESULT: PASS (GPU pairwise-score matrix matches CPU exactly)
 ```
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+- **STAGE 1** runs 15 independent Needleman-Wunsch alignments (one per pair of the
+  6 sequences), each on its own **GPU thread block** — the lesson of this project.
+- **STAGE 2** picks the center-star sequence (`seq1`, the most representative).
+- **STAGE 3** folds every sequence onto the center, producing the aligned block.
+  The `conserv.` line marks columns where **all six** rows carry the same
+  nucleotide with `*` — those stars are the recovered conserved core, the visible
+  proof the alignment is correct.
+- **RESULT: PASS** means the GPU score matrix equals the CPU one **exactly**
+  (integer scores, tolerance `0`).
+
+The timing line on **stderr** (e.g. `GPU STAGE-1 kernel: 0.25 ms`) varies per run
+and is shown for illustration only — on this tiny input the GPU is launch-bound
+and the lesson is the *mapping*, not the speed (CLAUDE.md §12; PATTERNS.md §7).

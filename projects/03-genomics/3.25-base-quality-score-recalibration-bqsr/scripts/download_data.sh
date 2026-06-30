@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real BQSR-input pointers (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 3.25 -- Base Quality Score Recalibration (BQSR)   (template skeleton)
+# Project 3.25 : Base Quality Score Recalibration (BQSR)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. Real BQSR needs (a) an aligned BAM and (b)
+# known-variant VCFs; the committed synthetic sample stands in so the demo runs
+# offline. This script only prints where to get the real inputs.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,22 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 3.25 -- Base Quality Score Recalibration (BQSR)"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    dbSNP build 155 — known variant positions for masking (https://www.ncbi.nlm.nih.gov/snp/); GiaB known-variant VCFs (https://www.nist.gov/programs-projects/genome-bottle); Mills and 1000G indels — GATK bundle known indels (https://storage.googleapis.com/genomics-public-data/); 1000 Genomes high-coverage WGS (https://www.internationalgenome.org/data)."
+echo "Real BQSR consumes an aligned BAM plus KNOWN-VARIANT VCFs for masking."
+echo "This teaching project uses a small SYNTHETIC text alignment instead; to"
+echo "experiment with real inputs, fetch these (most are open, no account):"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  dbSNP build 155 (known SNPs) : https://www.ncbi.nlm.nih.gov/snp/"
+echo "  Mills & 1000G indels (GATK)  : https://storage.googleapis.com/genomics-public-data/"
+echo "  GIAB known-variant VCFs      : https://www.nist.gov/programs-projects/genome-bottle"
+echo "  1000 Genomes high-cov WGS    : https://www.internationalgenome.org/data"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Then convert a region to this project's text format (data/README.md):"
+echo "  REF/KNOWN/READS lines; one read per line as 'pos bases q0..q(L-1)'."
+echo
+echo "No download needed for the demo. Bigger SYNTHETIC set:"
+echo "  python scripts/make_synthetic.py --reads 50000"
+echo
+echo "Idempotent pattern when wiring a real fetch:"
+echo "  1) skip if the file already exists with the expected SHA256"
+echo "  2) print source URL + expected size + checksum"
+echo "  3) for credentialed sets, print registration instructions ONLY"

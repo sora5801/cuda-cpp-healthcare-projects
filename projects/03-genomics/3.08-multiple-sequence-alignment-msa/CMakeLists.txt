@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 3.8 -- Multiple Sequence Alignment (MSA)   (template skeleton)
+# Project 3.8 : Multiple Sequence Alignment (MSA)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/multiple-sequence-alignment-msa.sln (CLAUDE.md §5). Both

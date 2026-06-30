@@ -1,5 +1,17 @@
 3.5 -- De Novo Genome Assembly
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+all-vs-all read overlap via minimizers (k=15, w=5)
+reads = 6   pairs = 15   total minimizers = 76
+overlap edges (shared minimizers >= 3):
+  read 0 -- read 1   shared = 10
+  read 0 -- read 2   shared = 5
+  read 0 -- read 3   shared = 3
+  read 1 -- read 2   shared = 9
+  read 1 -- read 3   shared = 7
+  read 1 -- read 4   shared = 3
+  read 2 -- read 3   shared = 9
+  read 2 -- read 4   shared = 5
+  read 3 -- read 4   shared = 8
+  read 3 -- read 5   shared = 5
+  read 4 -- read 5   shared = 10
+graph: 11 edge(s), 1 component(s), largest component = 6 read(s)
+RESULT: PASS (GPU per-pair scores match CPU exactly, tol=0)

@@ -1,5 +1,8 @@
 3.9 -- Phylogenetic Likelihood / Tree Inference
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+alignment: 8 taxa x 600 sites   model: K2P (kappa = 2.00)
+candidate trees scored: 3
+  tree[0] ((t0,t1),(t2,t3)),((t4,t5),(t6,t7))_true lnL = -3341.650694
+  tree[1] wrong_NNI1             lnL = -4251.060632
+  tree[2] wrong_NNI2             lnL = -4434.280987
+MAXIMUM-LIKELIHOOD TREE: tree[0] ((t0,t1),(t2,t3)),((t4,t5),(t6,t7))_true  (lnL = -3341.650694)
+RESULT: PASS (GPU per-tree lnL match CPU exactly)

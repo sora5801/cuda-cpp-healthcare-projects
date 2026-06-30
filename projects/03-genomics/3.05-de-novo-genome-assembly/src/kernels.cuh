@@ -1,52 +1,51 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for all-vs-all read overlap
 // ---------------------------------------------------------------------------
-// Project 3.5 -- De Novo Genome Assembly   (template skeleton)
+// Project 3.5 : De Novo Genome Assembly  (read-overlap stage)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   All-vs-all overlap of n reads has P = n*(n-1)/2 unordered pairs, and every
+//   pair is scored INDEPENDENTLY (count shared minimizers). So we give each
+//   PAIR its own GPU thread: thread p decodes its (i,j) coordinate, fetches the
+//   two reads' sorted minimizer sketches from the flattened CSR buffers, and
+//   runs the SAME count_shared_sorted() the CPU reference runs (from assembly.h)
+//   -> identical integer result, no atomics, no shared memory. A grid-stride
+//   loop lets one modest grid cover any P. This is the "independent jobs over
+//   pairs" pattern (cf. 1.12's independent jobs over a library).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   This header declares a __global__ kernel, so it is included ONLY by .cu
+//   units. main.cu calls overlap_gpu(); the pure-C++ data model is in
+//   assembly.h / reference_cpu.h.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: assembly.h (the shared math), util/cuda_check.cuh,
+// util/timer.cuh. Then read kernels.cu. The GPU mapping is in ../THEORY.md.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
+#include "assembly.h"   // ReadSet, Overlap, count_shared_sorted, pair_to_ij
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// overlap_kernel: score every read pair. out_score[p] = shared-minimizer count
+// of the pair whose flat upper-triangle index is p.
+//   d_mins   : [total minimizers] concatenated sorted-unique sketches (CSR)
+//   d_offset : [n+1] CSR offsets into d_mins (read r -> [offset[r],offset[r+1]))
+//   n        : number of reads
+//   P        : number of pairs = n*(n-1)/2 (passed in to avoid recompute)
+//   out_score: [P] device output, shared count per pair (flat triangle order)
+__global__ void overlap_kernel(const minimizer_t* __restrict__ d_mins,
+                               const int* __restrict__ d_offset,
+                               int n, long long P,
+                               int* __restrict__ out_score);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// overlap_gpu: do the whole GPU computation and return the per-pair scores.
+//   Uploads the CSR sketch buffers, launches overlap_kernel over all P pairs,
+//   times the kernel (CUDA events), copies the [P] scores back, and frees the
+//   device memory. main.cu then thresholds the scores into Overlap edges on the
+//   host (cheap) so the GPU/CPU score arrays can be diffed exactly.
+//     rs        : the sketched reads (CSR ReadSet from sketch_reads()).
+//     out_score : host output, resized to num_pairs(rs.n); shared count/pair.
+//     kernel_ms : out-param, GPU-measured kernel milliseconds (not copies).
+void overlap_gpu(const ReadSet& rs, std::vector<int>& out_score, float* kernel_ms);

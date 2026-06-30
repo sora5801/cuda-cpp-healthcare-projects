@@ -1,5 +1,16 @@
 3.11 -- GWAS at Scale
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+cohort: N=200 individuals, M=60 SNPs (synthetic)
+GRM: mean diagonal=1.0099, max |off-diagonal|=0.6009 at (107,1)
+causal SNPs injected: 5 ; recovered in top 10: 5
+top 10 associated SNPs (rank: id chi2 -log10p beta causal):
+   1: rs1038   chi2= 137.1956  -log10p=30.9615  beta=+3.92788  CAUSAL
+   2: rs1034   chi2=  86.8905  -log10p=19.9404  beta=-3.36822  CAUSAL
+   3: rs1025   chi2=  62.0824  -log10p=14.4823  beta=+2.79403  CAUSAL
+   4: rs1022   chi2=  19.4789  -log10p= 4.9926  beta=-1.71807  CAUSAL
+   5: rs1009   chi2=  10.1061  -log10p= 2.8304  beta=+1.21522  CAUSAL
+   6: rs1041   chi2=   4.3984  -log10p= 1.4440  beta=-0.79529  -
+   7: rs1018   chi2=   3.4252  -log10p= 1.1924  beta=+0.74028  -
+   8: rs1017   chi2=   2.8672  -log10p= 1.0438  beta=+0.66102  -
+   9: rs1015   chi2=   2.3434  -log10p= 0.9003  beta=-0.62233  -
+  10: rs1019   chi2=   2.2214  -log10p= 0.8661  beta=-0.57557  -
+RESULT: PASS (GPU GRM and association match CPU within tol)

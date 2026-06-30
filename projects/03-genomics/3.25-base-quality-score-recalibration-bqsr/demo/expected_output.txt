@@ -1,5 +1,7 @@
 3.25 -- Base Quality Score Recalibration (BQSR)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+alignment: 1200 reads x 12 bp, reference 24 bp, 11696 covariate bins
+bases tallied = 12937 (of 14400; rest masked/skipped), observed errors = 154
+per-reported-Q recalibration (aggregated over cycle & context):
+  Q=30  obs= 12937  err=  154  ->  Q_emp=19
+recalibrated qualities changed = 12937 / 14400 bases
+RESULT: PASS (GPU table + recalibrated Q match CPU exactly)

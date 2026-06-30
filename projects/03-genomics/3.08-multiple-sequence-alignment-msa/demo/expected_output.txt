@@ -1,5 +1,15 @@
 3.8 -- Multiple Sequence Alignment (MSA)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+input: 6 DNA sequences, max length 27; scoring match=+2 mismatch=-1 gap=-2
+pairwise NW alignments (STAGE 1) = 15  (one GPU block each)
+center-star sequence (STAGE 2) = index 1 ("seq1")
+multiple alignment (STAGE 3): 6 rows x 28 columns, Sum-of-Pairs score = 553
+
+seq0       -T-GTACGTACGTT-G-CAACGT-ATCG
+seq1       -TAGTACGTACGTT-G-CAACGT-ATCG  <- center
+seq2       TTAGTACGTACGTT-G-C--CGT-ATCG
+seq3       -TAGTACGTACGTT-G-CAACGT-ATCG
+seq4       -GAGTACGTCCGTTCGCCAACGTAATCG
+seq5       -TAGTACGTACGAT-GTCAACGT-ATAG
+conserv.      ****** ** * * *  *** ** *
+
+RESULT: PASS (GPU pairwise-score matrix matches CPU exactly)

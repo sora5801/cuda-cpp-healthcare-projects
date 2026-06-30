@@ -1,94 +1,96 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
-// ---------------------------------------------------------------------------
-// Project 3.10 -- RNA Secondary-Structure Prediction   (template skeleton)
+// src/kernels.cu  --  Nussinov anti-diagonal wavefront kernel + host sweep
+// ===========================================================================
+// Project 3.10 : RNA Secondary-Structure Prediction  (Nussinov base-pair DP)
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of nussinov_cpu(): it fills the SAME upper-triangular matrix, but one
+// SPAN (anti-diagonal) at a time, with all cells of that span computed in
+// parallel. main.cu runs both and asserts every upper-triangle cell matches
+// (exact integer equality). The per-cell recurrence is the shared, HD-decorated
+// nussinov_cell() in reference_cpu.h, so CPU and GPU compute identical integers.
+// See ../THEORY.md "GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// Threads per block. Span diagonals are often short (span L has n-L cells), so a
+// modest 128 keeps each per-span launch cheap while still being a multiple of
+// the 32-lane warp. (For long RNAs the early spans are wide and saturate the GPU;
+// the late spans are narrow and launch-bound -- discussed in THEORY "real world".)
+static constexpr int THREADS_PER_BLOCK = 128;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
+// nussinov_span_kernel: fill every cell of one span L = j - i in parallel.
+//   Launch config (set in nussinov_gpu, once per span):
+//     grid  = ceil(count / THREADS_PER_BLOCK) blocks, count = n - L cells
 //     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+//   Thread-to-data map: thread t (0..count-1) owns cell (i = t, j = i + L).
+//   Memory: reads cells of span < L from global memory (all finalised by earlier
+//   launches), writes M[i*n + j]. No shared memory or atomics: cells of the same
+//   span never read each other, so there is no intra-launch hazard. The bigger
+//   teaching point is the DEPENDENCY STRUCTURE, not micro-optimised tiling --
+//   THEORY discusses the shared-memory tiling that production CUDA RNAfold adds.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void nussinov_span_kernel(const uint8_t* __restrict__ s,
+                                     int* __restrict__ M, int n, int L, int count) {
+    const int t = blockIdx.x * blockDim.x + threadIdx.x;  // this thread's cell index
+    if (t >= count) return;                               // guard the ragged last block
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+    const int i = t;          // row  = the cell index along the span
+    const int j = i + L;      // col  = i + span  (so j - i == L, by construction)
+
+    // Delegate to the SHARED recurrence: identical code path to the CPU's
+    // nussinov_cpu(), so M[i][j] comes out bit-for-bit the same integer.
+    M[i * n + j] = nussinov_cell(s, M, i, j, n);
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
+// nussinov_gpu: host wrapper. The canonical CUDA steps, here with a SWEEP:
+//   (1) allocate device buffers for the sequence and the n*n matrix
+//   (2) copy the sequence H2D and zero the matrix (the all-zero base cases)
+//   (3) for span L = 1..n-1, launch one kernel that fills that span in parallel
+//   (4) copy the filled matrix D2H
 //   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// We time the WHOLE sweep (all n-1 launches) with CUDA events.
+//
+// HONESTY (see THEORY "real world"): for a SHORT RNA this issues n-1 tiny
+// launches and the late, narrow spans are launch-bound, so the GPU can be SLOWER
+// than the CPU here. The wavefront pays off for long sequences (the early spans
+// have thousands of independent cells) and when BATCHING many sequences (one CTA
+// per sequence). We keep one-launch-per-span because it makes the dependency
+// structure -- the actual lesson -- unmistakable.
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void nussinov_gpu(const RnaSeq& r, std::vector<int>& M, float* kernel_ms) {
+    const int n = r.n;
+    const std::size_t cells = static_cast<std::size_t>(n) * n;
+    M.assign(cells, 0);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    uint8_t* d_s = nullptr;   // [n] encoded sequence
+    int*     d_M = nullptr;   // [n*n] DP matrix
+    CUDA_CHECK(cudaMalloc(&d_s, n * sizeof(uint8_t)));
+    CUDA_CHECK(cudaMalloc(&d_M, cells * sizeof(int)));
+    CUDA_CHECK(cudaMemcpy(d_s, r.s.data(), n * sizeof(uint8_t), cudaMemcpyHostToDevice));
+    // Zero the matrix: this sets ALL base cases (span 0 and the unused lower
+    // triangle) to 0 pairs, exactly matching nussinov_cpu's M.assign(.., 0).
+    CUDA_CHECK(cudaMemset(d_M, 0, cells * sizeof(int)));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
-
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    // The wavefront: spans must be filled in increasing order because span L
+    // depends on spans < L. Within a span the cells are independent -> parallel.
+    for (int L = 1; L < n; ++L) {
+        const int count = n - L;                              // cells on this span
+        const int blocks = (count + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        nussinov_span_kernel<<<blocks, THREADS_PER_BLOCK>>>(d_s, d_M, n, L, count);
+        // NOTE: launches into the default stream serialize, so span L+1 only
+        // starts after span L has fully completed -- the dependency we need. (We
+        // do NOT sync per span here; the event in stop_ms() syncs once at the end.)
+    }
+    *kernel_ms = timer.stop_ms();              // syncs -> all spans done
+    CUDA_CHECK_LAST("nussinov_span_kernel");   // surface any launch/exec error
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    CUDA_CHECK(cudaMemcpy(M.data(), d_M, cells * sizeof(int), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_s));
+    CUDA_CHECK(cudaFree(d_M));
 }

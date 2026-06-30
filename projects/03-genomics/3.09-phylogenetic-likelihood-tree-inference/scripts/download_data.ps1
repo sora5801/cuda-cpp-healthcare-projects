@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 3.9 -- Phylogenetic Likelihood / Tree Inference   (template skeleton)
+# Project 3.9 -- Phylogenetic Likelihood / Tree Inference
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md sec 8): idempotent, documented, prints the source URL +
+# what to do, and NEVER bypasses credentials/registration. The committed tiny
+# SYNTHETIC sample in data/sample/ already runs the demo offline; this script
+# only points at the real curated databases and defers to make_synthetic.py for
+# a larger offline stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,20 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 3.9 -- Phylogenetic Likelihood / Tree Inference"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    TreeBASE — curated phylogenetic alignments and trees (https://www.treebase.org/); SILVA rRNA database — large rRNA alignment for phylogenetics (https://www.arb-silva.de/); NCBI CDD — conserved domain alignments (https://www.ncbi.nlm.nih.gov/Structure/cdd/cdd.shtml); OpenTreeOfLife — aggregated phylogenetic data (https://opentreeoflife.github.io/)."
+Write-Host "This project ships a tiny SYNTHETIC sample (data/sample/phylo_sample.txt)"
+Write-Host "that is sufficient to build, run, and verify the demo offline."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real curated phylogenetic alignments / trees (study these next):"
+Write-Host "  * TreeBASE       https://www.treebase.org/        (alignments + trees)"
+Write-Host "  * SILVA rRNA     https://www.arb-silva.de/        (large rRNA alignment)"
+Write-Host "  * NCBI CDD       https://www.ncbi.nlm.nih.gov/Structure/cdd/cdd.shtml"
+Write-Host "  * Open Tree      https://opentreeoflife.github.io/ (aggregated phylogenies)"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "These arrive as FASTA/PHYLIP/NEXUS alignments with Newick trees. Converting"
+Write-Host "one to this project's compact text format (encode bases A/C/G/T->0..3, write"
+Write-Host "a POST-ORDER node list; see data/README.md) is left as a README exercise."
+Write-Host "Respect each source's license; none is redistributed here."
+Write-Host ""
+Write-Host "For a larger OFFLINE synthetic problem instead, run:"
+Write-Host "    python scripts/make_synthetic.py --n-sites 50000 --seed 7"

@@ -2,11 +2,12 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 3.9 -- Phylogenetic Likelihood / Tree Inference   (template skeleton)
+# Project 3.9 -- Phylogenetic Likelihood / Tree Inference
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md sec 8): idempotent, documented, points at the source URLs,
+# and NEVER bypasses credentials/registration. The committed tiny SYNTHETIC
+# sample already runs the demo offline; this script only points at the real
+# curated databases and defers to make_synthetic.py for a larger offline set.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,19 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 3.9 -- Phylogenetic Likelihood / Tree Inference"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    TreeBASE — curated phylogenetic alignments and trees (https://www.treebase.org/); SILVA rRNA database — large rRNA alignment for phylogenetics (https://www.arb-silva.de/); NCBI CDD — conserved domain alignments (https://www.ncbi.nlm.nih.gov/Structure/cdd/cdd.shtml); OpenTreeOfLife — aggregated phylogenetic data (https://opentreeoflife.github.io/)."
+echo "This project ships a tiny SYNTHETIC sample (data/sample/phylo_sample.txt)"
+echo "that is sufficient to build, run, and verify the demo offline."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Real curated phylogenetic alignments / trees (study these next):"
+echo "  * TreeBASE       https://www.treebase.org/        (alignments + trees)"
+echo "  * SILVA rRNA     https://www.arb-silva.de/        (large rRNA alignment)"
+echo "  * NCBI CDD       https://www.ncbi.nlm.nih.gov/Structure/cdd/cdd.shtml"
+echo "  * Open Tree      https://opentreeoflife.github.io/ (aggregated phylogenies)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "These arrive as FASTA/PHYLIP/NEXUS alignments with Newick trees. Converting"
+echo "one to this project's compact text format (encode bases A/C/G/T->0..3, write"
+echo "a POST-ORDER node list; see data/README.md) is left as a README exercise."
+echo "Respect each source's license; none is redistributed here."
+echo
+echo "For a larger OFFLINE synthetic problem instead, run:"
+echo "    python scripts/make_synthetic.py --n-sites 50000 --seed 7"

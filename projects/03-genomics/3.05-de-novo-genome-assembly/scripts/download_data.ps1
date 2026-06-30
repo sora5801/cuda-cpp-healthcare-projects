@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 3.5 -- De Novo Genome Assembly   (template skeleton)
+# Project 3.5 : De Novo Genome Assembly  (all-vs-all read-overlap stage)
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# guidance, and NEVER bypasses credentials/registration. The real assembly
+# benchmark datasets are gigabytes, so this script GUIDES you to them rather
+# than auto-downloading; the committed tiny synthetic sample is enough to run
+# the demo, and scripts/make_synthetic.py scales it up offline.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,22 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 3.5 -- De Novo Genome Assembly"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    CHM13 telomere-to-telomere human genome — the T2T gold standard for assembly benchmarking (https://github.com/marbl/CHM13); GenomeArk — vertebrate genome assembly data (https://genomeark.github.io/); Human Pangenome Reference Consortium data (https://humanpangenome.org/); SRA PacBio HiFi and ONT datasets — species-specific de novo projects (https://www.ncbi.nlm.nih.gov/sra)."
+Write-Host "This teaching project ships a tiny SYNTHETIC sample (data/sample/reads_sample.fasta)"
+Write-Host "that is sufficient for the demo. Real de-novo assembly benchmark data is large;"
+Write-Host "fetch it from the sources below (none require credentials, but all are GBs):"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  * CHM13 (T2T) human reference   : https://github.com/marbl/CHM13"
+Write-Host "  * GenomeArk (vertebrate genomes): https://genomeark.github.io/"
+Write-Host "  * Human Pangenome (HPRC)        : https://humanpangenome.org/"
+Write-Host "  * SRA PacBio HiFi / ONT reads   : https://www.ncbi.nlm.nih.gov/sra"
+Write-Host "      (use the SRA Toolkit: 'prefetch <ACC>' then 'fasterq-dump <ACC>')"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  Convert downloaded reads to the FASTA this demo expects (>header / sequence),"
+Write-Host "  or generate a larger SYNTHETIC set offline:"
+Write-Host "    python scripts/make_synthetic.py --genome-len 50000 --read-len 1000 --step 200 --error-rate 0.02"
+Write-Host ""
+Write-Host "  Idempotent pattern to follow when wiring a real fetch:"
+Write-Host "    1) skip the download if the file already exists with the right SHA256"
+Write-Host "    2) print source URL + expected size + checksum before downloading"
+Write-Host "    3) for any credentialed mirror, print registration instructions ONLY"

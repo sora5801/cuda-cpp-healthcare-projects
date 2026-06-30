@@ -1,48 +1,115 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate the synthetic GWAS sample dataset
 # ---------------------------------------------------------------------------
-# Project 3.11 -- GWAS at Scale   (template skeleton)
+# Project 3.11 : GWAS at Scale
 #
 # WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+#   Real GWAS cohorts (UK Biobank, dbGaP) are controlled-access: you cannot
+#   redistribute genotypes, and the download requires an approved application
+#   (scripts/download_data.* prints how, and never bypasses that gate). So that
+#   the demo still RUNS offline, this script deterministically generates a
+#   clearly-SYNTHETIC cohort with the same layout the C++ loader expects.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
+# WHAT IT BUILDS (engineered to be interpretable -- PATTERNS.md §6)
+#   * N individuals x M biallelic SNPs. Each SNP gets a random minor-allele
+#     frequency p_j; an individual's dosage at SNP j is Binomial(2, p_j), i.e.
+#     the additive {0,1,2} count of minor alleles (Hardy-Weinberg sampling).
+#   * A handful of CAUSAL SNPs are chosen and given a known effect size. The
+#     phenotype y_i = Σ_causal beta_k * (standardized genotype) + noise.
+#   * Because the causal SNPs truly drive y, a correct GWAS pipeline MUST rank
+#     them at the top of the association scan -- that recovery is the demo's
+#     headline, human-meaningful result.
 #
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+#   EVERYTHING is seeded (default seed 20260628) so the committed sample and the
+#   program's expected_output.txt are byte-stable. Synthetic data is labeled
+#   synthetic in the file header and in data/README.md (CLAUDE.md §8).
+#
+# FILE FORMAT (matches load_genotypes in src/reference_cpu.cpp)
+#   # comment lines (ignored) ...
+#   N M
+#   pheno: y_0 y_1 ... y_{N-1}
+#   <M dosages>                       x N individual rows
+#   snp: <id> <causal_flag>           x M metadata rows
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py                  # default tiny committed sample
+#   python scripts/make_synthetic.py --n 2000 --m 5000 --out big.txt
 # ===========================================================================
 import argparse
+import random
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+OUT = ROOT / "data" / "sample" / "gwas_sample.txt"
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
+    ap = argparse.ArgumentParser(description="Generate the synthetic GWAS sample.")
+    ap.add_argument("--n", type=int, default=200, help="number of individuals")
+    ap.add_argument("--m", type=int, default=60,  help="number of SNPs")
+    ap.add_argument("--causal", type=int, default=5, help="number of causal SNPs")
+    ap.add_argument("--noise", type=float, default=0.4,
+                    help="std of the environmental noise added to the phenotype")
+    ap.add_argument("--seed", type=int, default=20260628, help="PRNG seed")
     ap.add_argument("--out", default=str(OUT), help="output path")
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    rng = random.Random(args.seed)                      # deterministic generator
+    N, M, n_causal = args.n, args.m, args.causal
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    # --- per-SNP minor-allele frequencies in [0.05, 0.5] (common variants) ---
+    # We avoid very rare alleles so every SNP has signal in a tiny cohort.
+    freq = [rng.uniform(0.05, 0.5) for _ in range(M)]
+
+    # --- genotype matrix: dosage_ij ~ Binomial(2, freq_j) -------------------
+    # Two independent allele draws per individual per SNP = additive {0,1,2}.
+    geno = [[sum(1 for _ in range(2) if rng.random() < freq[j]) for j in range(M)]
+            for _ in range(N)]
+
+    # --- choose causal SNPs and give each a known standardized effect -------
+    # Effects alternate sign and grow with index so the strongest is recoverable
+    # first; magnitudes are deliberately large vs. noise so the tiny cohort still
+    # yields a clear ranking.
+    causal_idx = sorted(rng.sample(range(M), n_causal))
+    betas = {}
+    for k, j in enumerate(causal_idx):
+        sign = -1.0 if (k % 2) else 1.0
+        betas[j] = sign * (1.2 + 0.6 * k)               # e.g. +1.2, -1.8, +2.4, -3.0
+
+    # --- phenotype y_i = Σ_causal beta * standardized_genotype + noise -------
+    # Standardize each causal column by its Hardy-Weinberg sd so the effect size
+    # is in phenotype-SD-per-genotype-SD units (matches the C++ standardization).
+    def hwe_sd(p):
+        v = 2.0 * p * (1.0 - p)
+        return (v if v > 1e-12 else 1e-12) ** 0.5
+
+    pheno = []
+    for i in range(N):
+        g_eff = 0.0
+        for j in causal_idx:
+            z = (geno[i][j] - 2.0 * freq[j]) / hwe_sd(freq[j])
+            g_eff += betas[j] * z
+        pheno.append(g_eff + rng.gauss(0.0, args.noise))
+
+    # --- write the file -----------------------------------------------------
+    lines = []
+    lines.append("# SYNTHETIC GWAS cohort -- NOT real patient data (CLAUDE.md §8).")
+    lines.append(f"# Generated by scripts/make_synthetic.py  seed={args.seed}")
+    lines.append(f"# N={N} individuals, M={M} SNPs, {n_causal} causal SNPs injected.")
+    lines.append("# Layout: 'N M' / 'pheno: ...' / N dosage rows / M 'snp: id flag' rows.")
+    lines.append(f"{N} {M}")
+    lines.append("pheno: " + " ".join(f"{v:.6f}" for v in pheno))
+    for i in range(N):
+        lines.append(" ".join(str(geno[i][j]) for j in range(M)))
+    for j in range(M):
+        flag = 1 if j in betas else 0
+        lines.append(f"snp: rs{1000 + j} {flag}")
+
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    print(f"[make_synthetic] wrote {args.out}")
+    print(f"[make_synthetic]   N={N} M={M} causal={causal_idx} (SYNTHETIC, seed={args.seed})")
 
 
 if __name__ == "__main__":

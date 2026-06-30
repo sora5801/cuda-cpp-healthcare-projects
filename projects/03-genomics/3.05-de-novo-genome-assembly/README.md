@@ -6,32 +6,52 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+De novo genome assembly stitches a genome back together from millions of short,
+overlapping DNA **reads** — with **no reference** to align to. Its first and most
+GPU-friendly step is **all-vs-all read-overlap detection**: deciding which reads
+share enough sequence to be neighbours in the assembly graph. This project builds
+a **reduced-scope teaching version** of exactly that step: it sketches each read
+into a small set of **minimizers** (à la minimap2), then scores **every read
+pair** by how many minimizers they share. Each pair is independent, so we hand
+each pair to its own GPU thread — the same "embarrassingly parallel" shape as
+project 1.12, but over pairs. The output is the **overlap graph** whose connected
+components are the draft contigs.
 
 ## What this computes & why the GPU helps
 
-De novo assembly reconstructs a genome from raw reads without a reference. The three GPU-amenable bottlenecks are: (1) all-vs-all read overlap detection (O(n²) pairwise alignment), (2) string-graph / De Bruijn graph construction from k-mers, and (3) consensus polishing of draft contigs. NVIDIA's GenomeWorks / racon-GPU accelerates the polishing stage (partial-order alignment MSA) by 70× vs. CPU. The Darwin accelerator paper showed 109× GPU speedup for read overlap on PacBio data. Modern HiFi assembly (hifiasm) is CPU-centric for the string-graph phase, but GPU kernels for pairwise overlap computation are an active insertion point; NVIDIA's Clara de novo pipeline on NGC wraps these components.
+De novo assembly reconstructs a genome from raw reads without a reference. The
+three GPU-amenable bottlenecks are: (1) **all-vs-all read overlap detection**
+(`O(n²)` pairwise comparison), (2) string-graph / De Bruijn graph construction
+from k-mers, and (3) consensus polishing of draft contigs. NVIDIA's
+GenomeWorks / racon-GPU accelerates polishing (partial-order alignment) ~70× vs.
+CPU; the Darwin accelerator showed ~109× GPU speedup for read overlap on PacBio
+data. Modern HiFi assemblers (hifiasm) are CPU-centric for the string-graph
+phase, but pairwise-overlap kernels are an active GPU insertion point.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck this project targets** is step (1), the all-vs-all
+overlap. For `n` reads there are `P = n(n−1)/2` pairs, and scoring a pair (count
+shared minimizers) is independent of every other pair. We give **one GPU thread
+per pair**: it decodes its `(i,j)` coordinate, fetches each read's sorted
+minimizer sketch from flat (CSR) device buffers, and intersects them. The score
+is an **integer** (a shared-minimizer count), so the GPU and the CPU reference
+agree **bit-for-bit** — there is no floating point anywhere on the scored path.
 
 ## The algorithm in brief
 
-All-vs-all minimiser-based overlap (minimap2 kernel); De Bruijn graph construction and traversal; string-graph simplification (unitig / contig threading); partial-order alignment (POA) for polishing consensus; repeat resolution by Hi-C scaffolding.
+- **Minimizer sketch (per read).** Slide a `k`-mer (`k=15`) along the read; in
+  each window of `w=5` consecutive k-mers keep the one with the smallest hash.
+  Use the **canonical** k-mer (`min(forward, reverse-complement)`) so a read and
+  its opposite-strand neighbour pick the same minimizers. Sort + dedup → a small
+  sorted set per read.
+- **All-vs-all overlap (the GPU kernel).** For every pair `(i,j)`, count shared
+  minimizers by a linear **merge-intersection** of the two sorted sets.
+- **Overlap graph + layout.** Keep pairs with `shared ≥ 3` as edges; the
+  connected components of that graph are the draft **contigs**.
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+derivation, including complexity and the monotonic-deque `O(m)` sketcher.
 
 ## Build
 
@@ -53,56 +73,108 @@ msbuild build\de-novo-genome-assembly.sln /p:Configuration=Release /p:Platform=x
 
 ```powershell
 ./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.sh           # Linux/macOS (CMake build)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+The demo builds if needed, runs on `data/sample/reads_sample.fasta`, prints the
+**overlap graph** (edges + connected components), shows the **GPU-vs-CPU
+agreement** check (exact, tolerance 0), and prints a timing line on stderr.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
+- **Sample (committed):** `data/sample/reads_sample.fasta` — 6 **synthetic** reads
+  (60 bases each) tiled from a fixed 120-base pseudo-genome so the demo runs with
+  zero downloads and has a **known answer** (one contig).
+- **Full dataset:** `scripts/download_data.ps1` / `.sh` guide you to the real,
+  large benchmark sets (no auto-download — they are gigabytes).
+- **Provenance & license:** see [data/README.md](data/README.md). Scale up with
+  `python scripts/make_synthetic.py --genome-len 5000 --read-len 500 --step 100`.
 
-Catalog dataset notes: CHM13 telomere-to-telomere human genome — the T2T gold standard for assembly benchmarking (https://github.com/marbl/CHM13); GenomeArk — vertebrate genome assembly data (https://genomeark.github.io/); Human Pangenome Reference Consortium data (https://humanpangenome.org/); SRA PacBio HiFi and ONT datasets — species-specific de novo projects (https://www.ncbi.nlm.nih.gov/sra).
+Catalog dataset notes: CHM13 telomere-to-telomere human genome (T2T gold standard,
+<https://github.com/marbl/CHM13>); GenomeArk (<https://genomeark.github.io/>);
+Human Pangenome Reference Consortium (<https://humanpangenome.org/>); SRA PacBio
+HiFi & ONT reads (<https://www.ncbi.nlm.nih.gov/sra>).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt). The
+program computes every pair's shared-minimizer count on both the **GPU**
+(`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`) and asserts
+they agree with **tolerance 0** — both call the identical `__host__ __device__`
+routine `count_shared_sorted()` in `src/assembly.h`, and integer counts have no
+rounding, so the two are exactly equal (`mismatching pairs = 0`). On the
+committed sample the graph is **1 component spanning all 6 reads** → one contig.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/assembly.h`](src/assembly.h) — the shared data model and the
+   `__host__ __device__` per-pair math (`count_shared_sorted`, `pair_to_ij`,
+   `hash32`). **Start here** — it is the CPU/GPU parity core.
+2. [`src/main.cu`](src/main.cu) — loads reads, sketches, runs CPU + GPU, verifies,
+   prints the overlap graph.
+3. [`src/reference_cpu.h`](src/reference_cpu.h) / [`reference_cpu.cpp`](src/reference_cpu.cpp)
+   — FASTA loader, minimizer **sketcher**, and the trusted serial overlap.
+4. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the one-thread-per-pair idea.
+5. [`src/kernels.cu`](src/kernels.cu) — the kernel (grid-stride over pairs) + host wrapper.
+6. [`src/util/`](src/util/) — shared `CUDA_CHECK`, CUDA-event timer, I/O helpers.
 
 ## Prior art & further reading
 
-GenomeWorks / racon-GPU (https://github.com/NVIDIA-Genomics-Research/GenomeWorks) — GPU-accelerated overlap and polishing; Clara De Novo Assembly (https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara/resources/clara_denovo_assembly_pipeline) — NVIDIA NGC end-to-end pipeline; hifiasm (https://github.com/chhylp123/hifiasm) — state-of-the-art HiFi assembler (CPU, GPU overlap insertion point); Racon CPU reference (https://github.com/lbcb-sci/racon) — CPU polishing baseline.
+- **GenomeWorks / racon-GPU** (<https://github.com/NVIDIA-Genomics-Research/GenomeWorks>)
+  — GPU overlap + POA polishing; study its `cudamapper` for the production
+  minimizer-index-and-overlap design this project miniaturizes.
+- **minimap2** (<https://github.com/lh3/minimap2>) — the reference minimizer
+  sketch + overlap/mapping algorithm; read `mm_sketch` to see the real rolling
+  hash and the `O(m)` window minimum.
+- **hifiasm** (<https://github.com/chhylp123/hifiasm>) — state-of-the-art HiFi
+  assembler; learn how overlaps become a string graph and then contigs.
+- **Racon CPU** (<https://github.com/lbcb-sci/racon>) — the CPU polishing baseline
+  that racon-GPU accelerates (the *consensus* stage, complementary to overlap).
 
-Study these to learn the production approach; **do not copy code wholesale** —
+Study these for the production approach; **do not copy code wholesale** —
 reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-Custom POA kernels in GenomeWorks (shared-memory DP); CUDA thrust for k-mer sorting; minimiser hash tables in GPU global memory; multi-GPU for embarrassingly parallel read-pair overlaps. --
+Independent jobs over **pairs** (one thread per read pair) · flat **CSR** layout
+(`mins` + `offset`) for ragged per-read sketches in global memory · a **grid-stride
+loop** so one grid covers any `P` · a shared `__host__ __device__` core for exact
+CPU/GPU parity · **integer** scores ⇒ deterministic, tolerance-0 verification (no
+atomics, no shared memory, no reduction). Production tools add a minimizer
+**hash-table index** so they avoid the full `O(n²)`; here we keep the explicit
+all-vs-all because it is the clearest thing to learn from.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Sketch in `O(m)`.** Replace the `O(m·w)` window-minimum loop in
+   `minimizers_of()` with a monotonic deque (the textbook sliding-window
+   minimum). Confirm the sketch — and thus every overlap score — is unchanged.
+2. **Add sequencing errors.** Regenerate the sample with
+   `--error-rate 0.05`; watch shared-minimizer counts drop. How low can
+   `MIN_SHARED` go before spurious edges appear? (Re-capture `expected_output.txt`.)
+3. **Index instead of all-vs-all.** Build a hash map from minimizer → list of
+   reads on the host, and only score pairs that share at least one minimizer.
+   Compare the pair count to `n(n−1)/2` — this is how real overlappers scale.
+4. **Warp-per-pair.** For long reads (large sketches), assign one *warp* per pair
+   and split the merge across lanes with `__shfl`. When does that beat one thread?
+5. **Toward contigs.** Extend the layout: order reads within a component by their
+   overlap offsets and emit a consensus string (a tiny POA). This is the bridge to
+   the *polishing* stage that racon-GPU accelerates.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- This is a **reduced-scope teaching version**: it implements the **overlap
+  detection** stage only. It does **not** build a string/De Bruijn graph, resolve
+  repeats, or polish a consensus — those are described in `THEORY.md` §"Where this
+  sits in the real world".
+- We score overlap by **shared-minimizer count**, a fast proxy. Real overlappers
+  additionally chain minimizer *anchors* by position and estimate the overlap
+  coordinates/strand; we keep only the count for clarity (positions are an
+  exercise).
+- The committed data is **synthetic** and labelled synthetic; similarities and the
+  recovered "contig" carry **no biological meaning**.
+- We compute the full `O(n²)` pairwise comparison on purpose (it is the lesson);
+  production tools index minimizers to skip the vast majority of non-overlapping
+  pairs. Nothing here is clinically valid.

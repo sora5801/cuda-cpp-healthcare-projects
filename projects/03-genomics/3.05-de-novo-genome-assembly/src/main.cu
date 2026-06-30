@@ -1,122 +1,176 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load reads, sketch, overlap (CPU+GPU), verify
 // ---------------------------------------------------------------------------
-// Project 3.5 -- De Novo Genome Assembly   (template skeleton)
+// Project 3.5 : De Novo Genome Assembly  (all-vs-all read-overlap stage)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// WHAT THIS FILE DOES  (the 5-step shape every project in this repo follows)
+//   1. Load the reads (FASTA-like sample, or a built-in synthetic fallback).
+//   2. SKETCH each read into its minimizer set (sketch_reads, host).
+//   3. Score all read pairs on the CPU reference AND on the GPU.
+//   4. VERIFY the two per-pair score arrays agree EXACTLY (integers -> tol 0).
+//   5. REPORT the overlap graph (edges + connected components) to stdout;
+//      timings to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   The overlap graph IS the scaffold of de-novo assembly: each connected
+//   component is a set of reads that tile one region of the genome -> one
+//   contig. We report the component structure so the result is interpretable as
+//   "assembly" (THEORY "Where this sits in the real world").
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+//   STDOUT is byte-for-byte deterministic (diffed against expected_output.txt);
+//   run-varying timings go to STDERR (shown, not diffed) -- PATTERNS.md sec.3.
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// READ THIS FIRST in the code tour, then assembly.h -> reference_cpu.* (sketch +
+// CPU reference) -> kernels.cuh -> kernels.cu (the GPU twin).
 // ===========================================================================
 #include <cstdio>
+#include <numeric>     // std::iota
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // overlap_gpu (GPU path), assembly.h (shared math)
+#include "reference_cpu.h"    // load_fasta, sketch_reads, overlap_cpu, MIN_SHARED
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "3.5";
 static const char* PROJECT_NAME = "De Novo Genome Assembly";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Verification tolerance. Both sides count shared minimizers with the SAME
+// integer routine (count_shared_sorted), so the results are exactly equal --
+// no floating point is involved anywhere on the scored path. We therefore demand
+// ZERO mismatches (PATTERNS.md sec.4 "Exact"). The check is integer ==.
+static constexpr int TOLERANCE = 0;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
+// ---------------------------------------------------------------------------
+// make_synthetic_reads: a tiny, fully-deterministic read set with a KNOWN
+// answer, used when no sample file is given (and mirrored by make_synthetic.py
+// and the committed sample). Construction (see data/README.md):
+//   * A 120-base "genome" of fixed sequence.
+//   * 6 reads, each a 60-base substring sliding by 12 bases (reads 0..5 cover
+//     [0,60),[12,72),...,[60,120)). Consecutive reads overlap by 48 bases, so
+//     they SHARE minimizers; reads far apart (0 vs 5) do not. The expected graph
+//     is therefore a single chain 0-1-2-3-4-5 (one contig) -- a result the demo
+//     recovers and the learner can reason about by hand.
+//   This is SYNTHETIC data: the sequence is arbitrary, not from any organism.
+// ---------------------------------------------------------------------------
+static std::vector<std::string> make_synthetic_reads() {
+    // A fixed 120-base pseudo-genome (labelled synthetic; no biological meaning).
+    static const char* GENOME =
+        "ACGTTGCAAGCTAGGCATCGATCGGATCCAACGTAGCTAGCATGCATGCTAGCTAGGCAT"
+        "CGATCGATTACGGCATCCAGTACGTAGCATCGATCGTAGCTAGCATCGGATCCAACGTAG";
+    const std::string g = GENOME;            // 120 bases
+    const int read_len = 60, step = 12;
+    std::vector<std::string> reads;
+    for (int s = 0; s + read_len <= static_cast<int>(g.size()); s += step)
+        reads.push_back(g.substr(s, read_len));
+    return reads;
 }
 
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
+// ---------------------------------------------------------------------------
+// connected_components: trivial union-find over the overlap edges, to count how
+// many separate read clusters (≈ contigs) the graph forms and the largest one.
+//   This is a stand-in for the "layout" step of overlap-layout-consensus: once
+//   we know which reads overlap, reads in the same component tile one locus. We
+//   keep it on the host (cheap, serial, deterministic) -- the GPU's job was the
+//   O(n^2) scoring above.
+//   Returns the number of components; fills comp_size_max with the largest.
+// ---------------------------------------------------------------------------
+static int connected_components(int n, const std::vector<Overlap>& edges, int& comp_size_max) {
+    std::vector<int> parent(n);
+    std::iota(parent.begin(), parent.end(), 0);          // each read its own set
+    // find with path halving (iterative -> deterministic, no recursion).
+    auto find = [&](int x) {
+        while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+        return x;
+    };
+    for (const Overlap& e : edges) {                     // union the endpoints
+        int ra = find(e.i), rb = find(e.j);
+        if (ra != rb) parent[ra] = rb;
     }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+    std::vector<int> size(n, 0);
+    int comps = 0;
+    comp_size_max = 0;
+    for (int v = 0; v < n; ++v) size[find(v)]++;
+    for (int v = 0; v < n; ++v) {
+        if (size[v] > 0) { ++comps; if (size[v] > comp_size_max) comp_size_max = size[v]; }
+    }
+    return comps;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
+    // ---- 1. Load the reads --------------------------------------------------
+    std::vector<std::string> reads;
+    std::string source;
+    if (argc > 1) {
+        try {
+            reads = load_fasta(argv[1]);
+            source = argv[1];
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[error] %s\n", e.what());
+            return 2;
+        }
     } else {
-        make_synthetic(n, a, x, y);
+        reads = make_synthetic_reads();
+        source = "synthetic (built-in)";
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. Sketch every read into its minimizer set (host) ----------------
+    ReadSet rs = sketch_reads(reads);
+
+    // ---- 3a. CPU reference (timed) -----------------------------------------
+    std::vector<Overlap> ov_cpu;
+    std::vector<int>     score_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    overlap_cpu(rs, ov_cpu, &score_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3b. GPU result (kernel timed inside the wrapper) ------------------
+    std::vector<int> score_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    overlap_gpu(rs, score_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify: every pair's shared count must match EXACTLY -----------
+    //   Integer comparison -> tolerance 0. A single mismatch fails the run.
+    int max_diff = 0, n_mismatch = 0;
+    if (score_cpu.size() != score_gpu.size()) {
+        max_diff = 1 << 30; n_mismatch = 1;   // shape bug -> guaranteed fail
+    } else {
+        for (std::size_t p = 0; p < score_cpu.size(); ++p) {
+            int d = score_cpu[p] - score_gpu[p];
+            if (d < 0) d = -d;
+            if (d > 0) { ++n_mismatch; if (d > max_diff) max_diff = d; }
+        }
+    }
+    const bool pass = (max_diff <= TOLERANCE);
+
+    // The thresholded edge list and component structure (from the CPU reference,
+    // which equals the GPU when pass==true) -- the deterministic "assembly".
+    int comp_max = 0;
+    const int comps = connected_components(rs.n, ov_cpu, comp_max);
 
     // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    long long total_min = static_cast<long long>(rs.mins.size());
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("all-vs-all read overlap via minimizers (k=%d, w=%d)\n", K, W);
+    std::printf("reads = %d   pairs = %lld   total minimizers = %lld\n",
+                rs.n, num_pairs(rs.n), total_min);
+    std::printf("overlap edges (shared minimizers >= %d):\n", MIN_SHARED);
+    for (const Overlap& e : ov_cpu)
+        std::printf("  read %d -- read %d   shared = %d\n", e.i, e.j, e.shared);
+    std::printf("graph: %d edge(s), %d component(s), largest component = %d read(s)\n",
+                static_cast<int>(ov_cpu.size()), comps, comp_max);
+    std::printf("RESULT: %s (GPU per-pair scores match CPU exactly, tol=%d)\n",
+                pass ? "PASS" : "FAIL", TOLERANCE);
 
     // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
+    std::fprintf(stderr, "[data]   source: %s  (n=%d reads)\n", source.c_str(), rs.n);
     std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- this tiny pair count is "
+                         "dominated by launch/copy overhead; the GPU's O(n^2) edge "
+                         "grows with read count.\n");
+    std::fprintf(stderr, "[verify] mismatching pairs = %d / %lld   max |diff| = %d  (tol %d)\n",
+                 n_mismatch, num_pairs(rs.n), max_diff, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

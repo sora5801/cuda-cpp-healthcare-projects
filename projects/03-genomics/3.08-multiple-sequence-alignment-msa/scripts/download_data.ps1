@@ -1,12 +1,12 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 3.8 -- Multiple Sequence Alignment (MSA)   (template skeleton)
+# Project 3.8 : Multiple Sequence Alignment (MSA)
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# expected size + checksum, and NEVER bypasses credentials/registration. The
+# committed tiny SYNTHETIC sample (data/sample/) already runs the demo offline;
+# this script points at real MSA benchmarks for going further.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,26 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 3.8 -- Multiple Sequence Alignment (MSA)"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    BAliBASE — benchmark MSA reference set (https://www.lbgi.fr/balibase/); HomFam — large homologous family MSA benchmark (verify URL); OXFam benchmark (verify URL); Pfam seed alignments (https://www.ebi.ac.uk/interpro/download/)."
+Write-Host "The committed sample (data/sample/sequences_sample.fasta) is SYNTHETIC"
+Write-Host "and sufficient to run the demo. No download is required for that."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real MSA benchmarks you can study (verify each license before use):"
+Write-Host "  * BAliBASE  -- curated reference alignments"
+Write-Host "      https://www.lbgi.fr/balibase/"
+Write-Host "  * HomFam    -- large homologous-family benchmark (used by Clustal Omega)"
+Write-Host "      (search 'HomFam benchmark'; distributed with Clustal Omega papers)"
+Write-Host "  * Pfam seed alignments -- protein family seed MSAs"
+Write-Host "      https://www.ebi.ac.uk/interpro/download/  (Pfam section)"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
+Write-Host "These provide multi-FASTA inputs the loader reads directly (DNA mode here"
+Write-Host "expects A/C/G/T only -- protein sets need the substitution-matrix upgrade"
+Write-Host "described in THEORY.md before they will load)."
+Write-Host ""
+Write-Host "For a larger SYNTHETIC family (no download), run e.g.:"
+Write-Host "    python scripts/make_synthetic.py --n 32 --sub 0.12 --indel 0.08"
+Write-Host ""
+Write-Host "Idempotent-download pattern to follow when wiring a real set:"
+Write-Host "    1) skip the fetch if the file already exists with the right SHA256"
+Write-Host "    2) print source URL + expected size + SHA256 before downloading"
 Write-Host "    3) for credentialed sets, print registration instructions ONLY"

@@ -1,37 +1,60 @@
 # Data — 3.25 Base Quality Score Recalibration (BQSR)
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/bqsr_sample.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
+| File | `sample/bqsr_sample.txt` |
+| Origin | **Synthetic** (`scripts/make_synthetic.py`, seed 7) |
 | License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Size | ~30 KB |
+| Contents | 24 bp reference, 2 known-variant sites, 1200 reads × 12 bp at reported Q30 |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+### File format
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+```
+REF <reference-string>                       # the reference bases (ACGTN)
+KNOWN <p1> <p2> ...                          # 0-based known-variant positions (masked)
+READS <R> <L>                                # R reads, each L bases long (L <= 16)
+<pos> <bases(L chars)> <q0> <q1> ... <q(L-1)>   # one line per read
+... (R such lines)
+```
+
+- **`REF`** — the reference substring this tile aligns to. A read base at cycle
+  `c` of a read starting at `pos` is compared against `REF[pos + c]`.
+- **`KNOWN`** — reference positions flagged as known variants (dbSNP/Mills in real
+  BQSR). Bases at these columns are **skipped** when building the covariate table.
+- **`READS`** — each read is `pos` (reference start), an `L`-character base string,
+  then `L` integer PHRED quality scores.
+
+### How the sample is engineered (so the result is interpretable)
+
+Every base is **reported** at **Q30** (claimed 0.1% error), but the generator
+injects a **~1.2% true error rate**, so the recovered empirical quality is
+**~Q19** — the headline miscalibration BQSR corrects. Two reference columns (7 and
+16) are **known variants** where every covering read carries a fixed alternate
+allele; because BQSR masks known sites, those systematic "mismatches" do **not**
+count as machine errors. See `demo/expected_output.txt`.
 
 ## Full dataset
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+Real BQSR runs on an aligned **BAM** plus known-variant **VCFs**:
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+- **dbSNP build 155** — known SNP positions for masking: <https://www.ncbi.nlm.nih.gov/snp/>
+- **Mills & 1000G indels** (GATK bundle): <https://storage.googleapis.com/genomics-public-data/>
+- **GIAB known-variant VCFs**: <https://www.nist.gov/programs-projects/genome-bottle>
+- **1000 Genomes high-coverage WGS**: <https://www.internationalgenome.org/data>
 
-Catalog dataset notes (verbatim):
+`scripts/download_data.ps1` / `.sh` print these pointers (no credentials are
+bypassed). To use real data, export a region's reference, known-variant positions,
+and reads into the text format above (most BAM toolkits — samtools, pysam — can
+emit per-read position/bases/qualities).
 
-> dbSNP build 155 — known variant positions for masking (https://www.ncbi.nlm.nih.gov/snp/); GiaB known-variant VCFs (https://www.nist.gov/programs-projects/genome-bottle); Mills and 1000G indels — GATK bundle known indels (https://storage.googleapis.com/genomics-public-data/); 1000 Genomes high-coverage WGS (https://www.internationalgenome.org/data).
+## Provenance & honesty
 
-## Provenance & field meanings
-
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+The sample is **synthetic** — pseudo-random reads with a *known* injected error
+rate and hand-placed known-variant sites. It is **not** real sequencing data and
+carries **no clinical meaning**. It exists only to make the recalibration result
+verifiable (the recovered `Q_emp` matches the injected rate) and the GPU/CPU
+comparison exact. Synthetic data is labeled synthetic everywhere it appears
+(CLAUDE.md §8).

@@ -5,29 +5,46 @@
 Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on the committed `data/sample/rna_sample.fasta` input.
+3. **Fold** the RNA two ways — a serial CPU Nussinov DP (`reference_cpu.cpp`) and
+   the GPU anti-diagonal wavefront (`kernels.cu`) — and **verify** that the two
+   dynamic-programming matrices are **identical, cell for cell** (exact integer
+   equality), printing a clear `PASS`/`FAIL`.
+4. **Time** the GPU wavefront (CUDA events) and the CPU baseline — a *teaching
+   artifact*, not a benchmark claim.
 
 The program splits its output deliberately:
 
-- **stdout** is byte-for-byte deterministic and is diffed against
+- **stdout** is byte-for-byte deterministic (the sequence, the predicted
+  dot-bracket structure, the max base-pair count) and is diffed against
   [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+- **stderr** carries the timing and the mismatch counters (which vary run to
+  run), so it is shown but never diffed.
 
-## Expected result
+## Reading the result
+
+The committed sample is an 18-nt synthetic **hairpin**, `GGGCGCAAAAGCGCCCAU`.
+Nussinov maximises the number of (non-crossing) base pairs, and the optimal
+folding is a 6-bp stem closing an `AAAA` loop:
 
 ```
-3.10 -- RNA Secondary-Structure Prediction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+sequence : GGGCGCAAAAGCGCCCAU
+structure: ((((((....))))))..
+max base pairs = 6
 ```
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+In the dot-bracket notation, each `(` pairs with the matching `)` (counting
+nesting), and `.` is an unpaired base. Six `(`/`)` pairs = six base pairs, exactly
+the designed answer (see `data/README.md`). `RESULT: PASS` means the GPU matrix
+matched the CPU matrix everywhere — the correctness guarantee.
+
+## Expected stdout
+
+```
+3.10 -- RNA Secondary-Structure Prediction (Nussinov)
+RNA length n = 18  (alphabet ACGU, min hairpin loop = 3)
+sequence : GGGCGCAAAAGCGCCCAU
+structure: ((((((....))))))..
+max base pairs = 6
+RESULT: PASS (GPU matrix matches CPU exactly)
+```
