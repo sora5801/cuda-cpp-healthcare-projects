@@ -1,94 +1,92 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Per-pixel DRR ray-marching kernel + host wrapper
 // ---------------------------------------------------------------------------
-// Project 4.28 -- GPU-Accelerated DRR Generation for 2D/3D Registration   (template skeleton)
+// Project 4.28 : GPU-Accelerated DRR Generation for 2D/3D Registration
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of render_drr_cpu(): same math (it calls the SAME integrate_ray() from
+// drr_core.h), but one thread per detector pixel laid out as a 2-D grid over the
+// detector panel. main.cu runs both and checks they agree. See ../THEORY.md
+// "GPU mapping" for the thread/block reasoning and the texture-memory upgrade.
 // ===========================================================================
 #include "kernels.cuh"
-#include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "drr_core.h"             // integrate_ray, sample_trilinear (HD core)
+#include "util/cuda_check.cuh"    // CUDA_CHECK, CUDA_CHECK_LAST
+#include "util/timer.cuh"         // GpuTimer (CUDA-event stopwatch)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// 16x16 = 256 threads/block: a square tile that matches the 2-D detector panel
+// and gives good occupancy on sm_75..sm_89. A square tile also keeps neighbouring
+// threads' rays spatially close, so their tri-linear samples hit nearby voxels --
+// good for the L1/L2 cache (and ideal for a 3-D texture in the production version).
+static constexpr int TILE = 16;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// drr_kernel: thread (u, vrow) owns detector pixel (u, vrow).
+//   The thread-to-data mapping is the canonical 2-D one:
+//       u    = blockIdx.x * blockDim.x + threadIdx.x   (detector column)
+//       vrow = blockIdx.y * blockDim.y + threadIdx.y   (detector row)
+//   Threads outside the panel (ragged edge tiles) return immediately. Each
+//   surviving thread calls integrate_ray() -- the exact function the CPU
+//   reference calls -- and writes its single result. No shared memory, no
+//   atomics: a pure independent gather.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void drr_kernel(const float* __restrict__ d_mu,
+                           VolumeDesc v, DrrGeometry g,
+                           float* __restrict__ d_img) {
+    const int u    = blockIdx.x * blockDim.x + threadIdx.x;   // detector column
+    const int vrow = blockIdx.y * blockDim.y + threadIdx.y;   // detector row
+    if (u >= g.width || vrow >= g.height) return;             // guard ragged tiles
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+    // integrate_ray() marches this pixel's ray through the volume and returns the
+    // accumulated attenuation (the DRR pixel). Identical to the CPU path.
+    float pixel = integrate_ray(d_mu, v, g, u, vrow);
+
+    // Row-major [v][u] output: matches render_drr_cpu so verification is direct.
+    d_img[(size_t)vrow * g.width + u] = pixel;
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// render_drr_gpu: upload the volume, launch the 2-D grid, copy the image back.
+//   Memory traffic:
+//     * UP   : the whole attenuation volume (nx*ny*nz floats) -- the big transfer.
+//     * DOWN : the rendered image (width*height floats) -- small.
+//   In a real registration loop the volume is uploaded ONCE and hundreds of DRRs
+//   are rendered from it at different poses, so this upload amortizes away -- the
+//   per-iteration cost is just the kernel. We time only the kernel (CUDA events)
+//   to reflect that steady-state cost; copies are excluded (and noted in main.cu).
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void render_drr_gpu(const CtVolume& vol, const DrrGeometry& g,
+                    std::vector<float>& image, float* kernel_ms) {
+    const int W = g.width, H = g.height;
+    const size_t n_vox = static_cast<size_t>(vol.mu.size());   // total voxels
+    const size_t n_pix = static_cast<size_t>(W) * H;           // total DRR pixels
+    image.assign(n_pix, 0.0f);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // --- device buffers ---
+    float* d_mu  = nullptr;   // attenuation volume on the device
+    float* d_img = nullptr;   // rendered DRR on the device
+    CUDA_CHECK(cudaMalloc(&d_mu,  n_vox * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_img, n_pix * sizeof(float)));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // Upload the volume (H2D). This is the one large copy; see the note above.
+    CUDA_CHECK(cudaMemcpy(d_mu, vol.mu.data(), n_vox * sizeof(float),
+                          cudaMemcpyHostToDevice));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    GpuTimer timer;
+    // --- launch: 2-D grid of TILE x TILE blocks covering the W x H panel ---
+    dim3 block(TILE, TILE);
+    dim3 grid((W + TILE - 1) / TILE, (H + TILE - 1) / TILE);
+
+    GpuTimer timer;          // CUDA-event timer: measures GPU time on the stream
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    // VolumeDesc and DrrGeometry are small PODs passed BY VALUE; CUDA copies them
+    // into the kernel's parameter space (constant-bank backed), so every thread
+    // reads the geometry cheaply without a global-memory fetch.
+    drr_kernel<<<grid, block>>>(d_mu, vol.desc, g, d_img);
+    *kernel_ms = timer.stop_ms();          // ms spent in the kernel itself
+    CUDA_CHECK_LAST("drr_kernel");         // catch launch/exec errors (bad config, etc.)
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    // Copy the rendered DRR back (D2H) and free device memory.
+    CUDA_CHECK(cudaMemcpy(image.data(), d_img, n_pix * sizeof(float),
+                          cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_mu));
+    CUDA_CHECK(cudaFree(d_img));
 }

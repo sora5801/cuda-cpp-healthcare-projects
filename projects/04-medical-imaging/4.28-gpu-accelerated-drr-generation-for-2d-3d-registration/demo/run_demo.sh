@@ -2,7 +2,7 @@
 # ===========================================================================
 # demo/run_demo.sh  --  One command: build (if needed) + run + verify (Linux)
 # ---------------------------------------------------------------------------
-# Project 4.28 -- GPU-Accelerated DRR Generation for 2D/3D Registration   (template skeleton)
+# Project 4.28 : GPU-Accelerated DRR Generation for 2D/3D Registration
 #
 # Uses the OPTIONAL CMake build (the required deliverable is the VS solution).
 # Mirrors run_demo.ps1: deterministic stdout is diffed against
@@ -14,7 +14,7 @@ set -euo pipefail
 DEMO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$DEMO")"
 SLUG="gpu-accelerated-drr-generation-for-2d-3d-registration"
-SAMPLE="$ROOT/data/sample/saxpy_sample.txt"
+SAMPLE="$ROOT/data/sample/ct_volume_sample.txt"
 EXPECTED="$DEMO/expected_output.txt"
 BUILD="$ROOT/build/cmake"
 EXE="$BUILD/$SLUG"

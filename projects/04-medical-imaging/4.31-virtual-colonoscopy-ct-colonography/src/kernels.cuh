@@ -1,52 +1,35 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU volume ray-casting interface
 // ---------------------------------------------------------------------------
-// Project 4.31 -- Virtual Colonoscopy & CT Colonography   (template skeleton)
+// Project 4.31 : Virtual Colonoscopy & CT Colonography
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   The virtual-colonoscopy frame is a per-PIXEL GATHER: each output pixel casts
+//   one independent ray into the CT volume and shades the first wall it hits.
+//   So we launch a 2-D thread grid over the image -- thread (px,py) owns pixel
+//   (px,py) -- and each thread calls the SAME cast_ray() the CPU reference uses
+//   (from volume_render.h). No two threads touch the same output, so there are
+//   no atomics and no shared memory: a clean, textbook gather (THEORY §4).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The volume is uploaded once to global memory. (In a production fly-through
+//   it would live in a CUDA 3-D TEXTURE so the hardware does trilinear
+//   interpolation and caches 3-D neighborhoods; we use plain global memory + a
+//   hand-written trilinear blend so the CPU and GPU match bit-for-bit -- see
+//   THEORY §6 for why the texture path would not.)
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: volume_render.h, reference_cpu.h, util/cuda_check.cuh.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // Scene, Camera (pure C++, safe inside a .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
-
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// ---------------------------------------------------------------------------
+// render_gpu(): upload the volume, launch the 2-D ray-casting grid, copy the
+//   rendered image back. Mirrors render_cpu() so main.cu can run both and diff.
+//     scene     : the loaded volume + camera + render parameters (host).
+//     image     : out-param, resized to width*height, filled with the frame.
+//     kernel_ms : out-param, GPU kernel time in ms (CUDA-event measured).
+//   The host wrapper lives in kernels.cu alongside the kernel itself.
+// ---------------------------------------------------------------------------
+void render_gpu(const Scene& scene, std::vector<float>& image, float* kernel_ms);

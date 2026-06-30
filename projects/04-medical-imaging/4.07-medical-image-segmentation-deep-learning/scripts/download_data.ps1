@@ -1,12 +1,14 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 4.7 -- Medical Image Segmentation (Deep Learning)   (template skeleton)
+# Project 4.7 : Medical Image Segmentation (Deep Learning)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs +
+# licensing notes, and NEVER bypasses credentials/registration. The real medical
+# segmentation datasets below are large and mostly require registration and a
+# data-use agreement, so this script only PRINTS instructions and links and
+# defers to scripts/make_synthetic.py for an offline stand-in. The committed
+# synthetic sample in data/sample/ is sufficient to build and run the demo.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +18,27 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.7 -- Medical Image Segmentation (Deep Learning)"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Medical Segmentation Decathlon (http://medicaldecathlon.com/) — 10 tasks, ~2,500 volumes total; TotalSegmentator training set (Zenodo, ~1,200 CT with 117 structure labels; https://zenodo.org/record/6802614); KiTS23 kidney tumor challenge (https://kits-challenge.org/kits23/); BraTS brain tumor dataset (https://www.synapse.org/#!Synapse:syn27046444)."
+Write-Host "This teaching project ships a SYNTHETIC sample (data/sample/volume_sample.txt)"
+Write-Host "and needs no download to run. To experiment with real labelled volumes, fetch"
+Write-Host "one of the public segmentation datasets below (respect each license / DUA):"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  * Medical Segmentation Decathlon  -- http://medicaldecathlon.com/"
+Write-Host "      10 tasks (brain, heart, liver, ...), ~2,500 volumes, NIfTI (.nii.gz)."
+Write-Host "      Open registration; CC-BY-SA. Pick a task (e.g. Task03_Liver)."
+Write-Host "  * TotalSegmentator training set   -- https://zenodo.org/record/6802614"
+Write-Host "      ~1,200 CT with 117 structure labels. CC-BY; large (~30+ GB)."
+Write-Host "  * KiTS23 kidney tumor challenge   -- https://kits-challenge.org/kits23/"
+Write-Host "      Kidney/tumor CT; requires challenge registration."
+Write-Host "  * BraTS brain tumor dataset       -- https://www.synapse.org/#!Synapse:syn27046444"
+Write-Host "      Multi-modal MRI; requires Synapse account + DUA. DO NOT bypass."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
+Write-Host "Real volumes are NIfTI/DICOM; loading them needs a NIfTI/ITK reader (this"
+Write-Host "teaching build uses a plain text volume so the loader stays readable -- see"
+Write-Host "data/README.md). For a larger SYNTHETIC volume instead, run:"
+Write-Host "    python scripts/make_synthetic.py --D 32 --H 48 --W 48 --radius 6.0"
+Write-Host ""
+Write-Host "Idempotent-fetch pattern to follow when wiring a real set:"
+Write-Host "    1) skip the download if the file already exists with the right SHA256"
+Write-Host "    2) print source URL + expected size + checksum before downloading"
 Write-Host "    3) for credentialed sets, print registration instructions ONLY"

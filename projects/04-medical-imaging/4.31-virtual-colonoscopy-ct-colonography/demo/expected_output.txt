@@ -1,5 +1,20 @@
 4.31 -- Virtual Colonoscopy & CT Colonography
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+CT colonography fly-through: volume 32x32x48 -> frame 48x48 (iso=0.50)
+wall-hit pixels = 2296 / 2304 (0.997)
+mean intensity = 0.6041
+max intensity = 1.0000 at (px,py)=(27,8)
+polyp-region mean brightness = 0.7331
+ascii preview (24x12, '@'=bright wall, ' '=dark lumen/background):
+  |%######*****************|
+  |#####******++++++++++***|
+  |####****+++++#@@%*++++++|
+  |###****++++#*###*+++++++|
+  |##****++==-+#@@%#+==++++|
+  |##***+++=-:-+***+===++++|
+  |##***+++=-:: :-=++=+++++|
+  |##****++==-:--======++++|
+  |###****+++========++++++|
+  |####****++++++++++++++++|
+  |#####*****++++++++++++**|
+  |%######*****************|
+RESULT: PASS (GPU matches CPU within tol=1.0e-03)

@@ -1,52 +1,62 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface (cuFFT Richardson-Lucy)
 // ---------------------------------------------------------------------------
-// Project 4.30 -- Deconvolution Microscopy   (template skeleton)
+// Project 4.30 : Deconvolution Microscopy
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (this project's pattern: USING cuFFT FOR FFT CONVOLUTION)
+//   Richardson-Lucy deconvolution spends almost all its time in two
+//   convolutions per iteration. The convolution theorem turns each O(N*K)
+//   spatial convolution into a cheap O(N) pointwise multiply in the FREQUENCY
+//   domain, bracketed by an FFT and an inverse FFT:
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//       conv(a, b)  =  IFFT( FFT(a) .* FFT(b) )
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   The FFT is a solved problem with a world-class GPU library -- cuFFT. The
+//   lesson here, like flagship 8.03, is to use that library WITHOUT it being a
+//   black box: kernels.cu documents exactly what each cufftExec call computes,
+//   the real-to-complex layout it uses, and cuFFT's UNNORMALIZED convention
+//   (a forward+inverse round trip scales by N, which we divide back out).
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+//   The only CUSTOM kernels we write are the trivial element-wise steps:
+//     * complex pointwise multiply (apply the PSF / its adjoint in frequency),
+//     * the real-space RL ratio and multiplicative update (shared rl_core.h).
+//   Each is a "one GPU thread per element" map -- the most basic CUDA pattern.
+//
+//   kernels.cu defines the kernels + the host wrapper deconvolve_rl_gpu().
+//   main.cu calls that wrapper. The per-pixel RL math lives in rl_core.h and is
+//   compiled for BOTH host and device, so GPU and CPU agree (PATTERNS.md section 2).
+//
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, reference_cpu.h,
+//   rl_core.h. Then read kernels.cu for the cuFFT mechanics.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // Image, Psf (pure C++ structs, safe inside a .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
-
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// ---- Device kernels (declared here, defined in kernels.cu) ----------------
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// We forward-declare the custom element-wise kernels so the interface is
+// visible, but their parameters use cuFFT's complex type. To avoid pulling
+// <cufft.h> into every includer we declare them with float2/double2-free
+// wrappers inside kernels.cu instead; here we expose only the HOST entry point.
+// (The kernels themselves are documented in detail at their definitions.)
+
+// ---- Host wrapper ---------------------------------------------------------
+//
+// deconvolve_rl_gpu: run `iters` Richardson-Lucy iterations entirely on the GPU
+//   using cuFFT for both convolutions, and return the deconvolved image.
+//
+//   observed  : the blurry input image (host; copied to the device once)
+//   psf       : the blur kernel (host; embedded into a full-size, FFT-shifted
+//               image and transformed once on the device -- its spectrum is
+//               reused every iteration)
+//   iters     : number of RL iterations (same count as the CPU reference)
+//   out       : host output image, filled with the deconvolved estimate
+//   kernel_ms : out-param, GPU milliseconds for the RL iteration loop (the FFTs
+//               + element-wise kernels; excludes one-time setup and copies)
+//
+// This is the single function main.cu calls; all device allocation, the cuFFT
+// plans, and the iteration loop are encapsulated here.
+void deconvolve_rl_gpu(const Image& observed, const Psf& psf, int iters,
+                       Image& out, float* kernel_ms);

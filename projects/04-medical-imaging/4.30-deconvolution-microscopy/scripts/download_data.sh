@@ -2,11 +2,13 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 4.30 -- Deconvolution Microscopy   (template skeleton)
+# Project 4.30 : Deconvolution Microscopy
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. Public microscopy benchmark sets are
+# large TIFF stacks under their own licenses; we do not redistribute them. The
+# committed tiny SYNTHETIC sample (data/sample/) makes the demo run offline; for
+# a bigger synthetic image use scripts/make_synthetic.py.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,21 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 4.30 -- Deconvolution Microscopy"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    BioImage Archive fluorescence microscopy datasets (https://www.ebi.ac.uk/biostudies/bioimages); EPFL Biomedical Imaging Group benchmark datasets (https://bigwww.epfl.ch/deconvolution/); ImageJ/Fiji sample datasets (https://imagej.net/); COBA microscopy benchmark."
+echo "This project ships a TINY SYNTHETIC blurred image in data/sample/ so the"
+echo "demo runs fully offline. No download is required to build, run, or learn."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "To study REAL fluorescence-microscopy deconvolution benchmarks, visit:"
+echo "  * EPFL Biomedical Imaging Group deconvolution benchmark + measured PSFs:"
+echo "      https://bigwww.epfl.ch/deconvolution/"
+echo "  * BioImage Archive fluorescence datasets (raw + restored stacks):"
+echo "      https://www.ebi.ac.uk/biostudies/bioimages"
+echo "  * ImageJ/Fiji sample images (e.g. the classic confocal stacks):"
+echo "      https://imagej.net/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Each is governed by its own license -- respect it; we do not redistribute."
+echo "Convert a downloaded 2-D slice to this project's text format:"
+echo "  header line '<w> <h>' then h rows of w space-separated intensities,"
+echo "  matching load_image() in src/reference_cpu.cpp (see data/README.md)."
+echo
+echo "For a larger SYNTHETIC image (no download), run:"
+echo "  python scripts/make_synthetic.py --w 128 --h 128"

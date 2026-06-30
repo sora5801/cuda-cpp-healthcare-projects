@@ -1,94 +1,84 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Per-pixel Delay-and-Sum kernel + host wrapper
 // ---------------------------------------------------------------------------
-// Project 4.6 -- Ultrasound Beamforming   (template skeleton)
+// Project 4.6 : Ultrasound Beamforming (Delay-and-Sum)
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of beamform_cpu(): same math (das_pixel from beamform.h), one thread
+// per output pixel. The 2-D thread grid maps naturally onto the 2-D (x,z) image.
+// main.cu runs both and checks they agree. See ../THEORY.md "GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
-#include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "util/cuda_check.cuh"
+#include "util/timer.cuh"
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// 16x16 = 256 threads/block: a square tile that matches the 2-D image and gives
+// good occupancy on sm_75..sm_89. The image's lateral (x) dimension is the fast
+// axis, so threadIdx.x striding over ix keeps neighbouring threads writing
+// neighbouring image cells -> coalesced stores.
+static constexpr int TILE = 16;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// das_kernel: thread (ix, iz) owns image pixel (ix, iz).
+//   It calls das_pixel() -- the shared __host__ __device__ core -- which loops
+//   over every element, computes that element's round-trip focal delay to this
+//   pixel, linearly interpolates the element's RF trace at the delay, and sums.
+//   Each pixel is independent: no shared memory, no atomics, no inter-thread
+//   communication. The loop is byte-for-byte the one the CPU reference runs.
+//
+//   grid  : ceil(nx/TILE) x ceil(nz/TILE) blocks
+//   block : TILE x TILE threads
+//   thread(blockIdx, threadIdx) -> pixel (ix = bx*TILE+tx, iz = by*TILE+ty)
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void das_kernel(BeamformGeom g,
+                           const float* __restrict__ rf,
+                           float* __restrict__ img) {
+    const int ix = blockIdx.x * blockDim.x + threadIdx.x;   // lateral index
+    const int iz = blockIdx.y * blockDim.y + threadIdx.y;   // depth index
+    if (ix >= g.nx || iz >= g.nz) return;       // guard the ragged edge tiles
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+    // The entire per-pixel computation is in beamform.h, identical to the CPU
+    // path. We store the SIGNED coherent sum; main.cu takes |.| for the B-mode
+    // envelope after verifying GPU==CPU on the raw sums.
+    img[(std::size_t)iz * g.nx + ix] = das_pixel(g, rf, ix, iz);
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// beamform_gpu: upload RF data, launch the 2-D grid, copy the image back.
+//   We pass the small BeamformGeom struct BY VALUE in the launch -- it rides in
+//   kernel-parameter (constant) space, so every thread reads the geometry with
+//   no global-memory traffic. Only the bulky RF array goes through cudaMalloc.
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void beamform_gpu(const BeamformProblem& p, std::vector<float>& image,
+                  float* kernel_ms) {
+    const BeamformGeom& g = p.geom;
+    const std::size_t rf_n  = p.rf.size();                       // elements*samples
+    const std::size_t img_n = static_cast<std::size_t>(g.nx) * g.nz;
+    image.assign(img_n, 0.0f);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // ---- Device buffers --------------------------------------------------
+    float* d_rf  = nullptr;   // [n_elements*n_samples] RF data (read-only on GPU)
+    float* d_img = nullptr;   // [nx*nz] output image
+    CUDA_CHECK(cudaMalloc(&d_rf,  rf_n  * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_img, img_n * sizeof(float)));
+    // Upload the RF echoes host->device. This is the only large H2D transfer.
+    CUDA_CHECK(cudaMemcpy(d_rf, p.rf.data(), rf_n * sizeof(float),
+                          cudaMemcpyHostToDevice));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // ---- Launch ----------------------------------------------------------
+    // 2-D grid of TILE x TILE blocks covering the nx-by-nz image. dim3's unused
+    // z-component defaults to 1, so this is a flat 2-D launch.
+    dim3 block(TILE, TILE);
+    dim3 grid((g.nx + TILE - 1) / TILE, (g.nz + TILE - 1) / TILE);
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    GpuTimer timer;
+    GpuTimer timer;            // CUDA-event timer (util/timer.cuh)
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    das_kernel<<<grid, block>>>(g, d_rf, d_img);
+    *kernel_ms = timer.stop_ms();          // blocks until the kernel finishes
+    CUDA_CHECK_LAST("das_kernel");         // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    // ---- Copy result back + free ----------------------------------------
+    CUDA_CHECK(cudaMemcpy(image.data(), d_img, img_n * sizeof(float),
+                          cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_rf));
+    CUDA_CHECK(cudaFree(d_img));
 }

@@ -1,5 +1,9 @@
 4.18 -- Image-Based 3D Printing / Model Generation for Surgery
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+volume: 17 x 17 x 17 samples, spacing 1.000 mm, iso = 0.000
+cells marched: 4096
+triangles extracted: 1352
+surface area: 448.4199 mm^2
+bbox min: (-6.0000, -6.0000, -6.0000) mm
+bbox max: (6.0000, 6.0000, 6.0000) mm
+mesh checksum: 36600.281
+RESULT: PASS (GPU mesh matches CPU within tol=1.0e-03 mm)

@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 4.28 -- GPU-Accelerated DRR Generation for 2D/3D Registration   (template skeleton)
+# Project 4.28 : GPU-Accelerated DRR Generation for 2D/3D Registration
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/gpu-accelerated-drr-generation-for-2d-3d-registration.sln (CLAUDE.md §5). Both

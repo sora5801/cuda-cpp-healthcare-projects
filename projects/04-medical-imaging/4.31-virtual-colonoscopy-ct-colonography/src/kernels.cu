@@ -1,94 +1,98 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Per-pixel volume ray-casting kernel + host wrapper
 // ---------------------------------------------------------------------------
-// Project 4.31 -- Virtual Colonoscopy & CT Colonography   (template skeleton)
+// Project 4.31 : Virtual Colonoscopy & CT Colonography
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of render_cpu(): same math, one thread per output pixel. The 2-D
+// thread grid maps naturally onto the 2-D image. main.cu runs both and checks
+// they agree to FP32 rounding. The per-ray work (trilinear sampling, gradient,
+// Phong, march) is the SHARED cast_ray() from volume_render.h -- so there is no
+// "GPU version of the math", only a GPU LAUNCH of the one true math.
+// See ../THEORY.md "The GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
-#include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "volume_render.h"        // VolumeView, Vec3, cast_ray (HD: usable on device)
+#include "util/cuda_check.cuh"    // CUDA_CHECK, CUDA_CHECK_LAST
+#include "util/timer.cuh"         // GpuTimer
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// 16x16 = 256 threads/block: a square tile that matches the 2-D image and gives
+// good occupancy on sm_75..sm_89 (same default as the 4.01 backprojection
+// flagship -- a square image deserves a square block).
+static constexpr int TILE = 16;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// render_kernel: thread (px,py) owns output pixel (px,py).
+//   It rebuilds that pixel's ray with pixel_ray() and shades it with cast_ray()
+//   -- the identical pair render_cpu() loops on the host. Each pixel is
+//   independent: no shared memory, no atomics, no inter-thread communication.
+//   This is the canonical volume-rendering kernel.
+//
+//   We pass the Camera and the volume scalars BY VALUE (they are tiny PODs), and
+//   the volume DATA by device pointer. The VolumeView is rebuilt on-device from
+//   those scalars so the kernel signature stays small and the math sees exactly
+//   the same parameters as the CPU path.
+//
+//   grid  : ceil(W/TILE) x ceil(H/TILE) blocks covering the image
+//   block : TILE x TILE threads
+//   thread (blockIdx,threadIdx) -> pixel (px,py) -> image[py*W + px]
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void render_kernel(const float* __restrict__ vol,
+                              int nx, int ny, int nz,
+                              float iso, float step, int max_steps,
+                              Camera cam, int W, int H,
+                              float* __restrict__ image) {
+    const int px = blockIdx.x * blockDim.x + threadIdx.x;
+    const int py = blockIdx.y * blockDim.y + threadIdx.y;
+    if (px >= W || py >= H) return;     // guard the ragged edge tiles
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+    // Rebuild the VolumeView on-device (same fields as scene.view() on the host).
+    VolumeView V;
+    V.data = vol; V.nx = nx; V.ny = ny; V.nz = nz;
+    V.iso = iso; V.step = step; V.max_steps = max_steps;
+
+    Vec3 origin, dir;
+    pixel_ray(cam, px, py, W, H, origin, dir);   // this pixel's ray
+    float shade = cast_ray(V, origin, dir);      // march + Phong shade
+    image[(size_t)py * W + px] = shade;          // one independent write
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// render_gpu: upload the volume, launch the 2-D grid, copy the image back.
+//   Mirrors backproject_gpu() in the 4.01 flagship: malloc -> H2D copy -> launch
+//   (timed with CUDA events) -> D2H copy -> free. Every CUDA call is wrapped in
+//   CUDA_CHECK so a failure is reported at its source line, not swallowed.
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void render_gpu(const Scene& scene, std::vector<float>& image, float* kernel_ms) {
+    const int W = scene.width, H = scene.height;
+    const size_t n_vox = (size_t)scene.nx * scene.ny * scene.nz;
+    const size_t n_pix = (size_t)W * H;
+    image.assign(n_pix, 0.0f);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // ---- Device allocations -------------------------------------------------
+    float *d_vol = nullptr, *d_img = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_vol, n_vox * sizeof(float)));   // the CT volume
+    CUDA_CHECK(cudaMalloc(&d_img, n_pix * sizeof(float)));   // the output frame
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // ---- Upload the volume (the only large H2D transfer) --------------------
+    // In a real fly-through this upload happens ONCE and many frames are rendered
+    // from the resident volume; here we render a single frame for clarity.
+    CUDA_CHECK(cudaMemcpy(d_vol, scene.vol.data(), n_vox * sizeof(float),
+                          cudaMemcpyHostToDevice));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // ---- Launch the 2-D grid (one thread per pixel) -------------------------
+    dim3 block(TILE, TILE);
+    dim3 grid((W + TILE - 1) / TILE, (H + TILE - 1) / TILE);
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    render_kernel<<<grid, block>>>(d_vol, scene.nx, scene.ny, scene.nz,
+                                   scene.iso, scene.step, scene.max_steps,
+                                   scene.cam, W, H, d_img);
+    *kernel_ms = timer.stop_ms();           // blocks until the kernel finishes
+    CUDA_CHECK_LAST("render_kernel");       // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    // ---- Copy the rendered image back, then free ----------------------------
+    CUDA_CHECK(cudaMemcpy(image.data(), d_img, n_pix * sizeof(float),
+                          cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_vol));
+    CUDA_CHECK(cudaFree(d_img));
 }

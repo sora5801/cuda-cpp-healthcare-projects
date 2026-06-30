@@ -1,12 +1,12 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  How to get REAL ultrasound RF data (Windows)
 # ---------------------------------------------------------------------------
-# Project 4.6 -- Ultrasound Beamforming   (template skeleton)
+# Project 4.6 : Ultrasound Beamforming (Delay-and-Sum)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. Real RF datasets need registration
+# or a simulator, so this script prints instructions + links only and defers to
+# scripts/make_synthetic.py for an offline, reproducible stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,24 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.6 -- Ultrasound Beamforming"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Plane-Wave Imaging Challenge in Medical Ultrasound (PICMUS, https://www.creatis.insa-lyon.fr/Challenge/IEEE_IUS_2016/) — RF data for beamforming evaluation; UltraSound SegLab dataset; IQ ultrasound datasets from open research groups (verify URL at creatis.insa-lyon.fr)."
+Write-Host "Options for real / standard RF beamforming data:"
+Write-Host "  * PICMUS (Plane-Wave Imaging Challenge in Medical Ultrasound) --"
+Write-Host "    canonical RF datasets (point targets, cysts, in-vivo) for beamformer"
+Write-Host "    evaluation: https://www.creatis.insa-lyon.fr/Challenge/IEEE_IUS_2016/"
+Write-Host "    (registration may be required; this script does NOT bypass it)."
+Write-Host "  * Field II (https://field-ii.dk/) -- CPU simulator that GENERATES"
+Write-Host "    realistic RF data for arbitrary phantoms; export to the data/README"
+Write-Host "    format, then beamform with this project's GPU kernel."
+Write-Host "  * k-Wave / k-Wave-Fluid-CUDA (https://github.com/klepo/k-Wave-Fluid-CUDA)"
+Write-Host "    -- full-wave acoustic propagation (more physical than our point model)."
+Write-Host "  * MUST (https://www.biomecardio.com/MUST/) -- reference DAS + sample RF."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Offline stand-in (no download, fully reproducible):"
+Write-Host "  python scripts/make_synthetic.py"
+Write-Host "  python scripts/make_synthetic.py --elements 128 --samples 512 --nx 192 --nz 192 --extra"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "When wiring a real dataset, follow this idempotent pattern:"
+Write-Host "  1) skip download if the file already exists with the right checksum"
+Write-Host "  2) print source URL + expected size + SHA256"
+Write-Host "  3) for credentialed sets, print registration instructions ONLY"

@@ -1,5 +1,6 @@
 # Changelog — newest first; each entry links to its push-note in `push-notes/`.
 
+- 2026-06-30 #08 -- [phase2 batch5a medical-imaging](push-notes/2026-06-30-08-phase2-batch5a-medical-imaging.md)
 - 2026-06-30 #07 -- [phase2 batch4e domain3-complete](push-notes/2026-06-30-07-phase2-batch4e-domain3-complete.md)
 - 2026-06-30 #06 -- [phase2 batch4d genomics intermediate](push-notes/2026-06-30-06-phase2-batch4d-genomics-intermediate.md)
 - 2026-06-30 #05 -- [phase2 batch4c genomics intermediate 100milestone](push-notes/2026-06-30-05-phase2-batch4c-genomics-intermediate-100milestone.md)

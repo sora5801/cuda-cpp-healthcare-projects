@@ -1,12 +1,14 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 4.18 -- Image-Based 3D Printing / Model Generation for Surgery   (template skeleton)
+# Project 4.18 -- Image-Based 3D Printing / Model Generation for Surgery
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md sec.8): idempotent, documented, prints the source URL +
+# access notes, and NEVER bypasses credentials/registration. The real clinical
+# CT collections used to build patient-specific surgical models require
+# registration and/or forbid redistribution, so this script only prints pointers
+# and defers to scripts/make_synthetic.py for the offline, exactly-verifiable
+# stand-in that the demo actually uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +18,19 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.18 -- Image-Based 3D Printing / Model Generation for Surgery"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    TCIA body CT collections; OsteoArthritis Initiative (OAI) for knee models (https://nda.nih.gov/oai/); VerSe vertebral segmentation dataset (https://github.com/anjany/verse); TotalSegmentator dataset (https://zenodo.org/record/6802614)."
+Write-Host "This project ships a SYNTHETIC sphere volume (data/sample/volume_sample.txt)"
+Write-Host "so the demo runs offline and its result is analytically verifiable. The real"
+Write-Host "clinical datasets below are optional and gated behind registration/license:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  TCIA body CT collections      https://www.cancerimagingarchive.net/   (per-collection license)"
+Write-Host "  OsteoArthritis Initiative     https://nda.nih.gov/oai/                 (registration required)"
+Write-Host "  VerSe vertebral CT            https://github.com/anjany/verse          (open)"
+Write-Host "  TotalSegmentator dataset      https://zenodo.org/record/6802614        (CC BY)"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "We do NOT auto-download credentialed data. To use a real volume, download it"
+Write-Host "yourself, resample to a regular grid, and write it in the text format in"
+Write-Host "data/README.md (nx ny nz spacing origin iso, then the samples)."
+Write-Host ""
+Write-Host "For a larger SYNTHETIC volume that needs no download, run:"
+Write-Host "    python scripts/make_synthetic.py --n 65 --radius 24"

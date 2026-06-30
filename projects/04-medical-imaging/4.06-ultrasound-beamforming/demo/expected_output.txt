@@ -1,5 +1,7 @@
-4.6 -- Ultrasound Beamforming
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+4.6 -- Ultrasound Beamforming (Delay-and-Sum)
+DAS beamform: 64 elements x 384 RF samples -> 96x96 image (x by z)
+focal spot (brightest pixel): (ix,iz)=(66,41)  =  (x,z)=(3.9,20.1) mm
+peak envelope value = 10.5305
+center pixel envelope = 0.0000
+lateral profile across focal row (8 samples): 0.1896 0.0037 0.0409 0.0823 0.1705 0.0321 0.0012 0.0000
+RESULT: PASS (GPU matches CPU within tol=1.0e-03)

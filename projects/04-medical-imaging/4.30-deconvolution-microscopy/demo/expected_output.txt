@@ -1,5 +1,6 @@
-4.30 -- Deconvolution Microscopy
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+4.30 -- Deconvolution Microscopy (Richardson-Lucy, cuFFT)
+image: 48x48 pixels   PSF: Gaussian r=4 sigma=1.5   RL iters: 30
+sharpness (mean sq gradient):  blurry=2.4640  deconvolved=15.5577  (x6.31 sharper)
+restored pixels along diagonal (x=y): (8,8)=2.015 (16,16)=21.873 (24,24)=28.055 (32,32)=21.889 (40,40)=2.017
+total intensity:  observed=8708.00  deconvolved=8708.00
+RESULT: PASS (GPU cuFFT deconvolution matches CPU reference within atol=1e-6)

@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 4.30 -- Deconvolution Microscopy   (template skeleton)
+# Project 4.30 : Deconvolution Microscopy
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. Public microscopy benchmark sets are
+# distributed as multi-megabyte TIFF stacks under their own licenses; rather than
+# silently redistribute them, this script points you at the canonical sources and
+# defers to scripts/make_synthetic.py for the offline, runnable stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,22 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.30 -- Deconvolution Microscopy"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    BioImage Archive fluorescence microscopy datasets (https://www.ebi.ac.uk/biostudies/bioimages); EPFL Biomedical Imaging Group benchmark datasets (https://bigwww.epfl.ch/deconvolution/); ImageJ/Fiji sample datasets (https://imagej.net/); COBA microscopy benchmark."
+Write-Host "This project ships a TINY SYNTHETIC blurred image in data/sample/ so the"
+Write-Host "demo runs fully offline. No download is required to build, run, or learn."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "To study REAL fluorescence-microscopy deconvolution benchmarks, visit:"
+Write-Host "  * EPFL Biomedical Imaging Group deconvolution benchmark + measured PSFs:"
+Write-Host "      https://bigwww.epfl.ch/deconvolution/"
+Write-Host "  * BioImage Archive fluorescence datasets (raw + restored stacks):"
+Write-Host "      https://www.ebi.ac.uk/biostudies/bioimages"
+Write-Host "  * ImageJ/Fiji sample images (e.g. the classic confocal stacks):"
+Write-Host "      https://imagej.net/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Each is governed by its own license -- respect it; we do not redistribute."
+Write-Host "Convert a downloaded 2-D slice to this project's text format:"
+Write-Host "  header line '<w> <h>' then h rows of w space-separated intensities,"
+Write-Host "  matching load_image() in src/reference_cpu.cpp (see data/README.md)."
+Write-Host ""
+Write-Host "For a larger SYNTHETIC image (no download), run:"
+Write-Host "  python scripts/make_synthetic.py --w 128 --h 128"

@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 4.18 -- Image-Based 3D Printing / Model Generation for Surgery   (template skeleton)
+# Project 4.18 -- Image-Based 3D Printing / Model Generation for Surgery
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/image-based-3d-printing-model-generation-for-surgery.sln (CLAUDE.md §5). Both

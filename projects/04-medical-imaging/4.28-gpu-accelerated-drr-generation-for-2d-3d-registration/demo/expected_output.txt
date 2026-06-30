@@ -1,5 +1,7 @@
 4.28 -- GPU-Accelerated DRR Generation for 2D/3D Registration
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+CT volume: 32x32x32 voxels, spacing 2.00x2.00x2.00 mm
+DRR detector: 128x128 pixels, ray step 1.00 mm (cone-beam, lateral view)
+center pixel attenuation = 1.2518
+max attenuation = 1.3561 at (u,v)=(76,61)
+central row profile (8 samples): 0.0000 0.2550 0.8656 1.0276 1.3355 0.8137 0.0202 0.0000
+RESULT: PASS (GPU matches CPU within tol=1.0e-03)

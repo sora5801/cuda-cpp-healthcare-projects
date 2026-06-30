@@ -2,11 +2,13 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 4.18 -- Image-Based 3D Printing / Model Generation for Surgery   (template skeleton)
+# Project 4.18 -- Image-Based 3D Printing / Model Generation for Surgery
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md sec.8): idempotent, documented, prints source URLs + access
+# notes, and NEVER bypasses credentials/registration. The real clinical CT
+# collections require registration and/or forbid redistribution, so this script
+# only prints pointers and defers to scripts/make_synthetic.py for the offline,
+# analytically-verifiable stand-in that the demo actually uses.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,18 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 4.18 -- Image-Based 3D Printing / Model Generation for Surgery"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    TCIA body CT collections; OsteoArthritis Initiative (OAI) for knee models (https://nda.nih.gov/oai/); VerSe vertebral segmentation dataset (https://github.com/anjany/verse); TotalSegmentator dataset (https://zenodo.org/record/6802614)."
+echo "This project ships a SYNTHETIC sphere volume (data/sample/volume_sample.txt)"
+echo "so the demo runs offline and its result is analytically verifiable. The real"
+echo "clinical datasets below are optional and gated behind registration/license:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  TCIA body CT collections      https://www.cancerimagingarchive.net/   (per-collection license)"
+echo "  OsteoArthritis Initiative     https://nda.nih.gov/oai/                 (registration required)"
+echo "  VerSe vertebral CT            https://github.com/anjany/verse          (open)"
+echo "  TotalSegmentator dataset      https://zenodo.org/record/6802614        (CC BY)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "We do NOT auto-download credentialed data. To use a real volume, download it"
+echo "yourself, resample to a regular grid, and write it in the text format in"
+echo "data/README.md (nx ny nz spacing origin iso, then the samples)."
+echo
+echo "For a larger SYNTHETIC volume that needs no download, run:"
+echo "    python scripts/make_synthetic.py --n 65 --radius 24"

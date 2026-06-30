@@ -1,122 +1,130 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load image, RL-deconvolve (CPU+GPU), verify
 // ---------------------------------------------------------------------------
-// Project 4.30 -- Deconvolution Microscopy   (template skeleton)
+// Project 4.30 : Deconvolution Microscopy
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the repo's standard main):
+//   1. Load the blurry observed image (data/sample).
+//   2. CPU reference: Richardson-Lucy with direct circular convolution.
+//   3. GPU: Richardson-Lucy with cuFFT convolution (kernels.cu).
+//   4. VERIFY: GPU deconvolved image agrees with CPU within a documented
+//      tolerance (RL is a long iterative double-precision solver; FFT vs direct
+//      convolution + FMA reordering diverge by a tiny, physically-negligible
+//      amount -- PATTERNS.md section 4).
+//   5. REPORT: deterministic per-image scalars (sharpness before/after, a small
+//      sample of pixels) to stdout; timings + worst error to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// The PSF used for deconvolution MUST match the PSF the synthetic generator used
+// to BLUR the image, or RL would be deconvolving with the wrong kernel. Those
+// parameters live in the constants below and in scripts/make_synthetic.py --
+// keep them in sync (data/README.md documents the contract).
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then kernels.cuh -> kernels.cu (cuFFT), then
+// reference_cpu.cpp. The science / GPU-mapping is in ../THEORY.md.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"         // deconvolve_rl_gpu, Image, Psf
+#include "reference_cpu.h"     // load_image, make_gaussian_psf, richardson_lucy_cpu, sharpness
+#include "util/io.hpp"         // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "4.30";
-static const char* PROJECT_NAME = "Deconvolution Microscopy";
+static const char* PROJECT_NAME = "Deconvolution Microscopy (Richardson-Lucy, cuFFT)";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// ---- Fixed experiment parameters (shared contract with make_synthetic.py) --
+//   PSF_RADIUS / PSF_SIGMA  : the Gaussian blur the microscope applies AND the
+//                             PSF we deconvolve with (we assume a known PSF).
+//   RL_ITERS                : Richardson-Lucy iteration count. Enough to sharpen
+//                             clearly; small enough that the demo is instant.
+static constexpr int    PSF_RADIUS = 4;
+static constexpr double PSF_SIGMA  = 1.5;
+static constexpr int    RL_ITERS   = 30;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Verification tolerance. RL is iterated 30x in double precision; the GPU's FFT
+// convolution and fused-multiply-add ordering differ from the CPU's direct
+// convolution, so the two estimates match to ~1e-9 per pixel, not bit-exactly.
+// We assert a max absolute pixel error below a physically-negligible 1e-6 on
+// images whose intensities are O(1..100). Documented; honest (PATTERNS.md section 4).
+static constexpr double ATOL = 1.0e-6;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load ----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/blurred_image.txt";
+    Image observed;
+    try {
+        observed = load_image(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // The known PSF (same as the blur applied to make the sample).
+    const Psf psf = make_gaussian_psf(PSF_RADIUS, PSF_SIGMA);
+
+    // ---- 2. CPU reference: RL with direct convolution (timed) ------------
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    const Image decon_cpu = richardson_lucy_cpu(observed, psf, RL_ITERS);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
-    float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    // ---- 3. GPU: RL with cuFFT convolution (timed inside) ----------------
+    Image decon_gpu;
+    float gpu_ms = 0.0f;
+    deconvolve_rl_gpu(observed, psf, RL_ITERS, decon_gpu, &gpu_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (max absolute per-pixel error) ------------------------
+    double worst = 0.0;
+    const int n = observed.size();
+    for (int i = 0; i < n; ++i) {
+        const double diff = std::fabs(decon_cpu.pix[i] - decon_gpu.pix[i]);
+        if (diff > worst) worst = diff;
+    }
+    const bool pass = (worst <= ATOL);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT ------------------------------
+    // We report the GPU result (which the verify step just proved matches the
+    // CPU). Scalars are rounded to a fixed number of decimals so the bytes are
+    // identical run to run despite ~1e-9 FFT/FMA noise in the low digits.
+    const double sharp_blurry = sharpness(observed);
+    const double sharp_decon  = sharpness(decon_gpu);
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("image: %dx%d pixels   PSF: Gaussian r=%d sigma=%.1f   RL iters: %d\n",
+                observed.w, observed.h, PSF_RADIUS, PSF_SIGMA, RL_ITERS);
+    std::printf("sharpness (mean sq gradient):  blurry=%.4f  deconvolved=%.4f  (x%.2f sharper)\n",
+                sharp_blurry, sharp_decon,
+                (sharp_blurry > 0.0) ? sharp_decon / sharp_blurry : 0.0);
+
+    // A small deterministic fingerprint of the restored image: the value at a
+    // few fixed pixels along the main diagonal. Rounded to 3 decimals so the
+    // last (noisy) digits never flip the stdout bytes.
+    std::printf("restored pixels along diagonal (x=y):");
+    for (int t = 0; t < 5; ++t) {
+        const int x = (observed.w * (t + 1)) / 6;     // 5 evenly-spaced samples
+        const int y = (observed.h * (t + 1)) / 6;
+        const double v = decon_gpu.pix[static_cast<std::size_t>(y) * observed.w + x];
+        std::printf(" (%d,%d)=%.3f", x, y, v);
+    }
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+
+    // Total restored intensity should be conserved (the PSF sums to 1, RL is
+    // intensity-preserving up to the boundary). Report it as a sanity scalar.
+    double sum_obs = 0.0, sum_dec = 0.0;
+    for (int i = 0; i < n; ++i) { sum_obs += observed.pix[i]; sum_dec += decon_gpu.pix[i]; }
+    std::printf("total intensity:  observed=%.2f  deconvolved=%.2f\n", sum_obs, sum_dec);
+    std::printf("RESULT: %s (GPU cuFFT deconvolution matches CPU reference within atol=1e-6)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR ------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d x %d image)\n", path.c_str(), observed.w, observed.h);
+    std::fprintf(stderr, "[timing] CPU RL (direct conv): %.3f ms   GPU RL (cuFFT): %.3f ms\n",
+                 cpu_ms, gpu_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- direct convolution is O(N*K) per iter; cuFFT is "
+                         "O(N log N). The GPU's edge grows with image size and PSF width.\n");
+    std::fprintf(stderr, "[verify] worst absolute per-pixel error (CPU vs GPU) = %.3e\n", worst);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

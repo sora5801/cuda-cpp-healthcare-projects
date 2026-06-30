@@ -1,33 +1,42 @@
-# Demo — 4.6 Ultrasound Beamforming
+# Demo — 4.6 Ultrasound Beamforming (Delay-and-Sum)
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+`run_demo.ps1` (Windows) / `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on `data/sample/rf_sample.txt` — synthetic RF echoes from one
+   point scatterer at a known location `(4.0, 20.0) mm`.
+3. **Verify** that the GPU per-pixel delay-and-sum matches the CPU reference.
+4. **Report** the recovered focal spot, the peak envelope, a lateral beam
+   profile, and time GPU vs CPU.
 
-The program splits its output deliberately:
+stdout (the deterministic image summary) is diffed against
+[`expected_output.txt`](expected_output.txt); the timing/error lines are on
+stderr only (they vary run to run).
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+## Canonical output
 
-## Expected result
+See [`expected_output.txt`](expected_output.txt):
 
 ```
-4.6 -- Ultrasound Beamforming
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+4.6 -- Ultrasound Beamforming (Delay-and-Sum)
+DAS beamform: 64 elements x 384 RF samples -> 96x96 image (x by z)
+focal spot (brightest pixel): (ix,iz)=(66,41)  =  (x,z)=(3.9,20.1) mm
+peak envelope value = 10.5305
+center pixel envelope = 0.0000
+lateral profile across focal row (8 samples): 0.1896 0.0037 0.0409 0.0823 0.1705 0.0321 0.0012 0.0000
+RESULT: PASS (GPU matches CPU within tol=1.0e-03)
 ```
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+The headline is the **focal spot**: the brightest pixel reconstructs to
+`(3.9, 20.1) mm`, within one pixel (`dx≈0.21 mm`, `dz≈0.37 mm`) of the embedded
+scatterer at `(4.0, 20.0) mm` — the beamformer correctly focused 64 independent
+element echoes back onto the source. `RESULT: PASS` means the GPU image matched
+the CPU reference within `1e-3`.
+
+> On this tiny 96×96 grid the GPU kernel (~0.1 ms) already beats the serial CPU
+> (~2.5 ms) several-fold; the gap widens with image size, element count, and
+> frame rate. Timing is a **teaching artifact, not a benchmark claim**
+> (CLAUDE.md §12). Reconstructed values are in arbitrary units — a software
+> demonstration, not a clinical image.

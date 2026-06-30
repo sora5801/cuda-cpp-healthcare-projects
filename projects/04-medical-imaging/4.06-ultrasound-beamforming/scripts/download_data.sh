@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  How to get REAL ultrasound RF data (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 4.6 -- Ultrasound Beamforming   (template skeleton)
+# Project 4.6 : Ultrasound Beamforming (Delay-and-Sum)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. Defers to scripts/make_synthetic.py for an
+# offline, reproducible stand-in.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +17,23 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 4.6 -- Ultrasound Beamforming"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    Plane-Wave Imaging Challenge in Medical Ultrasound (PICMUS, https://www.creatis.insa-lyon.fr/Challenge/IEEE_IUS_2016/) — RF data for beamforming evaluation; UltraSound SegLab dataset; IQ ultrasound datasets from open research groups (verify URL at creatis.insa-lyon.fr)."
+echo "Options for real / standard RF beamforming data:"
+echo "  * PICMUS (Plane-Wave Imaging Challenge in Medical Ultrasound) --"
+echo "    canonical RF datasets (point targets, cysts, in-vivo) for beamformer"
+echo "    evaluation: https://www.creatis.insa-lyon.fr/Challenge/IEEE_IUS_2016/"
+echo "    (registration may be required; this script does NOT bypass it)."
+echo "  * Field II (https://field-ii.dk/) -- CPU simulator that GENERATES"
+echo "    realistic RF data for arbitrary phantoms; export to the data/README"
+echo "    format, then beamform with this project's GPU kernel."
+echo "  * k-Wave / k-Wave-Fluid-CUDA (https://github.com/klepo/k-Wave-Fluid-CUDA)"
+echo "    -- full-wave acoustic propagation (more physical than our point model)."
+echo "  * MUST (https://www.biomecardio.com/MUST/) -- reference DAS + sample RF."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Offline stand-in (no download, fully reproducible):"
+echo "  python scripts/make_synthetic.py"
+echo "  python scripts/make_synthetic.py --elements 128 --samples 512 --nx 192 --nz 192 --extra"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "When wiring a real dataset, follow this idempotent pattern:"
+echo "  1) skip download if the file already exists with the right checksum"
+echo "  2) print source URL + expected size + SHA256"
+echo "  3) for credentialed sets, print registration instructions ONLY"

@@ -1,7 +1,7 @@
 # ===========================================================================
 # demo/run_demo.ps1  --  One command: build (if needed) + run + verify
 # ---------------------------------------------------------------------------
-# Project 4.18 -- Image-Based 3D Printing / Model Generation for Surgery   (template skeleton)
+# Project 4.18 -- Image-Based 3D Printing / Model Generation for Surgery
 #
 # WHAT IT DOES (CLAUDE.md §6.3)
 #   1. Ensure the Release exe exists (build it with MSBuild if missing).
@@ -18,7 +18,7 @@ $ProjectRoot = Split-Path -Parent $Demo
 $Slug        = "image-based-3d-printing-model-generation-for-surgery"
 $Sln         = Join-Path $ProjectRoot "build\$Slug.sln"
 $Exe         = Join-Path $ProjectRoot "build\x64\Release\$Slug.exe"
-$Sample      = Join-Path $ProjectRoot "data\sample\saxpy_sample.txt"
+$Sample      = Join-Path $ProjectRoot "data\sample\volume_sample.txt"
 $Expected    = Join-Path $Demo "expected_output.txt"
 
 function Find-MSBuild {

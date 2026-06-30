@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 4.7 -- Medical Image Segmentation (Deep Learning)   (template skeleton)
+# Project 4.7 -- Medical Image Segmentation (Deep Learning)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/medical-image-segmentation-deep-learning.sln (CLAUDE.md §5). Both

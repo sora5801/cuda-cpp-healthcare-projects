@@ -29,5 +29,10 @@ add_executable(deconvolution-microscopy
   src/reference_cpu.cpp
 )
 
-# So #include "kernels.cuh" and "util/..." resolve from src/.
+# So #include "kernels.cuh", "rl_core.h" and "util/..." resolve from src/.
 target_include_directories(deconvolution-microscopy PRIVATE src)
+
+# This project links the cuFFT library for FFT-based convolution (kernels.cu).
+# CUDA::cufft is provided by the CUDA toolkit's CMake package -- no manual paths.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(deconvolution-microscopy PRIVATE CUDA::cufft)

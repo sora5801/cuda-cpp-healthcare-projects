@@ -2,8 +2,8 @@
   "id": "4.28",
   "id_padded": "4.28",
   "project": "GPU-Accelerated DRR Generation for 2D/3D Registration",
-  "status": "todo",
-  "owner": "",
+  "status": "done",
+  "owner": "worker-4.28",
   "branch": "",
-  "skeleton": true
+  "skeleton": false
 }
