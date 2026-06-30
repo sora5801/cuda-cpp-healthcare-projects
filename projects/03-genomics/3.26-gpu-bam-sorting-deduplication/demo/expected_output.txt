@@ -1,5 +1,16 @@
 3.26 -- GPU BAM Sorting & Deduplication
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+reads: 2000 aligned across 4 references
+coordinate sort: 2000 reads ordered by (ref, pos, strand, id)
+sorted-order digest (FNV-1a): ae8450c42314671c
+first 8 sorted reads (ref pos strand mate id):
+   0     14968  0     404  id=12
+   0     46030  1    8338  id=375
+   0     46030  1    8338  id=697
+   0     46030  1    8338  id=1354
+   0     46030  1    8338  id=1981
+   0    162518  0    5035  id=178
+   0    185306  1    6550  id=1525
+   0    200748  0   26038  id=603
+mark duplicates: 358 duplicates flagged, 1642 reads kept
+duplicate rate: 358 / 2000
+RESULT: PASS (GPU sort+dedup match CPU exactly)

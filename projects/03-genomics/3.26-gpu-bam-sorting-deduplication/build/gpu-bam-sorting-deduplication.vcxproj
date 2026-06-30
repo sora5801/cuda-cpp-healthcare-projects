@@ -112,6 +112,23 @@
       <!-- fast math is OFF by default; enable per-project only where the
            numerics tolerate it, and document it (CLAUDE.md section 5). -->
       <FastMath>false</FastMath>
+      <!-- Thrust/CCCL (shipped with CUDA 13.3) requires MSVC's STANDARD-CONFORMING
+           preprocessor; the legacy one errors out. AdditionalCompilerOptions are
+           forwarded to cl.exe via nvcc -Xcompiler. /Zc:preprocessor selects the
+           conforming preprocessor. (BUILD_GUIDE.md notes this is needed whenever
+           a project includes thrust/* headers.) -->
+      <AdditionalCompilerOptions>/Zc:preprocessor %(AdditionalCompilerOptions)</AdditionalCompilerOptions>
+      <!-- Thrust also requires C++17 for nvcc's OWN device-side dialect (the
+           ClCompile LanguageStandard only sets the host cl.exe standard).
+           In a -G DEBUG build, instantiating Thrust's host_vector pulls MSVC's
+           std::_Iterator_base12 (a HOST-only type) into host_device context, so
+           nvcc emits diagnostic 20011/20014 ("calling a host function from a
+           host_device function is not allowed") FROM INSIDE the CUDA toolkit's
+           own headers (not from our code), and only in the debug configuration.
+           We suppress those two numbers here so the Debug build is warning-clean;
+           the Release build (no -G) never hits them. The nvcc flag diag-suppress
+           is the documented per-number suppression. -->
+      <AdditionalOptions>-std=c++17 -diag-suppress 20011 -diag-suppress 20014 %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
 
@@ -142,6 +159,10 @@
       <!-- -lineinfo: source mapping for Nsight profiling without the -G slowdown. -->
       <GenerateLineInfo>true</GenerateLineInfo>
       <FastMath>false</FastMath>
+      <!-- See the Debug section: Thrust/CCCL needs the conforming MSVC
+           preprocessor (forwarded to cl.exe via -Xcompiler) and C++17 for nvcc. -->
+      <AdditionalCompilerOptions>/Zc:preprocessor %(AdditionalCompilerOptions)</AdditionalCompilerOptions>
+      <AdditionalOptions>-std=c++17 %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
 
@@ -151,6 +172,7 @@
     <CudaCompile Include="..\src\main.cu" />
     <CudaCompile Include="..\src\kernels.cu" />
     <ClCompile Include="..\src\reference_cpu.cpp" />
+    <ClInclude Include="..\src\bam.h" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />

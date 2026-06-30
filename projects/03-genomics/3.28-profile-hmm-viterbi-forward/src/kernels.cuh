@@ -1,52 +1,52 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for profile-HMM database search
 // ---------------------------------------------------------------------------
-// Project 3.28 -- Profile HMM (Viterbi / Forward)   (template skeleton)
+// Project 3.28 : Profile HMM (Viterbi / Forward)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   Scoring one profile against N database sequences is N INDEPENDENT jobs --
+//   the same "one query vs many items" shape as flagship 1.12 (Tanimoto) and
+//   12.01 (spectral search). So we give each database sequence its OWN GPU
+//   THREAD, and that thread runs the full Viterbi (or Forward) dynamic program
+//   for its sequence against the shared profile. Two CUDA features carry the
+//   teaching here:
+//     * the PROFILE lives in CONSTANT memory: every thread reads the same model
+//       but never writes it, so the constant cache broadcasts it warp-wide
+//       (cheap), exactly like the constant-memory query in 1.12; and
+//     * each thread keeps its DP "rolling column" (3 small arrays of size M+1) in
+//       LOCAL/register space and walks its sequence -- no global-memory traffic
+//       in the inner loop, so the kernel is compute-bound on the recurrence.
+//   A grid-stride loop lets one modest grid cover an arbitrarily large database.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   This header declares a __global__ kernel, so it is included ONLY by .cu
+//   units. The pure-C++ CPU reference lives in reference_cpu.h instead.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: phmm.h (the shared recurrence), util/cuda_check.cuh,
+//   util/timer.cuh, reference_cpu.h.  Then read kernels.cu.  The GPU-mapping is
+//   in ../THEORY.md §4.
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // ProfileHMM, SeqDB (pure C++, safe inside a .cu)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// ---------------------------------------------------------------------------
+// phmm_search_gpu: the host-callable "score the whole database on the GPU".
+//   Uploads the profile to constant memory and the (flat, ragged) sequence
+//   database to global memory, launches ONE kernel that fills `out` with every
+//   sequence's score, and reports the measured kernel time via *kernel_ms.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   p          : the profile HMM model (copied into device constant memory)
+//   db         : the sequence database (flat residue buffer + offsets/lengths)
+//   is_viterbi : true  -> Viterbi (max-sum) score per sequence
+//                false -> Forward (log-sum-exp) score per sequence
+//   out        : resized to db.n; filled with per-sequence scores (nats)
+//   kernel_ms  : out-param, GPU-measured kernel time in milliseconds
+//
+//   main.cu calls this twice (Viterbi then Forward); all CUDA bookkeeping is
+//   hidden inside. See kernels.cu for the five canonical CUDA steps.
+// ---------------------------------------------------------------------------
+void phmm_search_gpu(const ProfileHMM& p, const SeqDB& db, bool is_viterbi,
+                     std::vector<float>& out, float* kernel_ms);

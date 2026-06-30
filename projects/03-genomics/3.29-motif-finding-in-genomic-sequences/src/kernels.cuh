@@ -1,52 +1,72 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for the MEME E-step
 // ---------------------------------------------------------------------------
-// Project 3.29 -- Motif Finding in Genomic Sequences   (template skeleton)
+// Project 3.29 : Motif Finding in Genomic Sequences
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   MEME's Expectation-Maximisation spends ~all its time in the E-step: score
+//   EVERY length-W window of EVERY sequence against the current motif model.
+//   With N sequences of total length L there are ~L window positions, and each
+//   score is an independent W-term dot product against the log-odds table.
+//   That is a perfect "many independent jobs" workload (PATTERNS.md sec 1, the
+//   same pattern as 1.12 Tanimoto and 12.01 spectral search): we give each
+//   window its OWN GPU THREAD.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Two GPU features carry this project:
+//     * the W x 4 LOG-ODDS table lives in CONSTANT memory -- every thread reads
+//       the same table, never writes it -> the constant cache broadcasts one
+//       address to a whole warp in a single transaction (ideal for a small
+//       read-only lookup table), and
+//     * a grid-stride loop lets one modest grid cover millions of windows.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   The kernel is the GPU twin of score_windows_cpu() in reference_cpu.cpp;
+//   BOTH call the same __host__ __device__ window_score() (motif_core.h), so the
+//   results match bit-for-bit and main.cu can verify with an EXACT tolerance.
+//   The host (reference_cpu.cpp) still runs the cheap E/M bookkeeping (softmax,
+//   count accumulation); only the heavy window scoring is offloaded -- which is
+//   exactly how mCUDA-MEME structures the real tool (THEORY sec "real world").
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: motif_core.h, reference_cpu.h, util/*. Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
+#include "reference_cpu.h"   // SequenceSet, MotifModel (pure C++, safe in .cu)
+#include "motif_core.h"      // MOTIF_ALPHABET, window_score
+
+// Maximum motif width the constant-memory log-odds table can hold. The DNA
+// log-odds table is w*4 floats; with MAX_W=64 that is 64*4*4 = 1 KiB, trivially
+// inside the 64 KiB constant bank. Picked generously -- real TF motifs are
+// 6..30 bp -- so the demo and any reasonable experiment fit. Asserted at upload.
+constexpr int MAX_W = 64;
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// score_windows_kernel: one logical thread per window, via a grid-stride loop.
+//   data        : [total bases] concatenated encoded sequences (device copy of
+//                 SequenceSet::data); bytes in {0,1,2,3}
+//   start_of_win: [num_windows] absolute start index of each window into `data`
+//   num_windows : number of windows (guards the ragged last block)
+//   w           : motif width W
+//   out         : [num_windows] output log-odds scores (one per window)
+//   The log-odds table is read from the __constant__ symbol filled by the host
+//   wrapper (not a parameter) -- see kernels.cu.
+__global__ void score_windows_kernel(const unsigned char* __restrict__ data,
+                                     const int* __restrict__ start_of_win,
+                                     int num_windows, int w,
+                                     float* __restrict__ out);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// score_windows_gpu: do the whole E-step scoring on the GPU.
+//   Uploads the sequence bytes + window starts + the current log-odds table
+//   (to constant memory), launches the kernel, copies the scores back, and
+//   reports the measured KERNEL time (CUDA events) via *kernel_ms. This is the
+//   GPU twin of score_windows_cpu(); main.cu runs both on the FINAL model and
+//   asserts they agree.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
+//   set       : the loaded sequences + window index (host)
+//   model     : supplies the W x 4 log-odds table to broadcast (must be built)
+//   out       : host output, resized to set.total_windows() (output parameter)
 //   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+void score_windows_gpu(const SequenceSet& set, const MotifModel& model,
+                       std::vector<float>& out, float* kernel_ms);

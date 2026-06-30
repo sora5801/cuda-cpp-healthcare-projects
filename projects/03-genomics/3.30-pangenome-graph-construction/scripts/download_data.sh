@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Fetch / build the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 3.30 -- Pangenome Graph Construction   (template skeleton)
+# Project 3.30 : Pangenome Graph Construction
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. Real pangenome graphs are BUILT from genome
+# assemblies with the PGGB pipeline (not a single download), so this script prints
+# the exact, reproducible recipe and links rather than fetching opaque blobs. The
+# committed synthetic sample is enough to run the demo offline.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,25 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 3.30 -- Pangenome Graph Construction"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    HPRC year-1 assemblies — 94 haplotypes, human pangenome (https://humanpangenome.org/); Ensembl non-human pangenome data (https://www.ensembl.org/); Vertebrate Genomes Project assemblies (https://vertebrategenomesproject.org/); NCBI RefSeq complete genomes for bacterial pangenomes (https://ftp.ncbi.nlm.nih.gov/refseq/)."
+echo "This teaching project lays out a pangenome GRAPH; real graphs are built"
+echo "from genome assemblies. There is no single file to download -- you build"
+echo "the graph with PGGB, then convert its GFA into this project's format."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Assembly sources (respect each license; some require registration):"
+echo "  * HPRC year-1 (94 human haplotypes) : https://humanpangenome.org/"
+echo "  * Ensembl (non-human pangenomes)    : https://www.ensembl.org/"
+echo "  * Vertebrate Genomes Project        : https://vertebrategenomesproject.org/"
+echo "  * NCBI RefSeq (bacterial pangenomes): https://ftp.ncbi.nlm.nih.gov/refseq/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Reproducible recipe:"
+echo "  1) Put your assemblies into one FASTA:  cat *.fa > seqs.fa; samtools faidx seqs.fa"
+echo "  2) Build the graph (Docker):"
+echo "       docker run -v \$PWD:/data ghcr.io/pangenome/pggb:latest \\"
+echo "         pggb -i /data/seqs.fa -o /data/out -n <num_haplotypes> -t 8 -p 90 -s 5000"
+echo "  3) The graph is out/*.gfa . Convert its S (segments) and P/W (paths) lines"
+echo "     into this project's 'N P / lengths / paths' format (see data/README.md)."
+echo
+echo "For a larger SYNTHETIC graph (no download, fully offline):"
+echo "  python scripts/make_synthetic.py        # writes data/sample/pangenome_sample.txt"
+echo
+echo "[download_data] Nothing fetched. The committed synthetic sample runs the demo."

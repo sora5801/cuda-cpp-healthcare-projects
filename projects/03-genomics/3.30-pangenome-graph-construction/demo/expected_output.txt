@@ -1,5 +1,19 @@
 3.30 -- Pangenome Graph Construction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+graph: 12 nodes, 4 genome paths -> 39 layout terms
+layout: 100 SMACOF sweeps (hops=3, Guttman transform)
+node coordinates (bp, leftmost node at 0):
+  node  0 (len  300 bp): x =      0.000
+  node  1 (len  150 bp): x =    299.450
+  node  2 (len  200 bp): x =    450.104
+  node  3 (len  250 bp): x =    652.354
+  node  4 (len  180 bp): x =    919.888
+  node  5 (len  220 bp): x =   1028.029
+  node  6 (len  160 bp): x =   1165.684
+  node  7 (len  240 bp): x =   1367.889
+  node  8 (len  190 bp): x =   1603.661
+  node  9 (len  300 bp): x =   1794.964
+  node 10 (len  180 bp): x =    857.816
+  node 11 (len  120 bp): x =   1285.264
+1-D node order (left to right): 0 1 2 3 10 4 5 6 11 7 8 9
+stress: initial 2234207.1515 -> final 18893.8519
+RESULT: PASS (GPU layout matches CPU; same 1-D order)

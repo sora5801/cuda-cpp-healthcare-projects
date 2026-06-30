@@ -5,29 +5,36 @@
 Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on `data/sample/reads_sample.txt` (2,000 synthetic aligned reads).
+3. **Coordinate-sort** the reads on the GPU (`thrust::sort_by_key`, a radix sort
+   on a packed `(ref, pos, strand)` key) and **mark duplicates** on the GPU
+   (`thrust::reduce_by_key`, a segmented "keep the best copy per fragment").
+4. **Verify** both results against the CPU reference (`reference_cpu.cpp`) — the
+   sort order and the duplicate flags must match **exactly** (all integers, total
+   orders, so no tolerance is needed) — and print `PASS`/`FAIL`.
+5. **Time** the GPU sort and dedup (CUDA events) and the CPU baseline — a
+   *teaching artifact*, not a benchmark claim.
 
 The program splits its output deliberately:
 
 - **stdout** is byte-for-byte deterministic and is diffed against
   [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+- **stderr** carries the timing (which varies run to run), so it is shown but
+  never diffed.
 
 ## Expected result
 
-```
-3.26 -- GPU BAM Sorting & Deduplication
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
+See [`expected_output.txt`](expected_output.txt). The demo sorts all 2,000 reads
+into genome order, reports a stable FNV-1a digest of that order (a compact proof
+the GPU order equals the CPU order), shows the first 8 sorted reads — note the
+four reads sharing `ref=0, pos=46030, strand=1, mate=8338`, a duplicate cluster —
+and flags exactly **358 duplicates** (the number planted by the synthetic
+generator), keeping 1,642 reads. `RESULT: PASS` means the GPU sort **and** dedup
+matched the CPU reference exactly (`0 sort mismatches`, `0 dup-flag mismatches`).
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+On this tiny sample the GPU is launch/copy bound, so it is not faster than the
+CPU here; the radix-sort advantage grows with read count (real BAMs hold
+10⁸–10⁹ reads). The timing line says so.
+
+> The data is **synthetic** aligned reads with a deliberately planted duplicate
+> structure — a demonstration of GPU sort + dedup, not a clinical analysis.

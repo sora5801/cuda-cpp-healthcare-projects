@@ -1,48 +1,98 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate the synthetic profile-HMM dataset
 # ---------------------------------------------------------------------------
-# Project 3.28 -- Profile HMM (Viterbi / Forward)   (template skeleton)
+# Project 3.28 : Profile HMM (Viterbi / Forward)
 #
 # WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+#   Real protein-family profiles (Pfam) and databases (UniRef, JGI metagenomes)
+#   are large and license-encumbered, so the committed sample is SYNTHETIC and is
+#   labeled synthetic everywhere (CLAUDE.md §8, data/README.md). We engineer the
+#   sample so the result is INTERPRETABLE and VERIFIABLE (PATTERNS.md §6): the
+#   model is built from the first record (the CONSENSUS), and the database
+#   contains one planted HOMOLOG (a lightly mutated copy of the consensus) plus
+#   several random DECOYS. A correct search must rank the homolog #1, well above
+#   the decoys -- a known answer we can assert.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
+# OUTPUT FORMAT (a tiny FASTA-like file; data/README.md documents it):
+#   >name
+#   AMINOACIDSEQUENCE
+#   ... (one record per sequence; first record is the consensus)
 #
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# Everything is DETERMINISTIC (fixed seed) so demo/expected_output.txt is stable.
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py                 # default tiny sample
+#   python scripts/make_synthetic.py --decoys 12     # more decoys
 # ===========================================================================
 import argparse
+import random
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+OUT = ROOT / "data" / "sample" / "phmm_sample.fasta"
+
+# The 20 standard amino acids, in the SAME canonical order src/reference_cpu.cpp
+# uses (so "residue 7" means the same thing here and in the C++ loader).
+AA = "ACDEFGHIKLMNPQRSTVWY"
+
+# The family consensus: a fixed 24-residue "signature" the profile will model.
+# (Hand-picked to look like a plausible motif; its exact content does not matter,
+# only that homologs share it and decoys do not.)
+CONSENSUS = "MKTAYIAKQRQISFVKSHFSRQLE"
+
+
+def mutate(seq: str, rng: random.Random, n_subs: int) -> str:
+    """Return `seq` with `n_subs` random single-residue substitutions -- a crude
+    model of evolutionary divergence. The homolog stays clearly recognisable
+    (few substitutions) so it still scores far above the random decoys."""
+    chars = list(seq)
+    positions = rng.sample(range(len(chars)), k=min(n_subs, len(chars)))
+    for pos in positions:
+        # Replace with a DIFFERENT random residue (avoid a no-op substitution).
+        choices = [a for a in AA if a != chars[pos]]
+        chars[pos] = rng.choice(choices)
+    return "".join(chars)
+
+
+def random_seq(length: int, rng: random.Random) -> str:
+    """A decoy: i.i.d. uniform residues -- carries no family signal, so the
+    profile should score it low."""
+    return "".join(rng.choice(AA) for _ in range(length))
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
+    ap = argparse.ArgumentParser(description="Generate the synthetic profile-HMM sample.")
+    ap.add_argument("--decoys", type=int, default=6, help="number of random decoy sequences")
+    ap.add_argument("--subs", type=int, default=3, help="substitutions in the planted homolog")
+    ap.add_argument("--seed", type=int, default=20260628, help="RNG seed (determinism)")
     ap.add_argument("--out", default=str(OUT), help="output path")
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    rng = random.Random(args.seed)        # fixed seed -> reproducible sample
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    records = []
+    # Record 0: the consensus. main.cu builds the profile from THIS record.
+    records.append(("consensus", CONSENSUS))
+    # Record 1: the planted homolog -- a lightly mutated consensus (the answer).
+    records.append(("homolog", mutate(CONSENSUS, rng, args.subs)))
+    # Records 2..: random decoys of the same length as the consensus.
+    for i in range(args.decoys):
+        records.append((f"decoy{i+1}", random_seq(len(CONSENSUS), rng)))
+
+    lines = ["# SYNTHETIC profile-HMM search sample (Project 3.28).",
+             "# Record 0 is the family CONSENSUS used to build the profile HMM.",
+             "# 'homolog' is a mutated copy (the planted answer); 'decoyN' are random.",
+             "# Generated by scripts/make_synthetic.py -- NOT real biological data."]
+    for name, seq in records:
+        lines.append(f">{name}")
+        lines.append(seq)
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"[make_synthetic] wrote {out_path}  "
+          f"(1 consensus + 1 homolog + {args.decoys} decoys; SYNTHETIC, seed={args.seed})")
 
 
 if __name__ == "__main__":

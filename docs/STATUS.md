@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 106/301 projects done (35.2%) | todo 195 | in-progress 0 | missing 0
+**Progress:** 111/301 projects done (36.9%) | todo 190 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 39 | 0 | 28 |
-| 🟡 Intermediate | 206 | 61 | 0 | 145 |
+| 🟡 Intermediate | 206 | 66 | 0 | 140 |
 | 🔴 Advanced | 28 | 6 | 0 | 22 |
 
 ## 1. Drug Discovery & Molecular Design  (35/35 done)
@@ -90,7 +90,7 @@
 | 2.34 | Biophysical Simulation of Biomolecular Condensates (Active Learning Loop) | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 | 2.35 | Electron Paramagnetic Resonance (EPR/DEER) Constrained Modeling | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 
-## 3. Genomics, Sequencing & Bioinformatics  (25/30 done)
+## 3. Genomics, Sequencing & Bioinformatics  (30/30 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -119,11 +119,11 @@
 | 3.23 | Splice-Aware RNA Alignment | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 3.24 | Methylation / Modified-Base Calling | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 3.25 | Base Quality Score Recalibration (BQSR) | 🟢 Beginner | Established | [x] done | - | - |
-| 3.26 | GPU BAM Sorting & Deduplication | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.27 | Suffix Array / BWT / FM-Index Construction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.28 | Profile HMM (Viterbi / Forward) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.29 | Motif Finding in Genomic Sequences | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.30 | Pangenome Graph Construction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 3.26 | GPU BAM Sorting & Deduplication | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 3.27 | Suffix Array / BWT / FM-Index Construction | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 3.28 | Profile HMM (Viterbi / Forward) | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 3.29 | Motif Finding in Genomic Sequences | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 3.30 | Pangenome Graph Construction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 
 ## 4. Medical Imaging & Image Reconstruction  (1/33 done)
 

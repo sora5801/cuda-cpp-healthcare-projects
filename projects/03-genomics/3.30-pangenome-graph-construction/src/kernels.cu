@@ -1,94 +1,156 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Pangenome 1-D SMACOF layout kernels + host loop
 // ---------------------------------------------------------------------------
-// Project 3.30 -- Pangenome Graph Construction   (template skeleton)
+// Project 3.30 : Pangenome Graph Construction
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of layout_cpu(). Per sweep we run two tiny kernels:
+//   scatter_kernel : one thread per TERM -> compute the shared Guttman numerator
+//                    (layout.h) and atomic-scatter the FIXED-POINT numerator (+
+//                    weight) onto its two endpoint nodes (the scatter-reduction).
+//   apply_kernel   : one thread per NODE -> x[k] = num[k]/den[k] (Guttman update).
+// Because the accumulation is in integers (commutative), the GPU result is
+// deterministic and equals the CPU bit-for-bit. main.cu compares them. See
+// ../THEORY.md "GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
+// 256 threads/block: a multiple of the 32-lane warp, 8 warps to hide latency, a
+// solid default across sm_75..sm_89. Tune per GPU; tiny inputs are launch-bound.
 static constexpr int THREADS_PER_BLOCK = 256;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// SIGNED <-> UNSIGNED FIXED-POINT BRIDGE
+//   CUDA provides atomicAdd for `unsigned long long int` but NOT for signed
+//   `long long`. Our fixed-point quanta are signed (numerator contributions and
+//   positions can be negative). The fix is two's-complement reinterpretation:
+//   adding the unsigned bit patterns of two signed integers yields the unsigned
+//   bit pattern of their signed sum (modular 2^64 arithmetic is identical for
+//   signed and unsigned). So we cast the signed quantum to unsigned, atomicAdd it,
+//   and cast the final accumulator back. static_cast to/from unsigned is
+//   well-defined and lossless for this round-trip.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+__device__ __forceinline__ unsigned long long ll_to_ull(long long v) {
+    return static_cast<unsigned long long>(v);
+}
+__host__ __device__ __forceinline__ long long ull_to_ll(unsigned long long v) {
+    return static_cast<long long>(v);
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// scatter_kernel: one thread per term.
+//   grid  = ceil(num_terms / THREADS_PER_BLOCK)
+//   block = THREADS_PER_BLOCK
+//   thread (blockIdx.x, threadIdx.x) -> term index `t`.
+//   Memory: reads the two endpoint positions from global `x` (the sweep source);
+//   performs FOUR atomicAdds into global accumulators (numerator + denominator,
+//   for each endpoint). No shared memory: the collisions are spread across all
+//   nodes, and integer atomics are cheap. The numerator math (LO_term_numerator)
+//   is the SAME inline function the CPU calls -> identical results.
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+__global__ void scatter_kernel(const double* __restrict__ x,
+                               const LayoutTerm* __restrict__ terms, int num_terms,
+                               unsigned long long* __restrict__ num,
+                               unsigned long long* __restrict__ den) {
+    const int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= num_terms) return;                 // guard the ragged last block
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    const LayoutTerm term = terms[t];           // this thread's soft constraint
+    const double xi = x[term.i];
+    const double xj = x[term.j];
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // Guttman numerator contributions for each endpoint (shared with the CPU).
+    const double ni = LO_term_numerator(xi, xj, term.target_d, term.weight);  // for node i
+    const double nj = LO_term_numerator(xj, xi, term.target_d, term.weight);  // for node j
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // Quantise each contribution (mirrors the CPU's LO_to_fixed calls), then
+    // atomic-add the unsigned bit pattern onto the two endpoints' accumulators.
+    atomicAdd(&num[term.i], ll_to_ull(LO_to_fixed(ni)));
+    atomicAdd(&num[term.j], ll_to_ull(LO_to_fixed(nj)));
+    atomicAdd(&den[term.i], ll_to_ull(LO_to_fixed(term.weight)));
+    atomicAdd(&den[term.j], ll_to_ull(LO_to_fixed(term.weight)));
+}
+
+// ---------------------------------------------------------------------------
+// apply_kernel: one thread per node.
+//   x[k] = numerator[k] / denominator[k] (the weighted average = Guttman update).
+//   Fully independent across nodes -> no atomics. A node with no terms keeps its
+//   position (denominator 0). This runs AFTER scatter_kernel (separate launch =
+//   barrier), so reading the just-summed accumulators and overwriting x is a
+//   correct Jacobi step.
+// ---------------------------------------------------------------------------
+__global__ void apply_kernel(double* __restrict__ x, int num_nodes,
+                             const unsigned long long* __restrict__ num,
+                             const unsigned long long* __restrict__ den) {
+    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= num_nodes) return;                 // guard the ragged last block
+    const long long dfix = ull_to_ll(den[k]);
+    if (dfix != 0)
+        x[k] = LO_from_fixed(ull_to_ll(num[k])) / LO_from_fixed(dfix);
+}
+
+// ---------------------------------------------------------------------------
+// layout_gpu: host wrapper. Allocate device buffers once, then loop the two
+//   kernels for `iters` sweeps (zeroing the accumulators each sweep), copy the
+//   final positions back, and compute the stress with the SHARED host helper so
+//   CPU and GPU report the identical metric.
+//
+//   We time the whole sweep LOOP with CUDA events (a teaching artifact, not a
+//   benchmark): tiny graphs are dominated by per-sweep launch overhead -- the
+//   lesson of PATTERNS.md section 7 (many small launches are launch-bound; the
+//   GPU's edge appears only at ODGI's real scale).
+// ---------------------------------------------------------------------------
+double layout_gpu(const LayoutProblem& p, std::vector<double>& x, float* kernel_ms) {
+    const int N = static_cast<int>(p.init_x.size());
+    const int T = static_cast<int>(p.terms.size());
+
+    // ---- (1) Device buffers ------------------------------------------------
+    double*             d_x     = nullptr;   // [N] node positions (source + result)
+    LayoutTerm*         d_terms = nullptr;   // [T] constraints (read-only on device)
+    unsigned long long* d_num   = nullptr;   // [N] fixed-point numerator accumulators
+    unsigned long long* d_den   = nullptr;   // [N] fixed-point denominator accumulators
+    CUDA_CHECK(cudaMalloc(&d_x,     static_cast<std::size_t>(N) * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_terms, static_cast<std::size_t>(T) * sizeof(LayoutTerm)));
+    CUDA_CHECK(cudaMalloc(&d_num,   static_cast<std::size_t>(N) * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_den,   static_cast<std::size_t>(N) * sizeof(unsigned long long)));
+
+    // ---- (2) Upload the initial positions and the (constant) term list -----
+    CUDA_CHECK(cudaMemcpy(d_x, p.init_x.data(),
+                          static_cast<std::size_t>(N) * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_terms, p.terms.data(),
+                          static_cast<std::size_t>(T) * sizeof(LayoutTerm), cudaMemcpyHostToDevice));
+
+    const int term_blocks = (T + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;   // cover terms
+    const int node_blocks = (N + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;   // cover nodes
+
+    // ---- (3) Sweep loop, timed with CUDA events ----------------------------
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    for (int it = 0; it < p.iters; ++it) {
+        // Zero the accumulators for this sweep (all-bits-zero == integer 0).
+        CUDA_CHECK(cudaMemset(d_num, 0, static_cast<std::size_t>(N) * sizeof(unsigned long long)));
+        CUDA_CHECK(cudaMemset(d_den, 0, static_cast<std::size_t>(N) * sizeof(unsigned long long)));
+        // SCATTER then APPLY. They are separate launches because every node's
+        // numerator/denominator must be fully accumulated (a global reduction)
+        // before any node moves -- the launch boundary is the synchronization
+        // point that also makes the in-place x update a correct Jacobi step.
+        scatter_kernel<<<term_blocks, THREADS_PER_BLOCK>>>(d_x, d_terms, T, d_num, d_den);
+        apply_kernel<<<node_blocks,  THREADS_PER_BLOCK>>>(d_x, N, d_num, d_den);
+    }
+    *kernel_ms = timer.stop_ms();
+    CUDA_CHECK_LAST("layout kernels");          // catch any launch/execution error
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // ---- (4) Copy final positions back -------------------------------------
+    x.assign(N, 0.0);
+    CUDA_CHECK(cudaMemcpy(x.data(), d_x,
+                          static_cast<std::size_t>(N) * sizeof(double), cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
+    // ---- (5) Free -----------------------------------------------------------
     CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    CUDA_CHECK(cudaFree(d_terms));
+    CUDA_CHECK(cudaFree(d_num));
+    CUDA_CHECK(cudaFree(d_den));
+
+    return compute_stress(p, x);                // shared metric -> identical to CPU
 }

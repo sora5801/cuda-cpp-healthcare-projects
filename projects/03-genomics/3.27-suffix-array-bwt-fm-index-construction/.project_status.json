@@ -2,7 +2,7 @@
   "id": "3.27",
   "id_padded": "3.27",
   "project": "Suffix Array / BWT / FM-Index Construction",
-  "status": "todo",
+  "status": "done",
   "owner": "",
   "branch": "",
   "skeleton": true

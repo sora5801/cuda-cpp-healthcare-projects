@@ -1,52 +1,59 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU pangenome-layout interface
 // ---------------------------------------------------------------------------
-// Project 3.30 -- Pangenome Graph Construction   (template skeleton)
+// Project 3.30 : Pangenome Graph Construction
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA  (PATTERN: parallel term evaluation + deterministic atomic reduce)
+//   The ODGI-style 1-D layout is a SMACOF (Guttman-transform) optimisation. Each
+//   sweep runs two tiny kernels:
+//     * SCATTER kernel : one GPU thread per LAYOUT TERM. The thread reads its two
+//       endpoint positions, calls the SHARED per-term contribution
+//       (LO_term_numerator in layout.h -- identical to the CPU), and atomic-adds
+//       the FIXED-POINT numerator (and the weight) onto BOTH endpoints'
+//       accumulators. This is a SCATTER-REDUCTION: many terms touch the same node,
+//       so the adds collide -> atomicAdd. Fixed-point integers make the adds
+//       COMMUTE, so the reduction is deterministic AND equals the CPU bit-for-bit.
+//     * APPLY kernel : one thread per NODE sets x[k] = numerator[k]/denominator[k]
+//       (the weighted average -- the Guttman update). Because the scatter kernel
+//       finishes (a launch boundary = barrier) before apply runs, and apply reads
+//       only the accumulators, updating x[k] in place is a correct JACOBI step.
+//   These two kernels run once per sweep for `iters` sweeps. SMACOF is monotone, so
+//   no learning-rate schedule is needed.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   kernels.cu defines the kernels + the host wrapper layout_gpu(). main.cu calls
+//   layout_gpu() and compares its positions/stress against layout_cpu().
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+// WHY THIS MAPS THE CATALOG
+//   Real ODGI runs this over millions of nodes and billions of terms and reports a
+//   57.3x GPU speed-up. Our teaching version keeps the exact same parallel shape
+//   (thread-per-term scatter + atomic node reduction) at a tiny, verifiable scale.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: layout.h, reference_cpu.h, util/cuda_check.cuh, util/timer.cuh.
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // LayoutProblem, LayoutTerm (pure C++, safe in .cu)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// SCATTER kernel: one thread per term. Reads x[i], x[j] (the sweep's source) and
+// atomic-adds this term's fixed-point Guttman NUMERATOR to num[i], num[j] and its
+// weight to den[i], den[j]. The accumulators are typed unsigned long long because
+// CUDA's atomicAdd is defined for that type; we store the two's-complement bit
+// pattern of a signed long long (signed addition is bit-identical under unsigned
+// wraparound -- see kernels.cu).
+__global__ void scatter_kernel(const double* __restrict__ x,
+                               const LayoutTerm* __restrict__ terms, int num_terms,
+                               unsigned long long* __restrict__ num,
+                               unsigned long long* __restrict__ den);
+
+// APPLY kernel: one thread per node. Sets x[k] = num[k]/den[k] (Guttman update);
+// a node with no terms (den[k]==0) keeps its position.
+__global__ void apply_kernel(double* __restrict__ x, int num_nodes,
+                             const unsigned long long* __restrict__ num,
+                             const unsigned long long* __restrict__ den);
+
+// Host wrapper: run the full layout on the GPU. Fills `x` (final [N] positions)
+// and returns the final stress; reports the GPU loop time via kernel_ms.
+double layout_gpu(const LayoutProblem& p, std::vector<double>& x, float* kernel_ms);

@@ -1,122 +1,154 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load DB, build profile, score, verify, report
 // ---------------------------------------------------------------------------
-// Project 3.28 -- Profile HMM (Viterbi / Forward)   (template skeleton)
+// Project 3.28 : Profile HMM (Viterbi / Forward)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// THE 5-STEP SHAPE every project in this repo follows
+//   1. Load the problem: a tiny FASTA-like file. The FIRST record is the family
+//      CONSENSUS (used to build the profile HMM); the rest are the search
+//      DATABASE -- one planted homolog plus several decoys (data/README.md).
+//   2. CPU reference (reference_cpu.cpp): Viterbi + Forward scores -> trusted.
+//   3. GPU search (kernels.cu): the same two scores, one thread per sequence.
+//   4. VERIFY: GPU agrees with CPU within tolerance (both algorithms).
+//   5. REPORT: deterministic ranked hits to stdout; timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic (demo/run_demo diffs it against
+//   demo/expected_output.txt); run-to-run timings go to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+//   The science check (PATTERNS.md §4): the planted homolog -- a lightly mutated
+//   copy of the consensus -- should rank #1 by both scores, well above the random
+//   decoys. That validates the model, not just CPU==GPU agreement.
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then phmm.h (the shared recurrence), kernels.cuh ->
+//   kernels.cu, then reference_cpu.*.  See ../THEORY.md for the "why".
 // ===========================================================================
+#include <algorithm>
 #include <cstdio>
+#include <numeric>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // phmm_search_gpu
+#include "reference_cpu.h"    // load_database, build_profile_from_consensus, *_cpu
+#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "3.28";
 static const char* PROJECT_NAME = "Profile HMM (Viterbi / Forward)";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Verification tolerance. Both scorers run the IDENTICAL log-space operations on
+// CPU and GPU via the shared phmm.h core, on short sequences (L <= ~30 here), in
+// DOUBLE precision. So agreement is at the float round-trip level: we store the
+// double score into a float on both sides, and 1e-4 (nats) is a generous margin
+// over the ~1e-6 relative float epsilon at these magnitudes. (THEORY §6.)
+static constexpr double TOLERANCE = 1.0e-4;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// Rank the database by a score (descending), ties broken by lower index so the
+// ordering -- and thus stdout -- is fully deterministic.
+static std::vector<int> rank_desc(const std::vector<float>& score) {
+    std::vector<int> idx(score.size());
+    std::iota(idx.begin(), idx.end(), 0);
+    std::sort(idx.begin(), idx.end(), [&](int a, int b) {
+        if (score[a] != score[b]) return score[a] > score[b];  // higher first
+        return a < b;                                          // tie -> lower idx
+    });
+    return idx;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load ------------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/phmm_sample.fasta";
+    SeqDB all;
+    try {
+        all = load_database(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
+    }
+    if (all.n < 2) {
+        std::fprintf(stderr, "[error] need >= 2 records (consensus + >=1 database seq)\n");
+        return 2;
+    }
+
+    // Split: record 0 is the consensus -> the profile; records 1.. are the DB.
+    // We rebuild the consensus string from its residue codes so the model builder
+    // can read it; this keeps the loader and builder using one alphabet.
+    std::string consensus;
+    {
+        static const char* AA = "ACDEFGHIKLMNPQRSTVWY";   // same order as aa_code
+        const int len0 = all.len[0];
+        for (int j = 0; j < len0; ++j) consensus.push_back(AA[all.res[all.off[0] + j]]);
+    }
+    ProfileHMM profile;
+    try {
+        profile = build_profile_from_consensus(consensus);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
+    }
+
+    // Build the search database = every record EXCEPT the consensus. We re-pack a
+    // fresh SeqDB so offsets are contiguous from 0 (what the kernel expects).
+    SeqDB db;
+    for (int s = 1; s < all.n; ++s) {
+        db.off.push_back(static_cast<int>(db.res.size()));
+        db.len.push_back(all.len[s]);
+        db.name.push_back(all.name[s]);
+        for (int j = 0; j < all.len[s]; ++j) db.res.push_back(all.res[all.off[s] + j]);
+        ++db.n;
     }
 
     // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    std::vector<float> vit_cpu, fwd_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    viterbi_cpu(profile, db, vit_cpu);
+    forward_cpu(profile, db, fwd_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
-    float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    // ---- 3. GPU search (each kernel timed inside the wrapper) --------------
+    std::vector<float> vit_gpu, fwd_gpu;
+    float vit_ms = 0.0f, fwd_ms = 0.0f;
+    phmm_search_gpu(profile, db, /*is_viterbi=*/true,  vit_gpu, &vit_ms);
+    phmm_search_gpu(profile, db, /*is_viterbi=*/false, fwd_gpu, &fwd_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (both algorithms) ---------------------------------------
+    const double err_vit = util::max_abs_err(vit_cpu, vit_gpu);
+    const double err_fwd = util::max_abs_err(fwd_cpu, fwd_gpu);
+    const bool pass = (err_vit <= TOLERANCE) && (err_fwd <= TOLERANCE);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT --------------------------------
+    // Rank by Viterbi (the best-path score, HMMER's classic ranking signal).
+    const std::vector<int> order = rank_desc(vit_gpu);
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("profile: %d match columns (consensus '%s')\n",
+                profile.M, consensus.c_str());
+    std::printf("database: %d sequences scored (Viterbi + Forward, log-prob in nats)\n", db.n);
+    std::printf("rank by Viterbi score (best path):\n");
+    std::printf("  %-4s %-10s %12s %12s\n", "rank", "name", "viterbi", "forward");
+    for (std::size_t r = 0; r < order.size(); ++r) {
+        const int s = order[r];
+        std::printf("  %-4zu %-10s %12.4f %12.4f\n",
+                    r + 1, db.name[s].c_str(), vit_gpu[s], fwd_gpu[s]);
+    }
+    // The top hit and its margin over the runner-up: a one-line "did it work?".
+    {
+        const int best = order[0];
+        const float runner = (order.size() > 1) ? vit_gpu[order[1]] : vit_gpu[best];
+        std::printf("top hit: %s  (Viterbi %.4f, %.4f nats above runner-up)\n",
+                    db.name[best].c_str(), vit_gpu[best], vit_gpu[best] - runner);
+    }
+    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-04)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR --------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (consensus + %d database sequences)\n",
+                 path.c_str(), db.n);
+    std::fprintf(stderr, "[timing] CPU (both scorers): %.3f ms   "
+                         "GPU Viterbi: %.3f ms   GPU Forward: %.3f ms\n",
+                 cpu_ms, vit_ms, fwd_ms);
+    std::fprintf(stderr, "[timing] teaching artifact only -- this tiny database is dominated "
+                         "by launch/copy overhead; the GPU wins at metagenomic scale.\n");
+    std::fprintf(stderr, "[verify] max_abs_err: Viterbi %.3e  Forward %.3e  (tolerance %.1e)\n",
+                 err_vit, err_fwd, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

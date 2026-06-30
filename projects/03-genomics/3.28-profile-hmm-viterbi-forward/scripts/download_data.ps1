@@ -1,12 +1,12 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 3.28 -- Profile HMM (Viterbi / Forward)   (template skeleton)
+# Project 3.28 : Profile HMM (Viterbi / Forward)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The committed tiny SYNTHETIC sample in
+# data/sample/ already lets the demo run offline -- this script only points you at
+# the real corpora and shows how to turn them into the loader's FASTA format.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,27 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 3.28 -- Profile HMM (Viterbi / Forward)"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Pfam-A — 20 k protein family profiles (https://www.ebi.ac.uk/interpro/download/); UniRef50 — protein sequences for database search (https://www.uniprot.org/help/uniref); Rfam — RNA family profiles (https://rfam.org/); JGI metagenome proteins — environmental pHMM targets (https://genome.jgi.doe.gov/)."
+Write-Host "This teaching project ships a tiny SYNTHETIC sample (data/sample/phmm_sample.fasta)"
+Write-Host "that is sufficient to build, run, and verify the demo offline. The real-world"
+Write-Host "corpora below are large and/or governed by their own licenses:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  Pfam-A (profile HMMs for ~20k protein families)"
+Write-Host "    https://www.ebi.ac.uk/interpro/download/   (Pfam-A.hmm.gz)"
+Write-Host "    License: CC0. Use HMMER's hmmemit -c to extract a family CONSENSUS,"
+Write-Host "    then place it as record 0 of a FASTA file (see data/README.md)."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  UniRef50 (clustered protein sequences to search)"
+Write-Host "    https://www.uniprot.org/help/uniref       (uniref50.fasta.gz)"
+Write-Host "    License: CC BY 4.0. These become the DATABASE records (>=1 per sequence)."
+Write-Host ""
+Write-Host "  Rfam (RNA family profiles)   https://rfam.org/"
+Write-Host "  JGI metagenome proteins      https://genome.jgi.doe.gov/  (registration required)"
+Write-Host ""
+Write-Host "  This project's loader expects a simple FASTA-like file:"
+Write-Host "     >name <newline> AMINOACIDS <newline> ...   (record 0 = consensus)."
+Write-Host "  Only the 20 standard amino acids are supported, and MAX_M=64 / MAX_L=256"
+Write-Host "  (see src/phmm.h). Trim longer Pfam profiles or raise the caps + rebuild."
+Write-Host ""
+Write-Host "  For a larger SYNTHETIC stand-in (more decoys), run:"
+Write-Host "     python scripts/make_synthetic.py --decoys 64"

@@ -1,5 +1,19 @@
 3.29 -- Motif Finding in Genomic Sequences
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+MEME OOPS motif discovery: 12 sequences, width W=8, 636 windows scored
+EM converged in 15 iterations
+recovered motif (consensus): CTTGACGT
+information content: 8.2717 bits  (max 16.0)
+predicted binding site per sequence (0-based offset):
+  seq[0]  site offset = 50
+  seq[1]  site offset = 16
+  seq[2]  site offset = 14
+  seq[3]  site offset = 43
+  seq[4]  site offset = 37
+  seq[5]  site offset = 31
+  seq[6]  site offset = 22
+  seq[7]  site offset = 5
+  seq[8]  site offset = 18
+  seq[9]  site offset = 39
+  seq[10]  site offset = 17
+  seq[11]  site offset = 47
+RESULT: PASS (GPU E-step matches CPU exactly, tol=0e+00)

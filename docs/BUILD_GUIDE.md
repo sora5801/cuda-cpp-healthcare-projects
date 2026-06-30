@@ -151,6 +151,23 @@ The library headers (`<cufft.h>`, `<cusolverDn.h>`, …) and `.lib` paths come f
 the CUDA build customization automatically — no manual include/lib paths needed.
 See **[docs/PATTERNS.md](PATTERNS.md) §5** for the "no black box" documentation rule.
 
+## 7c. Using Thrust / CUB (header-only)
+
+Thrust (`thrust::sort_by_key`, `reduce_by_key`, …) and CUB ship **with the toolkit** — no
+extra `.lib` to link (only the usual `cudart_static.lib`). But the heavy template headers
+need a couple of `.vcxproj` knobs to compile cleanly under MSVC + `nvcc` (first used by
+`3.26` GPU BAM sort/dedup):
+
+- Host compiler: add **`/Zc:preprocessor`** (conformant preprocessor) to `<ClCompile>`'s
+  `AdditionalOptions`, and make sure C++17 is on (`<LanguageStandard>stdcpp17</LanguageStandard>`).
+- Device compiler: pass **`-std=c++17`** to `nvcc` (CUDA C/C++ → Command Line / `AdditionalOptions`).
+- In **Debug only** (`-G` device debug), Thrust emits two benign diagnostics; silence them with
+  **`-diag-suppress 20011,20014`** so the "zero new warnings" gate stays meaningful. Do **not**
+  add these to Release (they are unnecessary there).
+
+All four switches are plain `.vcxproj` edits (no path hardcoding). For the optional CMake build,
+Thrust/CUB are found via `find_package(CUDAToolkit)` and need no extra `target_link_libraries`.
+
 ## 8. CI note
 
 A GitHub Actions workflow can **compile** changed projects (hosted runners have the toolkit) but **cannot run

@@ -1,122 +1,104 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: build SA/BWT/FM on CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 3.27 -- Suffix Array / BWT / FM-Index Construction   (template skeleton)
+// Project 3.27 : Suffix Array / BWT / FM-Index Construction
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// THE 5-STEP SHAPE every project in this repo follows:
+//   1. LOAD   the DNA text (data/sample), append the '$' sentinel.
+//   2. CPU    reference: suffix_array_cpu() -> trusted SA + BWT + FM count.
+//   3. GPU    result:    suffix_array_gpu() -> the thing being taught (prefix
+//             doubling with a hand-rolled radix sort).
+//   4. VERIFY GPU SA == CPU SA exactly (it is an integer permutation, so the
+//             tolerance is ZERO), plus BWT and FM-count agreement.
+//   5. REPORT a deterministic summary to STDOUT (diffed by the demo); timings
+//             and run-varying detail go to STDERR (shown, not diffed).
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
-//
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then kernels.cuh -> kernels.cu (the GPU radix-sort
+//   doubling), then reference_cpu.cpp (the serial baseline), with sa_core.h as
+//   the shared key math both sides call. See ../THEORY.md for the "why".
 // ===========================================================================
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // suffix_array_gpu, SaResult
+#include "reference_cpu.h"    // load_text, suffix_array_cpu, SaResult
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "3.27";
 static const char* PROJECT_NAME = "Suffix Array / BWT / FM-Index Construction";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// The query whose occurrences we count via FM-index backward search. The
+// synthetic sample plants the motif "ACGT" repeatedly, so "ACG" recurs a known
+// number of times -- a non-trivial, eyeball-checkable answer (see data/README.md).
+static const char* QUERY_PATTERN = "ACG";
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// Count positions where the GPU suffix array differs from the CPU one. Zero
+// means an EXACT match; since both are integer permutations there is no
+// floating point involved, so the only acceptable result is 0.
+static int sa_mismatches(const std::vector<int>& a, const std::vector<int>& b) {
+    if (a.size() != b.size()) return -1;            // shape bug: report distinctly
+    int diff = 0;
+    for (std::size_t i = 0; i < a.size(); ++i) if (a[i] != b[i]) ++diff;
+    return diff;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load ----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/dna_sample.txt";
+    std::string text;
+    try {
+        text = load_text(path);                     // appends '$'
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const int n = static_cast<int>(text.size());
+    const std::string pattern = QUERY_PATTERN;
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    const SaResult cpu = suffix_array_cpu(text, pattern);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU result (kernel-timed inside the wrapper) ------------------
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    const SaResult gpu = suffix_array_gpu(text, pattern, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify --------------------------------------------------------
+    const int    mism   = sa_mismatches(cpu.sa, gpu.sa);     // must be 0
+    const bool   bwt_ok = (cpu.bwt == gpu.bwt);
+    const bool   fm_ok  = (cpu.pattern_count == gpu.pattern_count);
+    const bool   pass   = (mism == 0) && bwt_ok && fm_ok;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT (diffed) ----------------------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("text length (with $ sentinel): %d\n", n);
+    // Show the first few suffix-array entries so the learner sees a concrete SA.
+    const int show = (n < 12) ? n : 12;
+    std::printf("suffix array SA[0:%d] =", show);
+    for (int i = 0; i < show; ++i) std::printf(" %d", gpu.sa[i]);
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    // The first 32 characters of the BWT (the transform "block-sorts" the text).
+    const int bshow = (n < 32) ? n : 32;
+    std::printf("BWT[0:%d] = %s\n", bshow, gpu.bwt.substr(0, bshow).c_str());
+    std::printf("FM-index backward search: pattern \"%s\" occurs %d time(s)\n",
+                pattern.c_str(), gpu.pattern_count);
+    std::printf("verify: SA mismatches=%d  BWT match=%s  FM match=%s\n",
+                mism, bwt_ok ? "yes" : "no", fm_ok ? "yes" : "no");
+    std::printf("RESULT: %s (GPU suffix array matches CPU exactly, tol=0)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
+    std::fprintf(stderr, "[data]   source: %s  (%d bases + 1 sentinel)\n", path.c_str(), n - 1);
+    std::fprintf(stderr, "[algo]   prefix-doubling rounds: CPU=%d  GPU=%d\n",
+                 cpu.doubling_rounds, gpu.doubling_rounds);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU doubling kernels: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- at n=%d the GPU is launch-bound; "
+                         "the radix-sort win appears at genome scale (millions of bases).\n", n);
+    std::fprintf(stderr, "[verify] SA permutation length %d, exact integer match required.\n", n);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

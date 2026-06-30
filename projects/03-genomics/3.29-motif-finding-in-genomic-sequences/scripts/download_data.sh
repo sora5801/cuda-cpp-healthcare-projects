@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  How to get REAL ChIP-seq motif input (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 3.29 -- Motif Finding in Genomic Sequences   (template skeleton)
+# Project 3.29 : Motif Finding in Genomic Sequences
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# Real input is a multi-FASTA of ChIP-seq peak sequences, assembled from a peak
+# BED + a reference genome (no single file to grab). Prints the recipe + tool
+# links; downloads nothing and needs no credentials. Use make_synthetic.py for an
+# offline stand-in (CLAUDE.md sec 8).
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,19 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 3.29 -- Motif Finding in Genomic Sequences"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    ENCODE ChIP-seq peak BED files — thousands of TF experiments (https://www.encodeproject.org/); JASPAR 2024 — curated PWM database (https://jaspar.elixir.no/); ReMap 2022 — regulatory elements from 5 k ChIP-seq experiments (https://remap.univ-amu.fr/); GEO ChIP-seq datasets (https://www.ncbi.nlm.nih.gov/geo/)."
+echo "Real input is a FASTA of transcription-factor ChIP-seq peak sequences:"
+echo "  1) Pick a TF ChIP-seq experiment and download its peak BED, e.g."
+echo "       ENCODE  : https://www.encodeproject.org/   (thousands of TF experiments)"
+echo "       ReMap   : https://remap.univ-amu.fr/        (~5k experiments)"
+echo "       GEO     : https://www.ncbi.nlm.nih.gov/geo/"
+echo "  2) Extract peak summit +/- ~100 bp from a reference genome FASTA:"
+echo "       bedtools getfasta -fi genome.fa -bed peaks.bed -fo peaks.fasta"
+echo "  3) Feed peaks.fasta to the program (or to MEME / HOMER for comparison)."
+echo "  4) Validate the recovered motif against a known PWM in JASPAR 2024:"
+echo "       https://jaspar.elixir.no/"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Offline stand-in (no download, fully reproducible):"
+echo "  python scripts/make_synthetic.py --n 5000 --len 200"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Note: licenses vary by dataset -- respect each source's terms; do not"
+echo "redistribute genome-derived sequence unless the license permits it."
