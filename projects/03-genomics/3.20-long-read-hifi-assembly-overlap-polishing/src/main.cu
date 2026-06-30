@@ -1,122 +1,134 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load sketches, overlap (CPU+GPU), verify, report
 // ---------------------------------------------------------------------------
-// Project 3.20 -- Long-Read HiFi Assembly Overlap & Polishing   (template skeleton)
+// Project 3.20 : Long-Read HiFi Assembly Overlap & Polishing
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// The 5-step shape every project in this repo follows:
+//   1. Load the problem (N reads' minimiser sketches from data/sample).
+//   2. CPU reference  (reference_cpu.cpp)  -> trusted overlap scores.
+//   3. GPU all-vs-all (kernels.cu)         -> the thing being taught.
+//   4. VERIFY: GPU agrees with CPU EXACTLY (integer scores; tolerance == 0).
+//   5. REPORT: deterministic top-K overlapping read pairs to stdout; timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// STDOUT is byte-for-byte deterministic (diffed by demo/run_demo against
+// demo/expected_output.txt); run-to-run timings go to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then overlap_core.h -> reference_cpu.h ->
+// reference_cpu.cpp -> kernels.cuh -> kernels.cu.
 // ===========================================================================
+#include <algorithm>
 #include <cstdio>
+#include <numeric>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // overlap_gpu, ReadSet, OverlapResult
+#include "reference_cpu.h"    // load_reads, overlap_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "3.20";
 static const char* PROJECT_NAME = "Long-Read HiFi Assembly Overlap & Polishing";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Tolerance: chain scores and anchor counts are INTEGERS produced by the SAME
+// link function on both processors, so CPU and GPU must agree EXACTLY. We verify
+// element-for-element equality -- the strongest possible check (PATTERNS.md sec 4).
+static constexpr int  TOP_K = 5;     // how many strongest overlaps to report
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
+// Return indices of the TOP_K results by (score desc, then read_i asc, read_j asc)
+// so the ranking is fully deterministic even when scores tie.
+static std::vector<int> top_k_overlaps(const std::vector<OverlapResult>& ov, int k) {
+    std::vector<int> idx(ov.size());
+    std::iota(idx.begin(), idx.end(), 0);
+    const int kk = std::min<int>(k, static_cast<int>(idx.size()));
+    std::partial_sort(idx.begin(), idx.begin() + kk, idx.end(),
+        [&](int a, int b) {
+            if (ov[a].score != ov[b].score) return ov[a].score > ov[b].score;
+            if (ov[a].read_i != ov[b].read_i) return ov[a].read_i < ov[b].read_i;
+            return ov[a].read_j < ov[b].read_j;
+        });
+    idx.resize(kk);
+    return idx;
 }
 
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
+// Element-for-element equality of the two result arrays. Returns the number of
+// mismatching pairs (0 == perfect agreement). Also returns the first mismatch
+// for a helpful diagnostic on stderr.
+static int count_mismatches(const std::vector<OverlapResult>& a,
+                            const std::vector<OverlapResult>& b, int* first) {
+    if (a.size() != b.size()) { if (first) *first = 0; return -1; }
+    int bad = 0, first_bad = -1;
+    for (std::size_t k = 0; k < a.size(); ++k) {
+        if (a[k].score != b[k].score || a[k].n_anchors != b[k].n_anchors ||
+            a[k].read_i != b[k].read_i || a[k].read_j != b[k].read_j) {
+            if (first_bad < 0) first_bad = static_cast<int>(k);
+            ++bad;
+        }
     }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+    if (first) *first = first_bad;
+    return bad;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/reads_sample.txt";
+    ReadSet rs;
+    try {
+        rs = load_reads(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<OverlapResult> cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    overlap_cpu(rs, cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU all-vs-all overlap (kernel timed inside the wrapper) ------
+    std::vector<OverlapResult> gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    overlap_gpu(rs, gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (exact) -------------------------------------------------
+    int first_bad = -1;
+    const int mism = count_mismatches(cpu, gpu, &first_bad);
+    const bool pass = (mism == 0);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    // Count how many pairs cleared a "candidate overlap" bar (>= 3 chained
+    // anchors of integer score) -- a deterministic summary of the overlap graph.
+    int candidate_pairs = 0;
+    for (const auto& r : gpu) if (r.score >= 3) ++candidate_pairs;
+
+    const std::vector<int> best = top_k_overlaps(gpu, TOP_K);
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("all-vs-all overlap: %d reads -> %lld ordered pairs scored\n",
+                rs.n_reads, rs.num_pairs());
+    std::printf("candidate overlaps (chain score >= 3): %d\n", candidate_pairs);
+    std::printf("top-%d overlaps (by chain score):\n", static_cast<int>(best.size()));
+    for (std::size_t r = 0; r < best.size(); ++r) {
+        const OverlapResult& o = gpu[best[r]];
+        std::printf("  #%zu  read %d <-> read %d   score=%d  anchors=%d\n",
+                    r + 1, o.read_i, o.read_j, o.score, o.n_anchors);
+    }
+    std::printf("RESULT: %s (GPU matches CPU exactly: %lld/%lld pairs identical)\n",
+                pass ? "PASS" : "FAIL",
+                rs.num_pairs() - (mism < 0 ? rs.num_pairs() : mism), rs.num_pairs());
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (N=%d reads, %zu minimisers total)\n",
+                 path.c_str(), rs.n_reads, rs.mins.size());
     std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- this tiny sample is dominated by "
+                         "launch/copy overhead; the GPU's O(N^2)-pairs edge grows with read count.\n");
+    if (mism > 0)
+        std::fprintf(stderr, "[verify] %d mismatching pair(s); first at slot %d\n", mism, first_bad);
+    else
+        std::fprintf(stderr, "[verify] all %lld pairs identical (exact integer agreement)\n",
+                     rs.num_pairs());
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

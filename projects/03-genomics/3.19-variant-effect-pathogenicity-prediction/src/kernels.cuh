@@ -1,52 +1,56 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for batched variant-effect scoring
 // ---------------------------------------------------------------------------
-// Project 3.19 -- Variant Effect / Pathogenicity Prediction   (template skeleton)
+// Project 3.19 : Variant Effect / Pathogenicity Prediction
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   Scoring N variants is N INDEPENDENT model forward-pass PAIRS (one for the
+//   reference window, one for the alternate window). The variants do not
+//   interact, so we give each variant its own GPU thread -- the textbook
+//   "batched inference over many inputs" pattern that real tools (AlphaMissense,
+//   Enformer, ESM-1v) run at the scale of tens of millions of variants.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Two CUDA features carry the teaching weight, and they mirror project 1.12:
+//     * the MODEL WEIGHTS live in CONSTANT memory. Every thread reads the same
+//       fixed weights and none writes them, so the constant cache broadcasts one
+//       address to a whole warp in a single transaction -- far cheaper than each
+//       thread streaming the weights from global memory. The weight set is a
+//       fixed-size struct (VepModel), which is exactly what constant memory wants.
+//     * a GRID-STRIDE LOOP lets one modest grid cover an arbitrarily large batch.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   This header is included only by .cu units (it declares a __global__). main.cu
+//   calls score_variants_gpu(). The per-variant math itself is in vep_model.h,
+//   shared verbatim with the CPU reference so the results match (THEORY "verify").
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, reference_cpu.h,
+//   vep_model.h. Then read kernels.cu. Science/GPU-mapping is in ../THEORY.md.
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
+#include "reference_cpu.h"   // VariantSet, VepModel (pure C++/HD, safe in .cu)
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// score_variants_kernel: one logical thread per variant. The model is read from
+// the __constant__ symbol defined in kernels.cu (NOT passed as a parameter).
+//   ref : [n * VEP_WINDOW] device array of reference-window base codes (int8)
+//   alt : [n * VEP_WINDOW] device array of alternate-window base codes (int8)
+//   n   : number of variants
+//   out : [n] device array of delta scores  effect = score(alt) - score(ref)
+__global__ void score_variants_kernel(const int8_t* __restrict__ ref,
+                                      const int8_t* __restrict__ alt,
+                                      int n,
+                                      double* __restrict__ out);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// score_variants_gpu: uploads the model to constant memory and the windows to
+// global memory, launches the kernel, times ONLY the kernel (CUDA events), and
+// returns the per-variant delta scores.
+//   m         : the fixed model (uploaded to __constant__ memory)
+//   vs        : the loaded variant batch (ref/alt windows live on the host)
+//   out       : resized to vs.n; filled with per-variant delta scores (double)
+//   kernel_ms : out-param, GPU-measured kernel time in milliseconds
+void score_variants_gpu(const VepModel& m, const VariantSet& vs,
+                        std::vector<double>& out, float* kernel_ms);

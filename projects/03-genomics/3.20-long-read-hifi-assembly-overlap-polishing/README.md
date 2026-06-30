@@ -6,103 +6,171 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+A *de novo* genome assembler starts by discovering, for every pair of sequencing
+reads, whether they come from **overlapping** pieces of the genome. This project
+implements the GPU heart of that step for long **PacBio HiFi** reads: it sketches
+each read to its **minimisers**, treats shared minimisers as **seed anchors**, and
+runs a **collinear seed-chaining** dynamic program to score every read pair —
+**one GPU thread per ordered pair**. A plain-C++ reference computes the same
+integer scores so the GPU result can be checked exactly.
 
 ## What this computes & why the GPU helps
 
-PacBio HiFi reads (10–25 kb, >99.5% accuracy) enable near-perfect de novo assemblies but the all-vs-all read overlap step—finding which reads share sequence—is computationally prohibitive: N=20 M reads requires O(N²) comparisons naively. GPU parallelism accelerates the minimiser-based seed look-up and seed chain extension across read pairs. The Darwin read overlapper GPU implementation achieved 109× speedup by storing the minimiser hash table in GPU global memory and resolving seed chains in parallel CUDA blocks. Post-overlap polishing (racon, medaka) is similarly accelerated by GPU POA and RNN inference kernels.
+All-vs-all overlap is the bottleneck of long-read assembly. Aligning every pair
+of reads directly is `O(N² L²)`; at `N ≈ 20` million reads that is hopeless. The
+standard fix (minimap2, the Darwin GPU overlapper, hifiasm) is **seed-and-chain**:
+reduce each read to a sparse minimiser sketch, then for each pair, chain the
+shared minimisers into the best collinear run. The chain score is the overlap
+strength.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+The parallelism is in the `N(N-1)/2` read **pairs**: each pair's overlap score is
+independent of every other, so the GPU maps **one pair to one thread** and scores
+them all at once. The Darwin overlapper reports a **109× GPU speed-up** for
+exactly this stage by keeping the minimiser hash table in GPU global memory and
+resolving seed chains in parallel CUDA blocks — the bottleneck this project
+parallelizes (here with a per-pair scan instead of a hash table; see THEORY
+"real world").
 
 ## The algorithm in brief
 
-Minimiser hashing for all-vs-all overlap seeding; sparse chain DP for seed-chain scoring; partial-order alignment (POA) for consensus polishing; string graph simplification and unitig generation; haplotype phasing via heterozygous marker threading.
+- **Minimiser sketch** — canonical (strand-symmetric) k-mer hashing + a sliding
+  window keeps the min-hash k-mer per window. Sparse and substitution-robust.
+- **Anchor build** — shared minimiser hashes between two reads become `(qpos,
+  tpos)` seed anchors.
+- **Collinear chaining DP** — `O(A²)` recurrence picking the strongest run of
+  anchors that advances in both reads; integer gap penalty; **both strands**.
+- **All-vs-all** — repeat per ordered pair `(i<j)`, one GPU thread each.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+Full derivation, complexity, and the GPU mapping are in **[THEORY.md](THEORY.md)**.
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3** (the
+ratified toolchain; see [`docs/BUILD_GUIDE.md`](../../../docs/BUILD_GUIDE.md)).
 
-1. Open `build/long-read-hifi-assembly-overlap-polishing.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/long-read-hifi-assembly-overlap-polishing.exe`.
+1. Open `build/long-read-hifi-assembly-overlap-polishing.sln` in Visual Studio.
+2. Select **`Release | x64`**.
+3. **Build** (Ctrl+Shift+B). The `.exe` lands in `build/x64/Release/`.
 
-Command-line alternative (Developer PowerShell):
+Or from a Developer PowerShell:
 
 ```powershell
-msbuild build\long-read-hifi-assembly-overlap-polishing.sln /p:Configuration=Release /p:Platform=x64
+& "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" `
+  build\long-read-hifi-assembly-overlap-polishing.sln /p:Configuration=Release /p:Platform=x64 /m
 ```
+
+Linux/macOS learners can use the optional CMake build:
+`cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release && cmake --build build/cmake`.
 
 ## Run the demo
 
+One command builds (if needed), runs on the committed sample, and checks the
+result:
+
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+.\demo\run_demo.ps1            # Windows
+```
+```bash
+./demo/run_demo.sh             # Linux / CMake
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+It prints the program's deterministic stdout, the timing (stderr), and a final
+`PASS`/`FAIL`. See [`demo/README.md`](demo/README.md).
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: PacBio SMRT Human WGS (HG002/HG003/HG004 trio) (https://www.ncbi.nlm.nih.gov/sra); Vertebrate Genomes Project PacBio HiFi assemblies (https://vertebrategenomesproject.org/); GenomeArk HiFi datasets (https://genomeark.github.io/); CHM13 T2T HiFi reads (https://github.com/marbl/CHM13).
+The committed sample `data/sample/reads_sample.txt` is **synthetic** (generated by
+`scripts/make_synthetic.py`, RNG seed 20): 12 reads tiled along a random "genome"
+with a 150 bp neighbour overlap (every other read reverse-complemented), reduced
+to their minimiser sketches. It runs the demo **offline, no download**. Provenance,
+the exact file format, and pointers to real public HiFi datasets (HG002, VGP,
+GenomeArk, CHM13 — fetched by `scripts/download_data.{ps1,sh}`) are in
+[`data/README.md`](data/README.md). The data is synthetic and labelled as such; no
+clinical meaning is implied.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+```
+3.20 -- Long-Read HiFi Assembly Overlap & Polishing
+all-vs-all overlap: 12 reads -> 66 ordered pairs scored
+candidate overlaps (chain score >= 3): 11
+top-5 overlaps (by chain score):
+  #1  read 3 <-> read 4   score=47  anchors=47
+  #2  read 4 <-> read 5   score=46  anchors=46
+  #3  read 7 <-> read 8   score=45  anchors=45
+  #4  read 1 <-> read 2   score=44  anchors=44
+  #5  read 8 <-> read 9   score=43  anchors=43
+RESULT: PASS (GPU matches CPU exactly: 66/66 pairs identical)
+```
+
+The 11 candidate overlaps are exactly the 11 consecutive-read neighbour pairs —
+the true overlap structure baked into the synthetic sample — and the top hits are
+all consecutive read indices. **How success is checked:** the GPU and CPU produce
+integer scores from the *same* chaining function, so every one of the 66 pairs
+must match **exactly** (tolerance zero); the demo diffs stdout against
+[`demo/expected_output.txt`](demo/expected_output.txt).
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. **`src/main.cu`** — loads the sketch, runs CPU + GPU, verifies (exact), prints
+   the deterministic top-K to stdout and timing to stderr.
+2. **`src/overlap_core.h`** — the shared `__host__ __device__` math: k-mer hashing,
+   the per-link chaining score, and the both-strands DP. CPU and GPU call this, so
+   their results are bit-identical.
+3. **`src/reference_cpu.{h,cpp}`** — the data model (`ReadSet`, `OverlapResult`),
+   the loader, and the trusted serial overlap baseline.
+4. **`src/kernels.cuh` → `src/kernels.cu`** — the one-thread-per-pair kernel and
+   its host wrapper (flatten → upload → launch → verify-friendly readback).
+5. **`src/util/`** — shared `CUDA_CHECK`, CUDA-event timer, host helpers.
 
 ## Prior art & further reading
 
-Darwin GPU overlapper (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7495891/) — 109× GPU speedup for PacBio overlap; hifiasm (https://github.com/chhylp123/hifiasm) — state-of-the-art HiFi assembler; racon-GPU (https://github.com/NVIDIA-Genomics-Research/racon-gpu) — GPU consensus polishing; Medaka (https://github.com/nanoporetech/medaka) — RNN-based polishing with GPU inference.
+From the catalog `Starter Repos / Tools` — study these, do not copy:
 
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
-
-## CUDA pattern used here
-
-GPU-resident minimiser hash map; custom seed-chain CUDA kernels; POA DP in shared memory per thread block; cuDNN RNN for Medaka polishing; CUDA streams pipelining I/O and compute. --
+- **Darwin GPU overlapper** ([paper](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7495891/))
+  — a 109× GPU speed-up for PacBio overlap; shows the GPU minimiser hash table +
+  parallel seed-chain design this project approximates.
+- **hifiasm** (<https://github.com/chhylp123/hifiasm>) — the state-of-the-art HiFi
+  assembler; study its string-graph + haplotype-phasing stages (downstream of us).
+- **minimap2** (<https://github.com/lh3/minimap2>) — the reference minimiser
+  sketcher + chaining algorithm; our `(w,k)`-minimiser and chaining recurrence
+  follow its design (Li 2018).
+- **racon-GPU** (<https://github.com/NVIDIA-Genomics-Research/racon-gpu>) and
+  **medaka** (<https://github.com/nanoporetech/medaka>) — the GPU *polishing*
+  stage (POA / RNN) that follows assembly; out of scope here, described in THEORY.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Bigger graph:** `python scripts/make_synthetic.py --n-reads 200` and re-run.
+   How does the CPU vs GPU time ratio change as `N²` pairs grow? (Re-capture
+   `expected_output.txt` afterward.)
+2. **Saturate the cap:** raise `--read-len`/`--overlap` so neighbour pairs share
+   > `OVL_MAX_ANCHORS` minimisers. Watch the scores pin at the cap, and explain
+   why CPU and GPU still agree exactly.
+3. **Hash-table seeding:** replace the per-pair `O(m_i·m_j)` anchor scan with a
+   global minimiser→(read,pos) hash table (the real Darwin/minimap2 trick). What
+   changes in the GPU memory layout?
+4. **Real traceback:** add back-pointers to the chaining DP and emit the aligned
+   read interval `[qs,qe] × [ts,te]`, not just the score.
+5. **Tune `(w, k)`:** change `OVL_K`/`OVL_W` in `overlap_core.h` **and**
+   `make_synthetic.py` together. How do sketch size and sensitivity trade off?
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced-scope teaching version** (CLAUDE.md §13). It computes overlap-chain
+  *scores*, not the full assembly: no string graph, no unitigs, no haplotype
+  phasing, no polishing (those are named in THEORY "real world").
+- **Per-pair scan, not a hash table.** Seeding is `O(m_i·m_j)` per pair for
+  clarity; production tools use a global minimiser hash table (Exercise 3) — that
+  is the bulk of the real GPU win.
+- **Synthetic data.** The sample is a random "genome", not real DNA, and is
+  labelled synthetic everywhere. No output is clinically meaningful.
+- **Anchor cap.** `OVL_MAX_ANCHORS` bounds per-thread work; on dense overlaps the
+  score saturates (Exercise 2). The cap is applied identically on both sides, so
+  it never affects CPU–GPU agreement.
+- **Timing is a teaching artifact**, never a benchmark claim: the tiny sample is
+  dominated by launch/copy overhead; the GPU's edge grows with read count.

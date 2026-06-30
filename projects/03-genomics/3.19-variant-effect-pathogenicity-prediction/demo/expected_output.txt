@@ -1,5 +1,9 @@
 3.19 -- Variant Effect / Pathogenicity Prediction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Batched in-silico mutagenesis: 12 variants, 21-base context, delta = score(ALT) - score(REF)
+top-5 most pathogenic-looking variants:
+  #1  pos 101096  T>G  delta = +0.321231
+  #2  pos 100685  A>G  delta = +0.286602
+  #3  pos 100000  T>G  delta = +0.247159
+  #4  pos 100274  A>G  delta = +0.142423
+  #5  pos 100411  A>C  delta = +0.012040
+RESULT: PASS (GPU matches CPU within tol=1.0e-09)

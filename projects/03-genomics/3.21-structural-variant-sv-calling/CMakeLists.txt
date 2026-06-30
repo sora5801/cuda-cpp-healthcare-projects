@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 3.21 -- Structural Variant (SV) Calling   (template skeleton)
+# Project 3.21 -- Structural Variant (SV) Calling
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/structural-variant-sv-calling.sln (CLAUDE.md §5). Both

@@ -1,122 +1,130 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load reads, align on CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 3.23 -- Splice-Aware RNA Alignment   (template skeleton)
+// Project 3.23 : Splice-Aware RNA Alignment   (REDUCED-SCOPE teaching version)
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load a batch: one reference "gene model" + several RNA-seq reads
+//      (data/sample/reads_sample.txt).
+//   2. CPU reference aligns every read with the spliced DP (reference_cpu.cpp).
+//   3. GPU aligns every read with the SAME shared recurrence (kernels.cu).
+//   4. VERIFY: GPU score, endpoint, AND every DP-table cell equal the CPU's,
+//      to the integer (tolerance is EXACT == 0 -- integer DP, docs/PATTERNS §4).
+//   5. REPORT: per-read CIGAR-with-N + a junction summary to stdout (diffed);
+//      timings to stderr (shown, not diffed).
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   We traceback ONCE on the host, from the GPU's DP tables, to print each
+//   read's CIGAR. The GPU teaching point is the parallel batched FILL, not the
+//   serial traceback (identical to 3.01's choice).
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+//   Code tour: read this first, then kernels.cuh -> kernels.cu, then
+//   reference_cpu.h (the shared recurrence) -> reference_cpu.cpp. See THEORY.md.
 // ===========================================================================
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // align_batch_gpu (GPU path) + shared types
+#include "reference_cpu.h"    // load_batch, align_batch_cpu, traceback_cigar
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "3.23";
 static const char* PROJECT_NAME = "Splice-Aware RNA Alignment";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Decode a base code 0..3 back to its letter, for printing the reference window.
+static char base_char(uint8_t c) { return (c < 4) ? ALPHABET[c] : 'N'; }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load the batch --------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/reads_sample.txt";
+    ReadBatch batch;
+    try {
+        batch = load_batch(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
     // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    std::vector<AlignResult> res_cpu;
+    std::vector<int> H_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    align_batch_cpu(batch, res_cpu, H_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU batched alignment (kernel timed inside the wrapper) --------
+    std::vector<AlignResult> res_gpu;
+    std::vector<int> H_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    align_batch_gpu(batch, res_gpu, H_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (EXACT integer agreement: scores, endpoints, ALL cells) -
+    int score_mismatches = 0, endpoint_mismatches = 0;
+    long long cell_mismatches = 0, max_abs_cell_diff = 0;
+    for (int r = 0; r < batch.num_reads; ++r) {
+        if (res_cpu[r].score != res_gpu[r].score) ++score_mismatches;
+        if (res_cpu[r].end_i != res_gpu[r].end_i ||
+            res_cpu[r].end_j != res_gpu[r].end_j) ++endpoint_mismatches;
+    }
+    for (std::size_t k = 0; k < H_cpu.size(); ++k) {
+        const long long d = (long long)H_cpu[k] - H_gpu[k];
+        const long long ad = d < 0 ? -d : d;
+        if (ad) { ++cell_mismatches; if (ad > max_abs_cell_diff) max_abs_cell_diff = ad; }
+    }
+    const bool pass = (score_mismatches == 0) && (endpoint_mismatches == 0)
+                      && (cell_mismatches == 0);
 
     // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("reference gene model: N=%d bases, reads=%d, max read len=%d\n",
+                batch.n, batch.num_reads, batch.read_len);
+    std::printf("scoring: match=+%d mismatch=%d gap=%d intron_open=%d "
+                "canonical(GT-AG)_bonus=+%d\n",
+                MATCH, MISMATCH, GAP, INTRON_OPEN, CANON_BONUS);
+    std::printf("per-read spliced alignment (CIGAR uses N for intron skips):\n");
+
+    // For each read: print its best score, endpoint, intron count, and CIGAR.
+    // We traceback on the GPU tables so the printed CIGAR also proves the GPU
+    // table is correct (it must equal the CPU's, checked above).
+    int total_introns = 0, reads_with_intron = 0;
+    for (int r = 0; r < batch.num_reads; ++r) {
+        int introns = 0, matched = 0;
+        const std::string cig =
+            traceback_cigar(batch, r, H_gpu, res_gpu[r], introns, matched);
+        total_introns += introns;
+        if (introns > 0) ++reads_with_intron;
+        std::printf("  read %2d: len=%3d score=%3d end=(i=%3d,j=%3d) "
+                    "introns=%d  CIGAR=%s\n",
+                    r, batch.read_lens[r], res_gpu[r].score,
+                    res_gpu[r].end_i, res_gpu[r].end_j, introns, cig.c_str());
+    }
+    std::printf("junction summary: %d/%d reads cross >=1 intron, "
+                "%d intron(s) detected total\n",
+                reads_with_intron, batch.num_reads, total_introns);
+
+    // Show a short window of the reference around the first detected junction so
+    // the GT..AG canonical sites are visible to the learner (deterministic).
+    if (batch.n >= 8) {
+        std::printf("reference[0:%d] = ", batch.n < 60 ? batch.n : 60);
+        const int show = batch.n < 60 ? batch.n : 60;
+        for (int j = 0; j < show; ++j) std::printf("%c", base_char(batch.ref[j]));
+        std::printf("\n");
+    }
+    std::printf("RESULT: %s (GPU matches CPU exactly: scores, endpoints, all DP cells)\n",
                 pass ? "PASS" : "FAIL");
 
     // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    std::fprintf(stderr, "[data]   source: %s  (N=%d, R=%d, M=%d)\n",
+                 path.c_str(), batch.n, batch.num_reads, batch.read_len);
+    std::fprintf(stderr, "[timing] CPU align: %.3f ms   GPU batched kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact -- a few short reads barely fill the GPU; "
+                         "the batched-blocks design pays off at millions of reads.\n");
+    std::fprintf(stderr, "[verify] score_mismatches=%d endpoint_mismatches=%d "
+                         "cell_mismatches=%lld max_abs_cell_diff=%lld\n",
+                 score_mismatches, endpoint_mismatches,
+                 cell_mismatches, max_abs_cell_diff);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

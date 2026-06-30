@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 100/301 projects done (33.2%) | todo 201 | in-progress 0 | missing 0
+**Progress:** 106/301 projects done (35.2%) | todo 195 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 39 | 0 | 28 |
-| 🟡 Intermediate | 206 | 55 | 0 | 151 |
+| 🟡 Intermediate | 206 | 61 | 0 | 145 |
 | 🔴 Advanced | 28 | 6 | 0 | 22 |
 
 ## 1. Drug Discovery & Molecular Design  (35/35 done)
@@ -90,7 +90,7 @@
 | 2.34 | Biophysical Simulation of Biomolecular Condensates (Active Learning Loop) | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 | 2.35 | Electron Paramagnetic Resonance (EPR/DEER) Constrained Modeling | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 
-## 3. Genomics, Sequencing & Bioinformatics  (19/30 done)
+## 3. Genomics, Sequencing & Bioinformatics  (25/30 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -111,13 +111,13 @@
 | 3.15 | Hi-C / 3D Genome Contact Analysis | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 3.16 | Sequence Error Correction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 3.17 | CRISPR Guide Design & Off-Target Scoring | 🟡 Intermediate | Active R&D | [x] done | - | - |
-| 3.18 | Protein Language Model Inference | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.19 | Variant Effect / Pathogenicity Prediction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.20 | Long-Read HiFi Assembly Overlap & Polishing | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.21 | Structural Variant (SV) Calling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 3.18 | Protein Language Model Inference | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 3.19 | Variant Effect / Pathogenicity Prediction | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 3.20 | Long-Read HiFi Assembly Overlap & Polishing | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 3.21 | Structural Variant (SV) Calling | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 3.22 | RNA-seq Quantification / Pseudo-alignment | 🟢 Beginner | Established | [x] done | - | - |
-| 3.23 | Splice-Aware RNA Alignment | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.24 | Methylation / Modified-Base Calling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 3.23 | Splice-Aware RNA Alignment | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 3.24 | Methylation / Modified-Base Calling | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 3.25 | Base Quality Score Recalibration (BQSR) | 🟢 Beginner | Established | [x] done | - | - |
 | 3.26 | GPU BAM Sorting & Deduplication | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 3.27 | Suffix Array / BWT / FM-Index Construction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

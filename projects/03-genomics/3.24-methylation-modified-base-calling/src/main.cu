@@ -1,122 +1,107 @@
 // ===========================================================================
 // src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 3.24 -- Methylation / Modified-Base Calling   (template skeleton)
+// Project 3.24 : Methylation / Modified-Base Calling
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the same skeleton every project in this repo follows):
+//   1. Load the demo instance (reference pore models + nanopore reads + jobs).
+//   2. CPU reference: per-job LLRs by banded event-alignment DP (reference_cpu).
+//   3. GPU: the same per-job LLRs, one thread per job (kernels.cu).
+//   4. VERIFY: GPU LLRs match the CPU LLRs within a documented tolerance.
+//   5. REPORT: deterministic per-site methylation calls + accuracy vs ground
+//      truth, to stdout; timings + the max error to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// WHY SPLIT STREAMS: demo/run_demo diffs STDOUT against expected_output.txt, so
+// stdout must be byte-identical every run -> only deterministic results go there.
+// Timings (which vary run to run) go to STDERR, shown but not diffed (PATTERNS §3).
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then meth_core.h (the physics), reference_cpu.h/.cpp
+// (the trusted baseline), then kernels.cuh -> kernels.cu (the GPU twin).
 // ===========================================================================
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // score_jobs_gpu, MethData, Job
+#include "reference_cpu.h"    // load_meth_data, score_jobs_cpu, call_sites
+#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "3.24";
 static const char* PROJECT_NAME = "Methylation / Modified-Base Calling";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Verification tolerance. The CPU and GPU run the SAME banded DP (meth_core.h)
+// over the SAME inputs; the only divergence is the GPU's fused multiply-add (FMA)
+// contracting `a*b + c` differently from the host in the double-precision
+// emission/transition sums. Over a 10-event DP that is well under 1e-4 in the LLR
+// (a difference of two ~tens-of-units log-likelihoods). We verify the float LLRs
+// agree to 1e-3, which is far tighter than the LLR magnitudes that drive a call
+// (PATTERNS.md §4: a small physical tolerance for an FMA-sensitive computation).
+static constexpr double TOLERANCE = 1.0e-3;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/methylation_sample.txt";
+    MethData d;
+    try {
+        d = load_meth_data(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const int num_jobs = static_cast<int>(d.jobs.size());
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<float> llr_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    score_jobs_cpu(d, llr_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU (kernel timed) --------------------------------------------
+    std::vector<float> llr_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    score_jobs_gpu(d, llr_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify ---------------------------------------------------------
+    const double err = util::max_abs_err(llr_cpu, llr_gpu);
+    const bool pass = err <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    // Aggregate the GPU LLRs into per-site mean LLRs and 0/1 calls (the same
+    // deterministic decision the CPU would make; call_sites is shared).
+    std::vector<float> mean_llr;
+    std::vector<int>   call;
+    call_sites(d, llr_gpu, mean_llr, call);
+
+    // Compare the calls to the synthetic ground truth to report accuracy. (This
+    // validates the SCIENCE, not just CPU==GPU agreement: a correct DP + LLR
+    // should recover which sites we built as methylated.)
+    int correct = 0;
+    for (int s = 0; s < d.num_sites; ++s)
+        if (call[s] == d.truth[s]) ++correct;
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("nanopore methylation calling: %d sites x %d reads = %d alignment jobs\n",
+                d.num_sites, d.coverage, num_jobs);
+    std::printf("per-site 5mC calls (CpG):\n");
+    std::printf("  site  ref_pos  mean_LLR   call    truth\n");
+    for (int s = 0; s < d.num_sites; ++s) {
+        std::printf("  %3d   %6d   %+8.3f   %-5s   %-5s\n",
+                    s, d.site_pos[s], mean_llr[s],
+                    call[s]    ? "5mC" : "C",
+                    d.truth[s] ? "5mC" : "C");
+    }
+    std::printf("calls matching ground truth: %d of %d\n", correct, d.num_sites);
+    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-03)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d sites, %d reads, coverage %d, %d jobs)\n",
+                 path.c_str(), d.num_sites, d.num_reads, d.coverage, num_jobs);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernel: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- this tiny instance is launch-bound; the GPU's "
+                         "edge grows with reads (real 30x WGS = billions of signal samples).\n");
+    std::fprintf(stderr, "[verify] max_abs_err(LLR) = %.3e  (tolerance %.1e)\n", err, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
+    // Exit code: 0 only if the GPU reproduced the CPU within tolerance.
     return pass ? 0 : 1;
 }

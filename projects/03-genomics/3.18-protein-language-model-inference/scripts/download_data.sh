@@ -1,33 +1,32 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real protein-LM data pointers (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 3.18 -- Protein Language Model Inference   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# Project 3.18 : Protein Language Model Inference. Nothing to download: the demo
+# generates all model weights deterministically (src/attention_math.h) and ships
+# a synthetic sample sequence. This script only prints where the REAL trained
+# models and sequence corpora live (CLAUDE.md §8: never bypass credentials).
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
 echo "[download_data] Project 3.18 -- Protein Language Model Inference"
-echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    UniRef50/90 — training corpus for PLMs (https://www.uniprot.org/help/uniref); ESM Metagenomic Atlas — 700 M metagenomic protein structures (https://esmatlas.com/); PDB structures — validation set for ESMFold (https://www.rcsb.org/); CATH / SCOP — structural classification databases (https://www.cathdb.info/)."
+echo "This teaching demo needs NO download: it generates synthetic weights in"
+echo "code and ships a synthetic sample sequence in data/sample/."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "For a REAL protein language model:"
+echo "  Trained models (ESM-2 / ESMFold) : https://github.com/facebookresearch/esm"
+echo "  EvolutionaryScale ESM3           : https://github.com/evolutionaryscale/esm"
+echo "  Sequence corpus (UniRef50/90)    : https://www.uniprot.org/help/uniref"
+echo "  ESM Metagenomic Atlas            : https://esmatlas.com/"
+echo "  Structural validation (PDB)      : https://www.rcsb.org/"
+echo "  CATH / SCOP classification       : https://www.cathdb.info/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "ESM-2 weights are large (hundreds of MB to tens of GB) and are NOT"
+echo "redistributed here; fetch them via fair-esm's torch.hub / transformers APIs."
+echo
+echo "Longer synthetic peptide (no download):"
+echo "  python scripts/make_synthetic.py --len 64"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

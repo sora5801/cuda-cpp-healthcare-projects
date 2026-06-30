@@ -1,5 +1,13 @@
 3.23 -- Splice-Aware RNA Alignment
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+reference gene model: N=172 bases, reads=6, max read len=36
+scoring: match=+2 mismatch=-1 gap=-2 intron_open=-6 canonical(GT-AG)_bonus=+4
+per-read spliced alignment (CIGAR uses N for intron skips):
+  read  0: len= 20 score= 40 end=(i= 20,j= 25) introns=0  CIGAR=20M
+  read  1: len= 22 score= 44 end=(i= 22,j=167) introns=0  CIGAR=22M
+  read  2: len= 24 score= 46 end=(i= 24,j= 82) introns=1  CIGAR=12M40N12M
+  read  3: len= 24 score= 46 end=(i= 24,j= 86) introns=1  CIGAR=8M40N16M
+  read  4: len= 24 score= 46 end=(i= 24,j=156) introns=1  CIGAR=10M48N14M
+  read  5: len= 36 score= 68 end=(i= 36,j=148) introns=2  CIGAR=6M40N24M48N6M
+junction summary: 4/6 reads cross >=1 intron, 5 intron(s) detected total
+reference[0:60] = AGACTTTCAAAGATATGCTGGGTAGAGGTCGTACCCACCACCCAACACAAACAAAAACCA
+RESULT: PASS (GPU matches CPU exactly: scores, endpoints, all DP cells)

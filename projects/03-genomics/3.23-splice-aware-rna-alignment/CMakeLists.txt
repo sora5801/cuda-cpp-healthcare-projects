@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 3.23 -- Splice-Aware RNA Alignment   (template skeleton)
+# Project 3.23 : Splice-Aware RNA Alignment   (REDUCED-SCOPE teaching version)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/splice-aware-rna-alignment.sln (CLAUDE.md §5). Both

@@ -1,37 +1,63 @@
 # Data — 3.18 Protein Language Model Inference
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/protein_sample.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
+| Origin | **Synthetic** peptide (`scripts/make_synthetic.py`) |
 | License | Public domain (CC0) — it is synthetic |
 | Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Contents | 1 protein sequence (24 residues) + the model shape |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+### File format
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+```
+<d_model> <n_heads>     # embedding width and number of attention heads
+<sequence>              # the protein, one char per residue (20 canonical AAs)
+```
 
-## Full dataset
+The default sample is:
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+```
+32 4
+MKTAYIAKQRQISFVKSHFSRQLE
+```
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+i.e. a **24-residue** peptide processed by a single self-attention block with
+`d_model = 32`, `n_heads = 4`, so `d_head = 8`. The sequence uses only the 20
+canonical amino acids (alphabet `ACDEFGHIKLMNPQRSTVWY`), matching `AA_ALPHABET`
+in `src/attention_math.h`.
 
-Catalog dataset notes (verbatim):
+> **Important:** the model *weights* are **not** in this file. Every embedding and
+> projection weight is generated deterministically from an integer hash inside
+> the C++ code (`embed_value` / `weight_value` in `src/attention_math.h`), so the
+> CPU and GPU build byte-identical tensors with no data download. The only input
+> is the sequence above.
 
-> UniRef50/90 — training corpus for PLMs (https://www.uniprot.org/help/uniref); ESM Metagenomic Atlas — 700 M metagenomic protein structures (https://esmatlas.com/); PDB structures — validation set for ESMFold (https://www.rcsb.org/); CATH / SCOP — structural classification databases (https://www.cathdb.info/).
+This tiny file lets `demo/run_demo` run **offline, with zero downloads** — a hard
+requirement for every project (CLAUDE.md §8). A longer synthetic peptide:
+`python scripts/make_synthetic.py --len 64`.
 
-## Provenance & field meanings
+## Full dataset (real protein language models)
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+To run a *real* PLM you need (a) a trained model and (b) input sequences. This
+project teaches the attention *math*, not the trained weights; for the real thing:
+
+- **Trained models — fair-esm** (<https://github.com/facebookresearch/esm>):
+  ESM-2 (8M–15B params) and ESMFold. Weights download via the `torch.hub` /
+  `transformers` APIs (hundreds of MB to tens of GB). **Not redistributed here.**
+- **Sequences — UniRef50/90** (<https://www.uniprot.org/help/uniref>): the PLM
+  training corpus (FASTA, many GB).
+- **ESM Metagenomic Atlas** (<https://esmatlas.com/>): 700M predicted structures.
+- **PDB** (<https://www.rcsb.org/>) and **CATH/SCOP** (<https://www.cathdb.info/>):
+  structural validation sets for ESMFold.
+
+`scripts/download_data.ps1` / `.sh` print these pointers; they download nothing
+(the demo is fully self-contained on synthetic weights).
+
+## Provenance & honesty
+
+The sample sequence is a **synthetic, biologically-meaningless** peptide, and the
+model weights are **synthetic deterministic hashes**, not trained parameters.
+They exist to make the attention forward pass concrete, reproducible, and
+verifiable (CPU vs GPU). No output here has any biological or clinical meaning.

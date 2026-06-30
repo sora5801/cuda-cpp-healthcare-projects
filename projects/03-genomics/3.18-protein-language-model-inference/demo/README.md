@@ -5,10 +5,12 @@
 Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
+2. **Run** it on `data/sample/protein_sample.txt` (a 24-residue synthetic peptide
+   through one multi-head self-attention block: `d_model=32, heads=4, d_head=8`).
+3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`): the
+   output embeddings, the head-0 attention map, and the discrete "most-attended
+   residue" readout must all agree. Prints a clear `PASS`/`FAIL`.
+4. **Time** the kernels (CUDA events) and the CPU baseline — a *teaching artifact*,
    not a benchmark claim.
 
 The program splits its output deliberately:
@@ -18,16 +20,21 @@ The program splits its output deliberately:
 - **stderr** carries the timing and the numeric error (which vary run to run), so
   it is shown but never diffed.
 
-## Expected result
+## Canonical output
 
-```
-3.18 -- Protein Language Model Inference
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
+See [`expected_output.txt`](expected_output.txt). For each residue the program
+prints its output-embedding **L2 norm** and the residue **head 0 attends to most**.
+Two things are worth noticing, and both are real teaching points:
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+- **Identical residues get identical summaries.** Every `A` (positions 3, 6) has
+  norm `0.342107`; every `K` (1, 7, 15) has `0.328776`. With no positional
+  encoding, a residue's projection depends only on its amino-acid embedding, so
+  equal residues are interchangeable — exactly why real PLMs *add* positional
+  information (here, rotary embeddings — see THEORY).
+- **A few residues act as hubs.** Many queries' head-0 attention peaks at residue
+  `17` (`H`), and `RESULT: PASS` confirms the GPU's `softmax(QKᵀ/√d)·V` matches
+  the CPU's to within `~1.5e-8` (well under the `1e-4` tolerance).
+
+> The sequence and all model weights are **synthetic** (the weights are generated
+> from an integer hash in `src/attention_math.h`). This demonstrates the
+> self-attention *computation*, not a real protein prediction.

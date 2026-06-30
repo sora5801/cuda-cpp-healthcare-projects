@@ -1,5 +1,30 @@
 3.18 -- Protein Language Model Inference
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+one multi-head self-attention block over 24 residues
+d_model=32  heads=4  d_head=8
+sequence: MKTAYIAKQRQISFVKSHFSRQLE
+per-residue (idx aa  out_norm  head0_top->idx):
+   0 M  0.346836  -> 1
+   1 K  0.328776  -> 4
+   2 T  0.336488  -> 2
+   3 A  0.342107  ->17
+   4 Y  0.333440  ->17
+   5 I  0.329789  ->17
+   6 A  0.342107  ->17
+   7 K  0.328776  -> 4
+   8 Q  0.342664  ->17
+   9 R  0.324618  ->17
+  10 Q  0.342664  ->17
+  11 I  0.329789  ->17
+  12 S  0.334863  -> 2
+  13 F  0.340160  ->13
+  14 V  0.335228  ->17
+  15 K  0.328776  -> 4
+  16 S  0.334863  -> 2
+  17 H  0.332297  -> 0
+  18 F  0.340160  ->13
+  19 S  0.334863  -> 2
+  20 R  0.324618  ->17
+  21 Q  0.342664  ->17
+  22 L  0.333081  -> 4
+  23 E  0.341729  -> 1
+RESULT: PASS (GPU matches CPU within tol=1.0e-04)

@@ -1,33 +1,31 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real protein-LM data pointers (Windows)
 # ---------------------------------------------------------------------------
-# Project 3.18 -- Protein Language Model Inference   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
-#
-# Usage:  ./scripts/download_data.ps1
+# Project 3.18 : Protein Language Model Inference. Nothing to download: the demo
+# generates all model weights deterministically (src/attention_math.h) and ships
+# a synthetic sample sequence. This script only prints where the REAL trained
+# models and sequence corpora live (CLAUDE.md §8: never bypass credentials).
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 3.18 -- Protein Language Model Inference"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    UniRef50/90 — training corpus for PLMs (https://www.uniprot.org/help/uniref); ESM Metagenomic Atlas — 700 M metagenomic protein structures (https://esmatlas.com/); PDB structures — validation set for ESMFold (https://www.rcsb.org/); CATH / SCOP — structural classification databases (https://www.cathdb.info/)."
+Write-Host "This teaching demo needs NO download: it generates synthetic weights in"
+Write-Host "code and ships a synthetic sample sequence in data/sample/."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "For a REAL protein language model:"
+Write-Host "  Trained models (ESM-2 / ESMFold) : https://github.com/facebookresearch/esm"
+Write-Host "  EvolutionaryScale ESM3           : https://github.com/evolutionaryscale/esm"
+Write-Host "  Sequence corpus (UniRef50/90)    : https://www.uniprot.org/help/uniref"
+Write-Host "  ESM Metagenomic Atlas            : https://esmatlas.com/"
+Write-Host "  Structural validation (PDB)      : https://www.rcsb.org/"
+Write-Host "  CATH / SCOP classification       : https://www.cathdb.info/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "ESM-2 weights are large (hundreds of MB to tens of GB) and are NOT"
+Write-Host "redistributed here; fetch them via fair-esm's torch.hub / transformers APIs."
+Write-Host ""
+Write-Host "Longer synthetic peptide (no download):"
+Write-Host "  python scripts/make_synthetic.py --len 64"
+Write-Host ""
+Write-Host "Target data dir: $ProjectRoot\data"

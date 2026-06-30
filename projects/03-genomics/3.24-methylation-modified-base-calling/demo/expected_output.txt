@@ -1,5 +1,18 @@
 3.24 -- Methylation / Modified-Base Calling
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+nanopore methylation calling: 12 sites x 8 reads = 96 alignment jobs
+per-site 5mC calls (CpG):
+  site  ref_pos  mean_LLR   call    truth
+    0     1000    +15.002   5mC     5mC  
+    1     1137    +15.758   5mC     5mC  
+    2     1274    -12.921   C       C    
+    3     1411    +15.132   5mC     5mC  
+    4     1548    -16.982   C       C    
+    5     1685    +15.513   5mC     5mC  
+    6     1822    +17.749   5mC     5mC  
+    7     1959    -15.060   C       C    
+    8     2096    +16.289   5mC     5mC  
+    9     2233    +17.193   5mC     5mC  
+   10     2370    +17.636   5mC     5mC  
+   11     2507    +16.171   5mC     5mC  
+calls matching ground truth: 12 of 12
+RESULT: PASS (GPU matches CPU within tol=1.0e-03)

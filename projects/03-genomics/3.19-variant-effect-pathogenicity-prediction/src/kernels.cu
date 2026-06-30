@@ -1,94 +1,109 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Batched variant-effect kernel + host wrapper
 // ---------------------------------------------------------------------------
-// Project 3.19 -- Variant Effect / Pathogenicity Prediction   (template skeleton)
+// Project 3.19 : Variant Effect / Pathogenicity Prediction
 //
 // WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
+//   Implements the device kernel (score_variants_kernel) and the host glue
+//   (score_variants_gpu) that uploads the fixed model to CONSTANT memory and the
+//   variant windows to GLOBAL memory, launches one thread per variant, times the
+//   kernel, and brings the delta scores back. This is the GPU twin of
+//   score_variants_cpu() in reference_cpu.cpp; main.cu runs both and asserts they
+//   agree. The actual per-variant arithmetic lives in vep_model.h and is shared
+//   verbatim with the CPU side (PATTERNS.md sec 2) -- so the two paths match to
+//   ~1e-12 and verification is meaningful, not hand-wavy. See ../THEORY.md.
 //
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea), and
+//   vep_model.h (the math the kernel calls).
 // ===========================================================================
 #include "kernels.cuh"
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
+// ---------------------------------------------------------------------------
+// The fixed model in CONSTANT memory.
+//   * Every thread reads the SAME weights and NONE writes them, and they are
+//     identical for the whole launch -> constant memory is the ideal home: its
+//     hardware cache broadcasts one address to an entire warp in a single
+//     transaction, instead of every thread streaming the weights from global
+//     memory. This is the direct analogue of the constant-memory query in 1.12.
+//   * VepModel is a fixed-size, trivially-copyable struct, so sizeof(VepModel)
+//     is a compile-time constant comfortably within the 64 KB constant bank
+//     (here a few KB). Filled by cudaMemcpyToSymbol() in score_variants_gpu().
+// ---------------------------------------------------------------------------
+__constant__ VepModel c_model;
+
+// Threads per block. 256 is a solid default on sm_75..sm_89: a multiple of the
+// 32-lane warp, 8 warps to hide latency, and many blocks resident for occupancy.
+// Each thread does ~2*680 double FMAs (two forward passes) in registers, so this
+// kernel is COMPUTE-bound per thread, not memory-bound -- occupancy mainly hides
+// the constant-memory and global reads of the small int8 windows.
 static constexpr int THREADS_PER_BLOCK = 256;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// score_variants_kernel: one logical thread per variant, via a grid-stride loop
+// so a fixed-size grid still covers an arbitrarily large batch.
+//   Thread (blockIdx.x, threadIdx.x) starts at i = block*blockDim + thread and
+//   strides by the total thread count until i >= n.
+//   Memory: c_model from the constant cache (broadcast); the two int8 windows
+//   ref[i*L..], alt[i*L..] from global memory (each variant's L=21 bytes are
+//   contiguous); the score is written once to out[i]. No shared memory or
+//   atomics -- outputs are fully independent, the cleanest possible mapping.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
+__global__ void score_variants_kernel(const int8_t* __restrict__ ref,
+                                      const int8_t* __restrict__ alt,
+                                      int n,
+                                      double* __restrict__ out) {
+    const int stride = blockDim.x * gridDim.x;            // total threads in grid
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride) {
+        // This variant's reference and alternate windows (contiguous L bytes).
+        const int8_t* ref_win = ref + static_cast<std::size_t>(i) * VEP_WINDOW;
+        const int8_t* alt_win = alt + static_cast<std::size_t>(i) * VEP_WINDOW;
+        // Call the SHARED core: identical code to the CPU reference, so the GPU
+        // delta score equals the CPU one up to floating-point rounding only.
+        out[i] = vep_variant_effect(c_model, ref_win, alt_win);
     }
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// score_variants_gpu: the canonical CUDA steps, with the model going to constant
+// memory instead of a global buffer. We time ONLY the kernel (CUDA events), not
+// the H2D/D2H copies (discussed separately in THEORY "GPU mapping").
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void score_variants_gpu(const VepModel& m, const VariantSet& vs,
+                        std::vector<double>& out, float* kernel_ms) {
+    const int n = vs.n;
+    out.assign(static_cast<std::size_t>(n), 0.0);
+    const std::size_t win_bytes = static_cast<std::size_t>(n) * VEP_WINDOW * sizeof(int8_t);
+    const std::size_t out_bytes = static_cast<std::size_t>(n) * sizeof(double);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // (a) Upload the model to the __constant__ symbol (a special copy that
+    //     targets the constant bank rather than ordinary global memory).
+    CUDA_CHECK(cudaMemcpyToSymbol(c_model, &m, sizeof(VepModel)));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // (b) Allocate + upload the two window arrays, and allocate the output.
+    int8_t* d_ref = nullptr;   // [n*VEP_WINDOW] reference windows, row-major
+    int8_t* d_alt = nullptr;   // [n*VEP_WINDOW] alternate windows, row-major
+    double* d_out = nullptr;   // [n] delta scores
+    CUDA_CHECK(cudaMalloc(&d_ref, win_bytes));
+    CUDA_CHECK(cudaMalloc(&d_alt, win_bytes));
+    CUDA_CHECK(cudaMalloc(&d_out, out_bytes));
+    CUDA_CHECK(cudaMemcpy(d_ref, vs.ref.data(), win_bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_alt, vs.alt.data(), win_bytes, cudaMemcpyHostToDevice));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // (c) Launch. Enough blocks to cover n one-thread-per-variant, but capped so
+    //     the grid stays modest; the grid-stride loop handles any larger n.
+    int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    if (blocks > 1024) blocks = 1024;        // cap: grid-stride covers the rest
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    score_variants_kernel<<<blocks, THREADS_PER_BLOCK>>>(d_ref, d_alt, n, d_out);
+    *kernel_ms = timer.stop_ms();            // GPU-measured kernel time
+    CUDA_CHECK_LAST("score_variants_kernel");// catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
+    // (d) Copy scores back, then (e) free device memory (no GPU GC exists).
+    CUDA_CHECK(cudaMemcpy(out.data(), d_out, out_bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_ref));
+    CUDA_CHECK(cudaFree(d_alt));
     CUDA_CHECK(cudaFree(d_out));
 }

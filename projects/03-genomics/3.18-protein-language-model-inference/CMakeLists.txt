@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 3.18 -- Protein Language Model Inference   (template skeleton)
+# Project 3.18 -- Protein Language Model Inference
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/protein-language-model-inference.sln (CLAUDE.md §5). Both

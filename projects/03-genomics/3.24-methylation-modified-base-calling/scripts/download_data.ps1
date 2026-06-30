@@ -1,12 +1,12 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real methylation-data pointers (Windows)
 # ---------------------------------------------------------------------------
-# Project 3.24 -- Methylation / Modified-Base Calling   (template skeleton)
+# Project 3.24 : Methylation / Modified-Base Calling
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. This project SHIPS SYNTHETIC DATA
+# (data/sample/) and needs no download to run the demo; this script only points
+# at real datasets for further study and defers to make_synthetic.py for scale.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,18 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 3.24 -- Methylation / Modified-Base Calling"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    ENCODE WGBS — genome-wide bisulfite methylation reference (https://www.encodeproject.org/); Oxford Nanopore open datasets — R10.4.1 with 5mC/6mA labels (https://github.com/GoekeLab/awesome-nanopore); NCBI GEO methylation studies (https://www.ncbi.nlm.nih.gov/geo/); ENCODE long-read methylation data (https://www.encodeproject.org/)."
+Write-Host "Nothing to download: the committed synthetic sample in data/sample/ runs the demo."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real data for further study (basecall + event-align first; see data/README.md):"
+Write-Host "  ONT open datasets (R10.4.1, 5mC/6mA labels) : https://github.com/GoekeLab/awesome-nanopore"
+Write-Host "  ENCODE WGBS (ground-truth methylation)      : https://www.encodeproject.org/"
+Write-Host "  NCBI GEO methylation studies                : https://www.ncbi.nlm.nih.gov/geo/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Tools that produce the per-site event windows this project consumes:"
+Write-Host "  f5c    (CUDA event alignment + meth calling) : https://github.com/hasindu2008/f5c"
+Write-Host "  Dorado (basecalling + mod calling)           : https://github.com/nanoporetech/dorado"
+Write-Host "  Remora (modified-base models)                : https://github.com/nanoporetech/remora"
+Write-Host ""
+Write-Host "Bigger synthetic instance (no download):"
+Write-Host "  python scripts/make_synthetic.py --sites 4096"
