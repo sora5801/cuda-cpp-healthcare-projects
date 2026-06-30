@@ -1,5 +1,11 @@
 3.22 -- RNA-seq Quantification / Pseudo-alignment
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+EM quantification: 6 transcripts, 9 equivalence classes, 99999 reads, 100 iterations
+  id     est_counts          rho          TPM    truth_rho
+  t0     30000.4242     0.300007    338083.29     0.300000
+  t1      9999.5758     0.099997     75125.37     0.100000
+  t2      4999.1787     0.049992     46947.64     0.050000
+  t3     20000.0704     0.200003    250429.41     0.200000
+  t4     14999.7509     0.149999     84518.22     0.150000
+  t5     20000.0000     0.200002    204896.07     0.200000
+recovery: L1(estimated rho, truth rho) = 0.0000
+RESULT: PASS (GPU abundances match CPU reference)

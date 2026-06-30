@@ -1,52 +1,48 @@
 // ===========================================================================
 // src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 3.3 -- Variant Calling Acceleration   (template skeleton)
+// Project 3.3 : Variant Calling Acceleration
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   The "what the GPU offers" header. main.cu calls pairhmm_gpu(); kernels.cu
+//   implements both the host wrapper and the device kernel. Included only by .cu
+//   translation units (it pulls in CUDA types), so the plain C++ compiler never
+//   sees it -- which is why the CPU reference lives in a separate pure-C++ header
+//   (reference_cpu.h) and the SHARED per-cell math lives in pairhmm_core.h.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+// THE BIG IDEA (PATTERNS.md §1: independent jobs)
+//   We must score every (read, haplotype) PAIR independently: there are
+//   n_reads * n_haps such pairs, and each one fills its own forward DP table with
+//   no dependency on any other pair. So we assign ONE GPU THREAD PER PAIR. With
+//   P = n_reads*n_haps pairs and a block of B threads we launch ceil(P / B)
+//   blocks; thread t owns pair index t = blockIdx.x*blockDim.x + threadIdx.x,
+//   which decodes to (read = t / n_haps, hap = t % n_haps).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Each thread runs the SAME forward algorithm as the CPU reference, calling the
+//   shared pairhmm_step() from pairhmm_core.h, and keeps two rolling DP rows in
+//   local memory (O(hap_len) per thread). This "one independent job per thread"
+//   mapping is exactly how a simplified Parabricks/GATK PairHMM batches thousands
+//   of read-haplotype pairs at once; THEORY.md "GPU mapping" covers the
+//   production refinement (one BLOCK per pair, shared-memory anti-diagonal).
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, pairhmm_core.h.
+// Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // VariantData (the loaded problem) + PairHmmParams
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// pairhmm_gpu: the host-callable "do the whole GPU computation" function.
+//   Uploads the reads/qualities/haplotypes + transition params, launches one
+//   thread per (read, haplotype) pair to fill that pair's forward DP table,
+//   copies the R x H log10-likelihood matrix back, and reports the measured
+//   KERNEL time (CUDA events) via *kernel_ms. main.cu calls exactly this; all
+//   CUDA bookkeeping is hidden here.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
+//   v         : the loaded problem (reads, haps, quals, pair-HMM params)
+//   loglik    : host output, resized to n_reads*n_haps (row-major), output param
 //   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+void pairhmm_gpu(const VariantData& v, std::vector<double>& loglik, float* kernel_ms);

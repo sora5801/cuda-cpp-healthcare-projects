@@ -1,5 +1,13 @@
 3.3 -- Variant Calling Acceleration
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+PairHMM forward: 8 reads x 3 haplotypes (read_len=20, hap_len=30)
+per-read best haplotype (argmax log10 P(read|hap)):
+  read  0 -> hap 0   log10L = -8.499181
+  read  1 -> hap 0   log10L = -1.554920
+  read  2 -> hap 0   log10L = -1.555041
+  read  3 -> hap 0   log10L = -1.555627
+  read  4 -> hap 0   log10L = -1.555627
+  read  5 -> hap 0   log10L = -1.555627
+  read  6 -> hap 0   log10L = -4.882619
+  read  7 -> hap 0   log10L = -5.009819
+reads assigned to truth haplotype 0: 8 of 8
+RESULT: PASS (GPU matches CPU within tol=1.0e-09)

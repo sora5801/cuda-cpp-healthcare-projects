@@ -1,52 +1,50 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU EM interface for RNA-seq pseudo-alignment
 // ---------------------------------------------------------------------------
-// Project 3.22 -- RNA-seq Quantification / Pseudo-alignment   (template skeleton)
+// Project 3.22 : RNA-seq Quantification / Pseudo-alignment
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (PATTERNS.md: parallel per-item E-step + ATOMIC REDUCTION M-step)
+//   Each EM iteration sweeps the equivalence classes (ecs):
+//     * E-STEP  : one GPU thread per ec reads the current abundances of its few
+//                 member transcripts and splits the ec's reads among them
+//                 (pseudoalign.h::psa_ec_contributions). Fully independent ecs.
+//     * M-STEP  : that same thread atomically adds each member's expected reads,
+//                 in FIXED-POINT integer units, into a per-transcript accumulator
+//                 -- a SCATTER-REDUCTION via atomicAdd. Integer adds commute, so
+//                 the reduction is DETERMINISTIC and equals the CPU exactly.
+//   The renormalise (counts -> next rho) is a tiny host step reused from the CPU
+//   reference, so CPU and GPU take identical update steps. Conceptually each
+//   iteration is a sparse matrix-vector product (the ec-by-transcript membership
+//   matrix times the weight vector); cuSPARSE could do it as a library SpMV --
+//   we hand-roll it here so nothing is a black box (THEORY.md "real world").
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   kernels.cu defines the kernel; main.cu calls em_gpu().
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: pseudoalign.h, reference_cpu.h, util/cuda_check.cuh, util/timer.cuh.
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
 #include <vector>
+#include "reference_cpu.h"   // EcDataset + shared host helpers (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Device-side EM iteration kernel. One thread per equivalence class:
+//   * runs the E-step for its ec,
+//   * atomic-adds each member's fixed-point expected reads into d_fixed_counts.
+// Parameters mirror the CSR layout of EcDataset. Declared here, defined in
+// kernels.cu; main.cu never launches it directly -- it calls em_gpu().
+__global__ void em_iteration_kernel(const double*       __restrict__ d_rho,
+                                    const double*       __restrict__ d_eff_len,
+                                    const double*       __restrict__ d_ec_count,
+                                    const std::int32_t* __restrict__ d_ec_offset,
+                                    const std::int32_t* __restrict__ d_ec_members,
+                                    int M,
+                                    unsigned long long* __restrict__ d_fixed_counts);
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Host wrapper: run `iters` EM iterations on the GPU from the uniform start.
+// Fills `rho` (final abundances, length T) and `est_counts` (final per-transcript
+// expected read counts, length T). Returns the final L1 change in rho (the same
+// convergence witness as em_cpu) and the total GPU kernel time via kernel_ms.
+double em_gpu(const EcDataset& d, int iters,
+              std::vector<double>& rho, std::vector<double>& est_counts,
+              float* kernel_ms);

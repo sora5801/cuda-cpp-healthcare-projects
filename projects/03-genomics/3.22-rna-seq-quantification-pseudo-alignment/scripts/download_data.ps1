@@ -1,12 +1,15 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Point at the FULL datasets (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 3.22 -- RNA-seq Quantification / Pseudo-alignment   (template skeleton)
+# Project 3.22 : RNA-seq Quantification / Pseudo-alignment
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. Real pseudo-alignment needs (a) a
+# reference transcriptome FASTA and (b) RNA-seq FASTQs, then a tool (kallisto /
+# Salmon) to PRODUCE the equivalence classes this project consumes. That pipeline
+# is outside the scope of a single teaching demo, so this script only prints the
+# canonical sources + the exact commands to reproduce ec counts, and otherwise
+# defers to scripts/make_synthetic.py for an offline, fully-reproducible stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +19,25 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 3.22 -- RNA-seq Quantification / Pseudo-alignment"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    GENCODE human transcriptome — reference transcript index (https://www.gencodegenes.org/); ENCODE RNA-seq FASTQs — diverse cell-type transcriptomes (https://www.encodeproject.org/); GTEx v9 — tissue RNA-seq compendium (https://gtexportal.org/); SRA RNA-seq studies (https://www.ncbi.nlm.nih.gov/sra)."
+Write-Host "This project consumes EQUIVALENCE CLASSES (ec counts), which are produced"
+Write-Host "by running a pseudo-aligner on real reads. The canonical inputs are:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  Reference transcriptome (FASTA):"
+Write-Host "    GENCODE human transcriptome   https://www.gencodegenes.org/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  RNA-seq reads (FASTQ):"
+Write-Host "    ENCODE RNA-seq               https://www.encodeproject.org/"
+Write-Host "    GTEx v9 tissue compendium    https://gtexportal.org/   (registration)"
+Write-Host "    SRA RNA-seq studies          https://www.ncbi.nlm.nih.gov/sra"
+Write-Host ""
+Write-Host "  To PRODUCE ecs from those (kallisto's output includes them):"
+Write-Host "    kallisto index -i idx gencode.transcripts.fa.gz"
+Write-Host "    kallisto quant -i idx -o out --plaintext reads_1.fastq.gz reads_2.fastq.gz"
+Write-Host "    # out/ then holds run_info.json + the ec / abundance tables to reformat"
+Write-Host "    # into this project's 'T M / eff lengths / ec lines / TRUTH' text layout."
+Write-Host ""
+Write-Host "GTEx and some SRA studies require registration/credentials -- this script"
+Write-Host "does NOT attempt to bypass that. For an offline, reproducible run, use the"
+Write-Host "committed synthetic sample (already in data/sample/) or regenerate it:"
+Write-Host "    python scripts/make_synthetic.py --reads 1000000"

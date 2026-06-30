@@ -1,122 +1,126 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load reads, count + sketch on CPU & GPU, verify
 // ---------------------------------------------------------------------------
-// Project 3.6 -- k-mer Counting & Minimiser Sketching   (template skeleton)
+// Project 3.6 : k-mer Counting & Minimiser Sketching
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 6-step shape:
+//   1. Load two labelled read sets A and B (data/sample).
+//   2. CPU reference: count canonical k-mers (set A) + build minimiser sketches
+//      (A and B) + estimate their Jaccard similarity.
+//   3. GPU: the same, via the device hash table and minimiser kernel.
+//   4. VERIFY: histograms match key-by-key and count-by-count; sketches match
+//      hash-by-hash; Jaccard estimates match. All EXACT (shared kmer.h math,
+//      integer counts) -- tolerance is 0.
+//   5. REPORT (stdout, deterministic): distinct-k-mer count, the top k-mers by
+//      count (ties broken by key), sketch sizes, and the Jaccard estimate.
+//   6. TIMING (stderr): CPU vs GPU kernel ms -- a teaching artifact, not a benchmark.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
-//
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then kmer.h (the shared math), reference_cpu.cpp (the
+// readable baseline), kernels.cu (the GPU twins).
 // ===========================================================================
+#include <algorithm>
 #include <cstdio>
+#include <cstdint>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // count_kmers_gpu, sketch_gpu
+#include "reference_cpu.h"    // load_reads, count_kmers_cpu, sketch_cpu, jaccard_estimate
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "3.6";
 static const char* PROJECT_NAME = "k-mer Counting & Minimiser Sketching";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// How many top-frequency k-mers to print (deterministic: by count desc, key asc).
+static constexpr int TOP_N = 8;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
+// ---------------------------------------------------------------------------
+// histograms_equal: exact entry-by-entry comparison of two sorted histograms.
+//   Both come back sorted ascending by key, so a parallel walk suffices. Returns
+//   true iff identical (same keys, same counts). This is our headline check:
+//   the GPU hash table must reproduce the CPU std::map exactly.
+// ---------------------------------------------------------------------------
+static bool histograms_equal(const std::vector<KmerCount>& a,
+                             const std::vector<KmerCount>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (a[i].key != b[i].key || a[i].count != b[i].count) return false;
     return true;
 }
 
+// sketches_equal: exact comparison of two bottom-s sketches (sorted, distinct).
+static bool sketches_equal(const Sketch& a, const Sketch& b) {
+    return a.hashes == b.hashes;
+}
+
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load ----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/kmer_sample.txt";
+    ReadSet A, B;
+    int s = 0;
+    try {
+        A = load_reads(path, B, s);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) ----------------------------------------
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    std::vector<KmerCount> hist_cpu = count_kmers_cpu(A);
+    Sketch sa_cpu = sketch_cpu(A, s);
+    Sketch sb_cpu = sketch_cpu(B, s);
+    const double jac_cpu = jaccard_estimate(sa_cpu, sb_cpu, s);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
-    float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    // ---- 3. GPU (kernel times captured separately) -----------------------
+    float count_ms = 0.0f, sketchA_ms = 0.0f, sketchB_ms = 0.0f;
+    std::vector<KmerCount> hist_gpu = count_kmers_gpu(A, &count_ms);
+    Sketch sa_gpu = sketch_gpu(A, s, &sketchA_ms);
+    Sketch sb_gpu = sketch_gpu(B, s, &sketchB_ms);
+    const double jac_gpu = jaccard_estimate(sa_gpu, sb_gpu, s);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (all exact) -------------------------------------------
+    const bool hist_ok    = histograms_equal(hist_cpu, hist_gpu);
+    const bool sketchA_ok = sketches_equal(sa_cpu, sa_gpu);
+    const bool sketchB_ok = sketches_equal(sb_cpu, sb_gpu);
+    const bool jac_ok     = (jac_cpu == jac_gpu);   // exact: same integers / counts
+    const bool pass = hist_ok && sketchA_ok && sketchB_ok && jac_ok;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5. Deterministic report -> STDOUT -------------------------------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("params: k=%d  w=%d  s=%d\n", A.k, A.w, s);
+    std::printf("set A: %d reads, %zu bases\n", A.num_reads, A.bases.size());
+    std::printf("set B: %d reads, %zu bases\n", B.num_reads, B.bases.size());
+    std::printf("distinct canonical k-mers in A: %zu\n", hist_gpu.size());
+
+    // Top-N k-mers by count (desc), ties broken by ascending key -> deterministic.
+    std::vector<KmerCount> top = hist_gpu;
+    std::sort(top.begin(), top.end(), [](const KmerCount& a, const KmerCount& b) {
+        if (a.count != b.count) return a.count > b.count;   // higher count first
+        return a.key < b.key;                               // tie: smaller key first
+    });
+    const int show = (int)std::min<std::size_t>(TOP_N, top.size());
+    std::printf("top %d k-mers by count:\n", show);
+    for (int i = 0; i < show; ++i)
+        std::printf("  %s  count=%u\n", kmer_to_string(top[i].key, A.k).c_str(), top[i].count);
+
+    std::printf("sketch sizes: |A|=%zu  |B|=%zu  (bottom-%d MinHash)\n",
+                sa_gpu.hashes.size(), sb_gpu.hashes.size(), s);
+    std::printf("Jaccard(A,B) estimate = %.4f\n", jac_gpu);
+    std::printf("RESULT: %s (GPU hist+sketch+Jaccard match CPU exactly)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 6. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s\n", path.c_str());
+    std::fprintf(stderr, "[timing] CPU(all): %.3f ms   GPU kernels: count %.3f + sketchA %.3f + sketchB %.3f ms\n",
+                 cpu_ms, count_ms, sketchA_ms, sketchB_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- tiny input is launch-bound; the GPU's edge grows "
+                         "with read count (real runs are 10^8-10^9 k-mers).\n");
+    std::fprintf(stderr, "[verify] hist=%s  sketchA=%s  sketchB=%s  jaccard(cpu/gpu)=%.4f/%.4f\n",
+                 hist_ok ? "ok" : "MISMATCH", sketchA_ok ? "ok" : "MISMATCH",
+                 sketchB_ok ? "ok" : "MISMATCH", jac_cpu, jac_gpu);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

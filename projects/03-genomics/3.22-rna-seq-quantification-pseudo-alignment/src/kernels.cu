@@ -1,94 +1,169 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  EM iteration kernel (E-step + atomic M-step) + host loop
 // ---------------------------------------------------------------------------
-// Project 3.22 -- RNA-seq Quantification / Pseudo-alignment   (template skeleton)
+// Project 3.22 : RNA-seq Quantification / Pseudo-alignment
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of em_cpu(): the SAME per-ec E-step (pseudoalign.h) and the SAME
+// fixed-point M-step accumulation, plus the SAME host renormalise (counts_to_rho)
+// reused from reference_cpu.cpp. Because every arithmetic step is identical and
+// the only "reduction" uses commuting integer atomics, the GPU's final
+// abundances match the CPU's exactly. main.cu compares them. See ../THEORY.md
+// "The GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
-#include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "util/cuda_check.cuh"
+#include "util/timer.cuh"
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+#include <vector>
+
+// 128 threads/block: ecs are tiny (a handful of members), so the kernel is
+// memory-latency bound on the gather of member rho values, not compute bound. A
+// modest block size keeps occupancy high without wasting registers; 64/128/256
+// all behave similarly here (an easy thing for the learner to sweep).
+static constexpr int THREADS_PER_BLOCK = 128;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// em_iteration_kernel: one EM iteration's E-step + M-step for ONE ec per thread.
+//
+//   grid   : enough blocks to cover M equivalence classes
+//   block  : THREADS_PER_BLOCK threads
+//   thread (blockIdx.x, threadIdx.x) -> equivalence-class index e = bx*bd + tx
+//
+//   Each thread:
+//     1. finds its ec's member slice in the CSR arrays (d_ec_offset/d_ec_members),
+//     2. runs psa_ec_contributions() to split the ec's reads among members
+//        (identical math to the CPU; results held in a small per-thread scratch
+//        in registers/local memory -- sized by PSA_MAX_EC_SIZE),
+//     3. atomic-adds each member's fixed-point expected reads into the shared
+//        per-transcript accumulator d_fixed_counts.
+//
+//   MEMORY SPACES: d_rho/d_eff_len/d_ec_* are read-only global (marked
+//   __restrict__ so the compiler may cache through the read-only path). The only
+//   writes are atomicAdd into d_fixed_counts (global). No shared memory is needed
+//   because the per-ec work is tiny and independent.
+//
+//   WHY INTEGER ATOMICS: many ecs scatter into the same transcript (popular
+//   isoforms), so the adds COLLIDE -> we need atomicAdd. atomicAdd on
+//   `unsigned long long` is supported on all our target arches (sm_75+). Integer
+//   adds are associative/commutative, so the result is independent of thread
+//   order -> reproducible AND bit-identical to the CPU (PATTERNS.md section 3).
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void em_iteration_kernel(const double*       __restrict__ d_rho,
+                                    const double*       __restrict__ d_eff_len,
+                                    const double*       __restrict__ d_ec_count,
+                                    const std::int32_t* __restrict__ d_ec_offset,
+                                    const std::int32_t* __restrict__ d_ec_members,
+                                    int M,
+                                    unsigned long long* __restrict__ d_fixed_counts) {
+    const int e = blockIdx.x * blockDim.x + threadIdx.x;   // this thread's ec
+    if (e >= M) return;                                    // guard ragged last block
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
+    const std::int32_t base = d_ec_offset[e];
+    const int k = d_ec_offset[e + 1] - base;               // members in this ec
+
+    // Per-thread scratch for the k expected counts. Lives in registers/local
+    // memory; bounded by PSA_MAX_EC_SIZE so no dynamic allocation in the kernel.
+    double contrib[PSA_MAX_EC_SIZE];
+
+    // E-step: identical to the CPU path (shared __host__ __device__ function).
+    psa_ec_contributions(d_ec_count[e], &d_ec_members[base], k,
+                         d_rho, d_eff_len, contrib);
+
+    // M-step scatter: atomic fixed-point add into each member's accumulator.
+    for (int j = 0; j < k; ++j) {
+        const std::int32_t t = d_ec_members[base + j];
+        atomicAdd(&d_fixed_counts[t], psa_to_fixed(contrib[j]));
     }
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// em_gpu: host wrapper that runs `iters` EM iterations on the GPU.
+//
+//   Per iteration we: upload the current rho, zero the fixed-point accumulator,
+//   launch one thread per ec, copy the accumulator back, and finish the M-step on
+//   the host with counts_to_rho() (the exact same renormalise the CPU uses). The
+//   rho upload + counts copy each iteration are small (length T) and keep CPU and
+//   GPU perfectly in lockstep; a fully-on-device version (keeping rho resident and
+//   renormalising with a reduction kernel) is left as a THEORY.md exercise.
+//
+//   The static (membership) arrays are uploaded ONCE before the loop -- they do
+//   not change between iterations -- which is the I/O we would overlap with
+//   compute using CUDA streams in a production build (catalog "CUDA streams for
+//   I/O and compute overlap").
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+double em_gpu(const EcDataset& d, int iters,
+              std::vector<double>& rho, std::vector<double>& est_counts,
+              float* kernel_ms) {
+    const int T = d.T, M = d.M;
+    init_rho_uniform(d, rho);                              // same start as CPU
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // ---- Device buffers --------------------------------------------------
+    double*       d_rho        = nullptr;   // [T] current abundances (uploaded each iter)
+    double*       d_eff_len    = nullptr;   // [T] effective lengths (static)
+    double*       d_ec_count   = nullptr;   // [M] reads per ec (static)
+    std::int32_t* d_ec_offset  = nullptr;   // [M+1] CSR offsets (static)
+    std::int32_t* d_ec_members = nullptr;   // [nnz] CSR member ids (static)
+    unsigned long long* d_fixed_counts = nullptr;  // [T] M-step accumulator
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(&d_rho,        static_cast<std::size_t>(T) * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_eff_len,    static_cast<std::size_t>(T) * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_ec_count,   static_cast<std::size_t>(M) * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_ec_offset,  static_cast<std::size_t>(M + 1) * sizeof(std::int32_t)));
+    CUDA_CHECK(cudaMalloc(&d_ec_members, d.ec_members.size() * sizeof(std::int32_t)));
+    CUDA_CHECK(cudaMalloc(&d_fixed_counts, static_cast<std::size_t>(T) * sizeof(unsigned long long)));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // Upload the STATIC arrays once (they never change across EM iterations).
+    CUDA_CHECK(cudaMemcpy(d_eff_len, d.eff_len.data(),
+                          static_cast<std::size_t>(T) * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_ec_count, d.ec_count.data(),
+                          static_cast<std::size_t>(M) * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_ec_offset, d.ec_offset.data(),
+                          static_cast<std::size_t>(M + 1) * sizeof(std::int32_t), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_ec_members, d.ec_members.data(),
+                          d.ec_members.size() * sizeof(std::int32_t), cudaMemcpyHostToDevice));
+
+    std::vector<unsigned long long> fixed_counts(T, 0ull);
+    std::vector<double> prev_rho(T, 0.0);
+    const int grid = (M + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    double last_delta = 0.0;
+
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    for (int it = 0; it < iters; ++it) {
+        prev_rho = rho;
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+        // Upload current rho; zero the accumulator; launch the E+M step.
+        CUDA_CHECK(cudaMemcpy(d_rho, rho.data(),
+                              static_cast<std::size_t>(T) * sizeof(double), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemset(d_fixed_counts, 0,
+                              static_cast<std::size_t>(T) * sizeof(unsigned long long)));
+        em_iteration_kernel<<<grid, THREADS_PER_BLOCK>>>(
+            d_rho, d_eff_len, d_ec_count, d_ec_offset, d_ec_members, M, d_fixed_counts);
+        CUDA_CHECK_LAST("em_iteration_kernel");
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+        // Bring the accumulator back; finish the M-step on the host (same code
+        // path as the CPU reference -> identical next rho).
+        CUDA_CHECK(cudaMemcpy(fixed_counts.data(), d_fixed_counts,
+                              static_cast<std::size_t>(T) * sizeof(unsigned long long),
+                              cudaMemcpyDeviceToHost));
+        counts_to_rho(d, fixed_counts, rho);
+
+        // Convergence witness (reported, not used to stop).
+        last_delta = 0.0;
+        for (int t = 0; t < T; ++t) last_delta += std::fabs(rho[t] - prev_rho[t]);
+    }
+    *kernel_ms = timer.stop_ms();
+
+    // Final expected read counts from the last fixed-point sums.
+    est_counts.assign(T, 0.0);
+    for (int t = 0; t < T; ++t) est_counts[t] = psa_from_fixed(fixed_counts[t]);
+
+    // ---- Free device memory ----------------------------------------------
+    CUDA_CHECK(cudaFree(d_rho));
+    CUDA_CHECK(cudaFree(d_eff_len));
+    CUDA_CHECK(cudaFree(d_ec_count));
+    CUDA_CHECK(cudaFree(d_ec_offset));
+    CUDA_CHECK(cudaFree(d_ec_members));
+    CUDA_CHECK(cudaFree(d_fixed_counts));
+    return last_delta;
 }

@@ -1,33 +1,36 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  How to get REAL protein databases (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 3.7 -- BLAST-Style Homology Search   (template skeleton)
+# Project 3.7 : BLAST-Style Homology Search
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# Prints instructions and links; downloads nothing and needs no credentials.
+# Use make_synthetic.py for an offline, reproducible stand-in (CLAUDE.md sec 8).
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
 echo "[download_data] Project 3.7 -- BLAST-Style Homology Search"
-echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    UniRef50/90 — clustered UniProt sequences for homology (https://www.uniprot.org/help/uniref); NCBI nr protein database (https://ftp.ncbi.nlm.nih.gov/blast/db/); PDB70 — representative PDB sequences (https://www.rcsb.org/downloads); Pfam — protein family HMM database (https://www.ebi.ac.uk/interpro/download/)."
+echo "This demo searches a TINY SYNTHETIC database (data/sample/proteins_sample.fasta)."
+echo "Real homology search runs against large public protein databases:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  * UniRef50 / UniRef90 (clustered UniProt; the AlphaFold2 MSA database):"
+echo "      https://www.uniprot.org/help/uniref"
+echo "      e.g. https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref50/uniref50.fasta.gz"
+echo "  * NCBI nr (non-redundant proteins):"
+echo "      https://ftp.ncbi.nlm.nih.gov/blast/db/"
+echo "  * PDB70 (representative PDB sequences):"
+echo "      https://www.rcsb.org/downloads"
+echo "  * Pfam (protein-family HMMs; profile search, beyond this demo):"
+echo "      https://www.ebi.ac.uk/interpro/download/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "These are large (UniRef50 is many GB) and licensed -- we do NOT redistribute"
+echo "them. Download per the site's terms, then point the program at any FASTA:"
+echo "  build/x64/Release/blast-style-homology-search.exe my_query_plus_db.fasta"
+echo "(The first FASTA record is treated as the query; the rest are the database.)"
+echo
+echo "Offline stand-in (no download, fully reproducible):"
+echo "  python scripts/make_synthetic.py --decoys 50"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

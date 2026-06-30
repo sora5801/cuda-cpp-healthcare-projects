@@ -1,12 +1,12 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  How to get REAL protein databases (Windows)
 # ---------------------------------------------------------------------------
-# Project 3.7 -- BLAST-Style Homology Search   (template skeleton)
+# Project 3.7 : BLAST-Style Homology Search
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and
+# NEVER bypasses credentials/registration. This demo ships a tiny SYNTHETIC
+# database, so there is nothing to download to run it -- this script just prints
+# where the real protein databases live and how to point the program at them.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,24 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 3.7 -- BLAST-Style Homology Search"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    UniRef50/90 — clustered UniProt sequences for homology (https://www.uniprot.org/help/uniref); NCBI nr protein database (https://ftp.ncbi.nlm.nih.gov/blast/db/); PDB70 — representative PDB sequences (https://www.rcsb.org/downloads); Pfam — protein family HMM database (https://www.ebi.ac.uk/interpro/download/)."
+Write-Host "This demo searches a TINY SYNTHETIC database (data/sample/proteins_sample.fasta)."
+Write-Host "Real homology search runs against large public protein databases:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  * UniRef50 / UniRef90 (clustered UniProt; the AlphaFold2 MSA database):"
+Write-Host "      https://www.uniprot.org/help/uniref"
+Write-Host "      e.g. https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref50/uniref50.fasta.gz"
+Write-Host "  * NCBI nr (non-redundant proteins):"
+Write-Host "      https://ftp.ncbi.nlm.nih.gov/blast/db/"
+Write-Host "  * PDB70 (representative PDB sequences):"
+Write-Host "      https://www.rcsb.org/downloads"
+Write-Host "  * Pfam (protein-family HMMs; profile search, beyond this demo):"
+Write-Host "      https://www.ebi.ac.uk/interpro/download/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "These are large (UniRef50 is many GB) and licensed -- we do NOT redistribute"
+Write-Host "them. Download per the site's terms, then point the program at any FASTA"
+Write-Host "(first record = query, rest = database):"
+Write-Host "  build\x64\Release\blast-style-homology-search.exe my_query_plus_db.fasta"
+Write-Host ""
+Write-Host "Offline stand-in (no download, fully reproducible):"
+Write-Host "  python scripts/make_synthetic.py --decoys 50"

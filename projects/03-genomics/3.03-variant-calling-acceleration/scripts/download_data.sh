@@ -2,11 +2,13 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 3.3 -- Variant Calling Acceleration   (template skeleton)
+# Project 3.3 : Variant Calling Acceleration
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + size, and
+# NEVER bypasses credentials/registration. The real benchmark resources are
+# large and/or access-controlled, so this script prints instructions + links
+# ONLY and defers to scripts/make_synthetic.py for the offline stand-in the demo
+# actually uses.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,27 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 3.3 -- Variant Calling Acceleration"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    GiaB truth sets HG001–HG007 — gold-standard variant calls for benchmarking (https://www.nist.gov/programs-projects/genome-bottle); ClinVar — clinically interpreted variants (https://www.ncbi.nlm.nih.gov/clinvar/); gnomAD v4 — population allele frequencies (https://gnomad.broadinstitute.org/); 1000 Genomes high-coverage WGS (https://www.internationalgenome.org/data)."
+echo "This project ships a tiny SYNTHETIC sample (data/sample/) so the demo runs"
+echo "offline. No real dataset is downloaded automatically -- the real benchmark"
+echo "resources are large and some require registration."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "REAL BENCHMARK RESOURCES (open in a browser, follow each site's terms):"
+echo "  * GiaB truth sets HG001-HG007 (gold-standard germline calls):"
+echo "      https://www.nist.gov/programs-projects/genome-bottle"
+echo "  * ClinVar (clinically interpreted variants):"
+echo "      https://www.ncbi.nlm.nih.gov/clinvar/"
+echo "  * gnomAD v4 (population allele frequencies):"
+echo "      https://gnomad.broadinstitute.org/"
+echo "  * 1000 Genomes high-coverage WGS:"
+echo "      https://www.internationalgenome.org/data"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "TO USE REAL DATA with this teaching kernel:"
+echo "  1) Pick one locus; extract candidate haplotypes (local assembly of the"
+echo "     active region) and overlapping reads from a BAM."
+echo "  2) Convert to the text format in data/README.md (haplotypes + reads +"
+echo "     Phred qualities) and pass the file path as argv[1] to the exe."
+echo
+echo "FOR A LARGER SYNTHETIC PROBLEM (no download needed):"
+echo "    python scripts/make_synthetic.py --reads 4096 --read-len 100 --hap-len 120"
+echo
+echo "[download_data] Nothing downloaded (by design). The demo uses the synthetic sample."

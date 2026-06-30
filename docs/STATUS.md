@@ -2,11 +2,11 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 82/301 projects done (27.2%) | todo 219 | in-progress 0 | missing 0
+**Progress:** 88/301 projects done (29.2%) | todo 213 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
-| 🟢 Beginner | 67 | 32 | 0 | 35 |
+| 🟢 Beginner | 67 | 38 | 0 | 29 |
 | 🟡 Intermediate | 206 | 44 | 0 | 162 |
 | 🔴 Advanced | 28 | 6 | 0 | 22 |
 
@@ -90,17 +90,17 @@
 | 2.34 | Biophysical Simulation of Biomolecular Condensates (Active Learning Loop) | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 | 2.35 | Electron Paramagnetic Resonance (EPR/DEER) Constrained Modeling | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 
-## 3. Genomics, Sequencing & Bioinformatics  (1/30 done)
+## 3. Genomics, Sequencing & Bioinformatics  (7/30 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
 | 3.01 | Smith-Waterman / Needleman-Wunsch Alignment | 🟢 Beginner | Established | [x] done | lead | main |
-| 3.02 | Short-Read Mapping / Alignment | 🟢 Beginner | Established | [ ] todo | - | - |
-| 3.03 | Variant Calling Acceleration | 🟢 Beginner | Established | [ ] todo | - | - |
-| 3.04 | Nanopore Basecalling | 🟢 Beginner | Established | [ ] todo | - | - |
+| 3.02 | Short-Read Mapping / Alignment | 🟢 Beginner | Established | [x] done | - | - |
+| 3.03 | Variant Calling Acceleration | 🟢 Beginner | Established | [x] done | - | - |
+| 3.04 | Nanopore Basecalling | 🟢 Beginner | Established | [x] done | - | - |
 | 3.05 | De Novo Genome Assembly | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.06 | k-mer Counting & Minimiser Sketching | 🟢 Beginner | Established | [ ] todo | - | - |
-| 3.07 | BLAST-Style Homology Search | 🟢 Beginner | Established | [ ] todo | - | - |
+| 3.06 | k-mer Counting & Minimiser Sketching | 🟢 Beginner | Established | [x] done | - | - |
+| 3.07 | BLAST-Style Homology Search | 🟢 Beginner | Established | [x] done | - | - |
 | 3.08 | Multiple Sequence Alignment (MSA) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 3.09 | Phylogenetic Likelihood / Tree Inference | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 3.10 | RNA Secondary-Structure Prediction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
@@ -115,7 +115,7 @@
 | 3.19 | Variant Effect / Pathogenicity Prediction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 3.20 | Long-Read HiFi Assembly Overlap & Polishing | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 3.21 | Structural Variant (SV) Calling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.22 | RNA-seq Quantification / Pseudo-alignment | 🟢 Beginner | Established | [ ] todo | - | - |
+| 3.22 | RNA-seq Quantification / Pseudo-alignment | 🟢 Beginner | Established | [x] done | - | - |
 | 3.23 | Splice-Aware RNA Alignment | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 3.24 | Methylation / Modified-Base Calling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 3.25 | Base Quality Score Recalibration (BQSR) | 🟢 Beginner | Established | [ ] todo | - | - |

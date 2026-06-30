@@ -1,5 +1,9 @@
-3.4 -- Nanopore Basecalling
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+3.4 -- Nanopore Basecalling (CTC greedy decode)
+decoded 4 reads from posterior matrices (C=5 classes: -ACGT)
+  read 0: T=32  len=8  checksum=6c2d4a63  seq=ACGTACGT
+  read 1: T=32  len=8  checksum=faa0aca5  seq=AACCGGTT
+  read 2: T=28  len=7  checksum=6fbc9be0  seq=GATTACA
+  read 3: T=32  len=8  checksum=bb5f5785  seq=TTTTGGGG
+total called bases (all reads): 31
+CPU/GPU agreement: 4/4 reads identical
+RESULT: PASS (GPU matches CPU exactly; tol = 0, integer decode)

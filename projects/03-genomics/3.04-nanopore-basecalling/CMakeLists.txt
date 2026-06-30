@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 3.4 -- Nanopore Basecalling   (template skeleton)
+# Project 3.4 : Nanopore Basecalling  (REDUCED-SCOPE: CTC greedy decode)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/nanopore-basecalling.sln (CLAUDE.md §5). Both

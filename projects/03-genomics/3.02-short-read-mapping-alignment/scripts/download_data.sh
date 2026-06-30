@@ -2,11 +2,14 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 3.2 -- Short-Read Mapping / Alignment   (template skeleton)
+# Project 3.2 : Short-Read Mapping / Alignment
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The catalog's short-read datasets are
+# either huge (1000 Genomes, SRA) or benchmark sets best fetched with their own
+# tooling (GiaB, ENCODE), so this script PRINTS INSTRUCTIONS rather than blindly
+# downloading gigabytes. The committed synthetic sample already runs the demo
+# offline; scripts/make_synthetic.py makes a larger synthetic problem on demand.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +20,25 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 3.2 -- Short-Read Mapping / Alignment"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    1000 Genomes Project — 2504 human WGS samples, short reads (https://www.internationalgenome.org/data); Genome in a Bottle (GiaB) NA12878 / HG002 — benchmark short-read WGS datasets (https://www.nist.gov/programs-projects/genome-bottle); SRA FASTQ archives — petabyte-scale short reads (https://www.ncbi.nlm.nih.gov/sra); ENCODE ChIP/RNA-seq FASTQs — curated short-read functional data (https://www.encodeproject.org/)."
+echo "This teaching project ships a tiny SYNTHETIC sample (data/sample/reads_sample.txt)"
+echo "that runs the demo offline. Real short-read datasets are large and/or gated:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  * 1000 Genomes Project (open, very large FASTQ/CRAM):"
+echo "      https://www.internationalgenome.org/data"
+echo "  * Genome in a Bottle (GiaB) NA12878 / HG002 benchmark WGS + truth sets:"
+echo "      https://www.nist.gov/programs-projects/genome-bottle"
+echo "      ftp://ftp-trace.ncbi.nlm.nih.gov/giab/ftp/"
+echo "  * SRA FASTQ archives (use the SRA Toolkit 'prefetch'/'fasterq-dump'):"
+echo "      https://www.ncbi.nlm.nih.gov/sra"
+echo "  * ENCODE ChIP/RNA-seq FASTQs (curated functional genomics):"
+echo "      https://www.encodeproject.org/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "To run this program on real data, prepare a plain-text file:"
+echo "    line 1            = a (short) reference sequence, ACGT only"
+echo "    each later line   = one read, ACGT only, all reads the same length"
+echo "  then:  ./short-read-mapping-alignment <that-file>"
+echo
+echo "For a larger SYNTHETIC stand-in (no download, fully offline):"
+echo "    python scripts/make_synthetic.py --ref-len 4000 --n-reads 2000"
+echo
+echo "[download_data] No bytes downloaded (by design). See data/README.md."

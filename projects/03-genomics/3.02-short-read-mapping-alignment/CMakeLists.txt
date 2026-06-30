@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 3.2 -- Short-Read Mapping / Alignment   (template skeleton)
+# Project 3.2 : Short-Read Mapping / Alignment
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/short-read-mapping-alignment.sln (CLAUDE.md §5). Both

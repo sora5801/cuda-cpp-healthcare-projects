@@ -1,5 +1,17 @@
 3.6 -- k-mer Counting & Minimiser Sketching
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+params: k=11  w=5  s=16
+set A: 12 reads, 480 bases
+set B: 12 reads, 480 bases
+distinct canonical k-mers in A: 203
+top 8 k-mers by count:
+  ACGTACGTACG  count=7
+  AACGGATCGAG  count=4
+  ACAGGGAATCA  count=4
+  ACCAATCTACC  count=4
+  AGATTGGTATG  count=4
+  AGGGAATCACC  count=4
+  ATACCAATCTA  count=4
+  ATGACAGGGAA  count=4
+sketch sizes: |A|=16  |B|=16  (bottom-16 MinHash)
+Jaccard(A,B) estimate = 0.1250
+RESULT: PASS (GPU hist+sketch+Jaccard match CPU exactly)

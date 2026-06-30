@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 3.6 -- k-mer Counting & Minimiser Sketching   (template skeleton)
+# Project 3.6 -- k-mer Counting & Minimiser Sketching
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/k-mer-counting-minimiser-sketching.sln (CLAUDE.md §5). Both

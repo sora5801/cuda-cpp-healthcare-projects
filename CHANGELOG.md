@@ -1,5 +1,6 @@
 # Changelog — newest first; each entry links to its push-note in `push-notes/`.
 
+- 2026-06-30 #03 -- [phase2 batch4a genomics](push-notes/2026-06-30-03-phase2-batch4a-genomics.md)
 - 2026-06-30 #02 -- [phase2 batch3f domain2-complete](push-notes/2026-06-30-02-phase2-batch3f-domain2-complete.md)
 - 2026-06-30 #01 -- [phase2 batch3e structural-biology intermediate](push-notes/2026-06-30-01-phase2-batch3e-structural-biology-intermediate.md)
 - 2026-06-30 #00 -- [phase2 batch3d structural-biology intermediate](push-notes/2026-06-30-00-phase2-batch3d-structural-biology-intermediate.md)

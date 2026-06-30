@@ -1,5 +1,10 @@
 3.7 -- BLAST-Style Homology Search
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+query: QUERY  (len=120)
+seed-extend search: 1 query vs 9 DB sequences (k=4, X-drop=12, BLOSUM62)
+top-5 homology hits (by best ungapped HSP score):
+  #1  db[0]  hit_close   HSP_score = 723
+  #2  db[1]  hit_medium  HSP_score = 538
+  #3  db[2]  hit_domain  HSP_score = 257
+  #4  db[3]  decoy_1     HSP_score = 0
+  #5  db[4]  decoy_2     HSP_score = 0
+RESULT: PASS (GPU matches CPU exactly, integer scores)

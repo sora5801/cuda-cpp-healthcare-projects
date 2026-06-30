@@ -1,48 +1,111 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate a synthetic protein FASTA dataset
 # ---------------------------------------------------------------------------
-# Project 3.7 -- BLAST-Style Homology Search   (template skeleton)
+# Project 3.7 : BLAST-Style Homology Search
 #
-# WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+# WHY SYNTHETIC
+#   Real protein databases (UniRef, NCBI nr, PDB70 -- see data/README.md) are
+#   huge and licensed. To keep the demo OFFLINE, REPRODUCIBLE, and INTERPRETABLE
+#   we generate a tiny, clearly-SYNTHETIC FASTA whose homology relationships are
+#   KNOWN by construction, so the top-K result is meaningful and deterministic:
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
+#     record 0 (query)  : a random "query" protein.
+#     hit_close         : the query with ~8% of residues mutated  -> strong hit.
+#     hit_medium        : the query with ~25% mutated             -> medium hit.
+#     hit_domain        : an unrelated protein with the query's MIDDLE 40 residues
+#                         spliced in (a shared "domain")          -> partial hit.
+#     decoy_1..k        : fully random proteins (no homology)     -> low/zero.
 #
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+#   So the EXPECTED ranking is: hit_close > hit_medium > hit_domain > decoys.
+#   A fixed RNG seed makes the FASTA byte-for-byte reproducible, which keeps
+#   demo/expected_output.txt stable. SYNTHETIC is stated in every header.
+#
+# OUTPUT: data/sample/proteins_sample.fasta  (FASTA; first record = query).
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py                 # default small sample
+#   python scripts/make_synthetic.py --decoys 50     # a bigger decoy set
 # ===========================================================================
 import argparse
+import random
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+# The 20 standard amino acids (single-letter codes). We deliberately do NOT emit
+# B/Z/X/* ambiguity codes in synthetic data so every k-mer is a valid seed.
+AMINO = "ACDEFGHIKLMNPQRSTVWY"
+
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "data" / "sample" / "proteins_sample.fasta"
+
+
+def random_protein(rng, length):
+    """A length-L protein of i.i.d. uniform amino acids."""
+    return "".join(rng.choice(AMINO) for _ in range(length))
+
+
+def mutate(rng, seq, frac):
+    """Return a copy of seq with ~frac of positions substituted to a random
+    (possibly different) amino acid. Models point mutations / divergence."""
+    out = list(seq)
+    for i in range(len(out)):
+        if rng.random() < frac:
+            out[i] = rng.choice(AMINO)
+    return "".join(out)
+
+
+def wrap(seq, width=60):
+    """Wrap a sequence to FASTA line width (cosmetic; our loader handles any)."""
+    return "\n".join(seq[i:i + width] for i in range(0, len(seq), width))
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
+    ap = argparse.ArgumentParser(description="Generate a synthetic protein FASTA for BLAST.")
+    ap.add_argument("--qlen", type=int, default=120, help="query length (residues)")
+    ap.add_argument("--decoys", type=int, default=6, help="number of unrelated decoy sequences")
+    ap.add_argument("--seed", type=int, default=7, help="RNG seed (determinism)")
+    ap.add_argument("--out", default=str(OUT))
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    rng = random.Random(args.seed)
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    # The query protein.
+    query = random_protein(rng, args.qlen)
+
+    # Build the database records as (header, sequence) in a FIXED order so the
+    # output is deterministic. Headers carry the SYNTHETIC label and the designed
+    # relationship, so a reader knows exactly what each sequence is.
+    records = [(f"QUERY synthetic_query len={args.qlen}", query)]
+
+    # Strong homolog: a near-duplicate (low divergence).
+    records.append(("hit_close synthetic ~8pct_diverged_homolog",
+                    mutate(rng, query, 0.08)))
+
+    # Medium homolog: noticeably diverged but still clearly related.
+    records.append(("hit_medium synthetic ~25pct_diverged_homolog",
+                    mutate(rng, query, 0.25)))
+
+    # Domain sharer: an unrelated scaffold with the query's middle 40 residues
+    # spliced in -> one strong local HSP over the shared "domain", flanks random.
+    mid_start = args.qlen // 2 - 20
+    domain = query[mid_start:mid_start + 40]
+    scaffold = random_protein(rng, 50) + domain + random_protein(rng, 50)
+    records.append(("hit_domain synthetic shared_40aa_domain", scaffold))
+
+    # Decoys: fully random proteins of varied length (no designed homology).
+    for d in range(args.decoys):
+        L = rng.randint(90, 150)
+        records.append((f"decoy_{d+1} synthetic random_protein", random_protein(rng, L)))
+
+    # Emit FASTA. First record is the query (the loader's convention).
+    lines = []
+    for header, seq in records:
+        lines.append(">" + header)
+        lines.append(wrap(seq))
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    print(f"[make_synthetic] wrote {args.out}  "
+          f"(query len={args.qlen}, {len(records)-1} DB seqs; SYNTHETIC, seed={args.seed})")
 
 
 if __name__ == "__main__":

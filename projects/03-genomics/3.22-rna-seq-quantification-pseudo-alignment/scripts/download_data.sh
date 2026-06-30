@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Point at the FULL datasets (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 3.22 -- RNA-seq Quantification / Pseudo-alignment   (template skeleton)
+# Project 3.22 : RNA-seq Quantification / Pseudo-alignment
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. Real pseudo-alignment needs (a) a reference
+# transcriptome FASTA and (b) RNA-seq FASTQs, then a tool (kallisto / Salmon) to
+# PRODUCE the equivalence classes this project consumes. That pipeline is outside
+# the scope of a single teaching demo, so this script only prints the canonical
+# sources + the exact commands to reproduce ec counts, and otherwise defers to
+# scripts/make_synthetic.py for an offline, fully-reproducible stand-in.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +21,24 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 3.22 -- RNA-seq Quantification / Pseudo-alignment"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    GENCODE human transcriptome — reference transcript index (https://www.gencodegenes.org/); ENCODE RNA-seq FASTQs — diverse cell-type transcriptomes (https://www.encodeproject.org/); GTEx v9 — tissue RNA-seq compendium (https://gtexportal.org/); SRA RNA-seq studies (https://www.ncbi.nlm.nih.gov/sra)."
+echo "This project consumes EQUIVALENCE CLASSES (ec counts), which are produced"
+echo "by running a pseudo-aligner on real reads. The canonical inputs are:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  Reference transcriptome (FASTA):"
+echo "    GENCODE human transcriptome   https://www.gencodegenes.org/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "  RNA-seq reads (FASTQ):"
+echo "    ENCODE RNA-seq               https://www.encodeproject.org/"
+echo "    GTEx v9 tissue compendium    https://gtexportal.org/   (registration)"
+echo "    SRA RNA-seq studies          https://www.ncbi.nlm.nih.gov/sra"
+echo
+echo "  To PRODUCE ecs from those (kallisto's output includes them):"
+echo "    kallisto index -i idx gencode.transcripts.fa.gz"
+echo "    kallisto quant -i idx -o out --plaintext reads_1.fastq.gz reads_2.fastq.gz"
+echo "    # out/ then holds run_info.json + the ec / abundance tables to reformat"
+echo "    # into this project's 'T M / eff lengths / ec lines / TRUTH' text layout."
+echo
+echo "GTEx and some SRA studies require registration/credentials -- this script"
+echo "does NOT attempt to bypass that. For an offline, reproducible run, use the"
+echo "committed synthetic sample (already in data/sample/) or regenerate it:"
+echo "    python scripts/make_synthetic.py --reads 1000000"

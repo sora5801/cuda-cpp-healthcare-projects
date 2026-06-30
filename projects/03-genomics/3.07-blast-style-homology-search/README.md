@@ -2,107 +2,186 @@
 
 ![difficulty](https://img.shields.io/badge/difficulty-Beginner-blue) ![maturity](https://img.shields.io/badge/maturity-Established-informational) ![domain](https://img.shields.io/badge/domain-Genomics%2C%20Sequencing%20%26%20Bioinformatics-lightgrey)
 
-> **🟢 Beginner · Established** — Domain 3: Genomics, Sequencing & Bioinformatics · Catalog ID `3.7`
->
-> _Educational only — not for clinical use (see CLAUDE.md §8)._
-
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
+> **Educational, not for clinical use.** This is study material. The committed
+> data is **synthetic** and labeled as such; no output implies a real biological
+> or medical finding.
 
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Given one **query** protein and a **database** of N protein sequences, this
+project finds the database sequences that are evolutionarily **related** to the
+query — the core job of BLAST. It uses the classic **seed-filter-extend**
+strategy: index the query's short words (k-mers), scan each database sequence for
+matching words (**seeds**), and from each seed run a fast **ungapped X-drop
+extension** scored with the BLOSUM62 substitution matrix. The best segment score
+(an **HSP** — High-scoring Segment Pair) is that sequence's homology score. Every
+database sequence is independent, so the GPU gives **each one its own thread**.
 
 ## What this computes & why the GPU helps
 
-Homology search finds sequences in a database that are evolutionarily related to a query, using seed-filter-extend logic (BLAST) or k-mer prefiltering + ungapped alignment (MMseqs2 / DIAMOND). At the scale of AlphaFold2 structure prediction (MSA search dominates 70–90% of total inference time), GPU acceleration is transformative. MMseqs2-GPU (2025, Nature Methods) replaces the CPU k-mer prefilter with a GPU-parallel gapless scoring pass across all database sequences simultaneously, achieving 20× speedup and 71× cost reduction vs. 128-core CPU. The bottleneck parallelised is the embarrassingly parallel pairwise k-mer match scanning across millions of database sequences per query batch.
+A homology search compares the query against *every* database sequence, and each
+comparison scans for shared k-mers and extends the survivors. That scan is
+**embarrassingly parallel**: the score of DB sequence *i* depends only on the
+query and on sequence *i*, never on the others. The bottleneck that the GPU
+parallelises is exactly this **per-sequence seed scan + extension**, run across
+millions of database sequences at once.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+This is not a toy concern: in **AlphaFold2**, building the multiple-sequence
+alignment (MSA) by homology search dominates **70–90% of total inference time**.
+The 2025 **MMseqs2-GPU** work (Nature Methods) replaces the CPU prefilter with a
+GPU-parallel gapless scoring pass over the whole database and reports a **~20×
+speedup and ~71× cost reduction** versus a 128-core CPU. This project teaches the
+*shape* of that idea on a tiny, verifiable scale.
+
+> **Scope (a reduced-scope teaching version, per CLAUDE.md §13).** We implement
+> the BLAST **seed (k-mer) → ungapped X-drop extension** core, which is the heart
+> of the method and the part that parallelises cleanly. Gapped (Smith-Waterman)
+> re-scoring of survivors, profile/PSI-BLAST iteration, and E-value statistics
+> are described in [THEORY.md](THEORY.md) "Where this sits in the real world" and
+> left as exercises — see also flagship **3.01** for the gapped DP kernel.
 
 ## The algorithm in brief
 
-K-mer prefilter seeding; gapless diagonal scoring; Smith-Waterman extension (affine gaps); profile-profile scoring (PSI-BLAST); iterative profile construction; DIAMOND's double-indexed seed matching.
+- **Encode** each residue (amino acid) to an index `0..23` (BLOSUM62 order).
+- **Index the query**: for every length-`k` window, record `(k-mer code → query
+  position)`. (`k = 4`.)
+- **Seed**: slide a length-`k` window over each DB sequence; a window whose code
+  is in the query index is a **seed** `(qpos, dpos)` on a fixed diagonal.
+- **Extend (gapless X-drop)**: from the seed, walk left and right comparing
+  `query[qpos±t]` to `db[dpos±t]`, summing BLOSUM62 scores; keep the best running
+  total and **stop a direction once the score drops `X` below its best** (the
+  X-drop rule). The HSP score is seed + best-left + best-right.
+- **Rank** DB sequences by best HSP score → the homology hits.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+Full derivation and complexity: [THEORY.md](THEORY.md).
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+**Required (Windows):** Visual Studio 2026 (v145 toolset) + CUDA Toolkit 13.3.
 
 1. Open `build/blast-style-homology-search.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
+2. Select **`Release|x64`**.
+3. **Build** (Ctrl+Shift+B). The output is
    `build/x64/Release/blast-style-homology-search.exe`.
 
-Command-line alternative (Developer PowerShell):
+Command line (Developer PowerShell):
 
 ```powershell
-msbuild build\blast-style-homology-search.sln /p:Configuration=Release /p:Platform=x64
+& "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" `
+  build\blast-style-homology-search.sln /p:Configuration=Release /p:Platform=x64 /m
 ```
+
+See [`docs/BUILD_GUIDE.md`](../../../docs/BUILD_GUIDE.md) for installing the
+toolchain and narrowing the GPU architecture list for faster local builds. An
+optional `CMakeLists.txt` is provided for Linux/CI.
 
 ## Run the demo
 
+One command builds (if needed), runs on the committed sample, and verifies:
+
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+powershell -ExecutionPolicy Bypass -File demo\run_demo.ps1
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+(Linux/CMake: `bash demo/run_demo.sh`.) The demo prints the top homology hits,
+the GPU-vs-CPU agreement, and a timing line.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: UniRef50/90 — clustered UniProt sequences for homology (https://www.uniprot.org/help/uniref); NCBI nr protein database (https://ftp.ncbi.nlm.nih.gov/blast/db/); PDB70 — representative PDB sequences (https://www.rcsb.org/downloads); Pfam — protein family HMM database (https://www.ebi.ac.uk/interpro/download/).
+The committed sample, `data/sample/proteins_sample.fasta`, is **synthetic**
+(generated by `scripts/make_synthetic.py`, fixed seed) so the demo runs offline
+and the result is interpretable. It is a query plus 9 DB sequences engineered with
+**known** relationships: a near-identical homolog, a diverged homolog, a
+domain-sharing partial match, and random decoys (see
+[`data/README.md`](data/README.md)). Real homology search runs against large
+public databases — **UniRef50/90**, **NCBI nr**, **PDB70**, **Pfam** —
+documented with links in `data/README.md`; `scripts/download_data.{ps1,sh}` print
+how to obtain them and **never** bypass any registration.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+```
+3.7 -- BLAST-Style Homology Search
+query: QUERY  (len=120)
+seed-extend search: 1 query vs 9 DB sequences (k=4, X-drop=12, BLOSUM62)
+top-5 homology hits (by best ungapped HSP score):
+  #1  db[0]  hit_close   HSP_score = 723
+  #2  db[1]  hit_medium  HSP_score = 538
+  #3  db[2]  hit_domain  HSP_score = 257
+  #4  db[3]  decoy_1     HSP_score = 0
+  #5  db[4]  decoy_2     HSP_score = 0
+RESULT: PASS (GPU matches CPU exactly, integer scores)
+```
+
+The ranking recovers the designed biology: near-identical > diverged >
+domain-only > random. **Correctness check:** all scores are integers computed by
+the *same* shared code (`src/blast_core.h`) on CPU and GPU, so they agree
+**exactly** — the demo asserts `max integer score diff = 0` (no floating-point
+tolerance is needed; see [THEORY.md](THEORY.md) "How we verify correctness").
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. **`src/main.cu`** — the 5-step shape: load FASTA → CPU reference → GPU search →
+   verify (exact) → report deterministic top-K to stdout, timing to stderr.
+2. **`src/blast_core.h`** — the shared `__host__ __device__` scoring core:
+   residue encoding and `gapless_xdrop()`. The *one* place the math lives.
+3. **`src/reference_cpu.h` / `.cpp`** — the data model (`SequenceDB`), the
+   BLOSUM62 matrix, the FASTA loader, the query k-mer index, and `blast_cpu()`
+   (the trusted serial baseline).
+4. **`src/kernels.cuh` / `kernels.cu`** — BLOSUM62 in constant memory, the device
+   binary-search of the flattened query index, `blast_kernel` (one thread per DB
+   sequence), and the `blast_gpu()` host wrapper.
+5. **`src/util/`** — shared, heavily-commented `CUDA_CHECK`, CUDA-event timer, and
+   host I/O helpers (copied verbatim into every project).
 
 ## Prior art & further reading
 
-MMseqs2 + GPU branch (https://github.com/soedinglab/MMseqs2) — official repo with GPU support in 2025 release; DIAMOND (https://github.com/bbuchfink/diamond) — ultra-fast protein aligner (CPU baseline); CUDASW4 (https://github.com/asbschmidt/CUDASW4) — full SW on GPU for deep alignments; NVIDIA NIM MMseqs2 microservice (https://developer.nvidia.com/blog/accelerated-sequence-alignment-for-protein-design-with-mmseqs2-and-nvidia-nim/) — cloud-API GPU search.
-
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
-
-## CUDA pattern used here
-
-Custom CUDA gapless scoring kernels (one warp per query-target pair); batched SW extension with shared memory; GPU hash table for seed look-ups; multi-GPU data parallelism across database shards; CUDA streams for overlapping I/O and compute. --
+- **MMseqs2 (+ GPU branch)** — <https://github.com/soedinglab/MMseqs2> — the
+  modern k-mer-prefilter aligner; the 2025 release adds the GPU gapless pass this
+  project is modeled on. *Study: how the prefilter and the ungapped pass are split.*
+- **DIAMOND** — <https://github.com/bbuchfink/diamond> — ultra-fast protein
+  aligner with double-indexed seeding (a strong CPU baseline). *Study: spaced/
+  reduced-alphabet seeds for sensitivity.*
+- **CUDASW++ / CUDASW4** — <https://github.com/asbschmidt/CUDASW4> — full
+  Smith-Waterman on the GPU for deep alignments. *Study: how gapped DP is mapped
+  to GPU (compare with flagship 3.01).*
+- **NVIDIA NIM MMseqs2 microservice** —
+  <https://developer.nvidia.com/blog/accelerated-sequence-alignment-for-protein-design-with-mmseqs2-and-nvidia-nim/>
+  — GPU homology search as a cloud API for protein-design pipelines.
+- **NCBI BLAST** — the original seed-extend method and the source of the X-drop
+  rule, BLOSUM62 defaults, and E-value statistics.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Spaced seeds.** Replace the contiguous k-mer with a *spaced seed* (e.g.
+   pattern `1101`): match positions 0,1,3 and ignore 2. Spaced seeds catch
+   diverged homologies a contiguous seed misses. Measure the change on `hit_medium`.
+2. **Two-hit seeding.** Require **two** seeds on the same diagonal within a window
+   before extending (BLAST's "two-hit" rule). Fewer wasted extensions; does the
+   ranking change?
+3. **Gapped re-scoring.** For the top-K survivors, run a banded Smith-Waterman
+   (reuse flagship 3.01) around the HSP to allow indels, and re-rank.
+4. **E-values.** Implement the Karlin–Altschul statistics to turn a raw HSP score
+   into an E-value given the database size; report E instead of raw score.
+5. **Warp-per-sequence.** Re-map the kernel so a whole **warp** cooperates on one
+   long DB sequence (the catalog's "one warp per query-target pair"), and compare
+   occupancy/throughput with the current thread-per-sequence mapping.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced scope.** This is the **ungapped** seed-extend core. It does not do
+  gapped alignment, profile/PSI-BLAST iteration, or E-value statistics — those are
+  named in THEORY and left as exercises. Raw HSP scores are **not** E-values and
+  carry no statistical significance claim.
+- **Synthetic data.** The sample is generated and labeled synthetic; it is not a
+  real protein and tells you nothing biological. The relationships are engineered
+  to make the demo interpretable.
+- **Tiny scale, honest timing.** On 9 sequences the GPU is *slower* than the CPU —
+  it is dominated by launch/copy overhead. The timing is a **teaching artifact**,
+  not a benchmark; the GPU's advantage appears at database scale (millions of
+  sequences), which is the regime MMseqs2-GPU targets.
+- **Seeding choices.** `k=4` contiguous seeds and `X-drop=12` are didactic
+  defaults, not tuned for sensitivity. Real tools use spaced/reduced-alphabet
+  seeds and carefully calibrated thresholds.

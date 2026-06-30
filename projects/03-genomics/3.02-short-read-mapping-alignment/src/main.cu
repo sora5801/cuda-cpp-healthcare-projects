@@ -1,22 +1,23 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load reads, map on CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 3.2 -- Short-Read Mapping / Alignment   (template skeleton)
+// Project 3.2 : Short-Read Mapping / Alignment
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load the problem (reference + reads) from data/sample.
+//   2. Build the reference k-mer index ONCE (shared by CPU and GPU).
+//   3. Map all reads on the CPU (reference_cpu.cpp)  -> the trusted answer.
+//   4. Map all reads on the GPU (kernels.cu)         -> the thing being taught.
+//   5. VERIFY: every read's (pos, score) must match the CPU EXACTLY (integers).
+//   6. REPORT: a deterministic per-read table to stdout; timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Anything that varies run-to-run (timings) goes to
+//   STDERR, which the demo shows but does not diff (PATTERNS.md section 3).
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+//   A short CIGAR-like string ("48=2X" = 48 matches then 2 mismatches... we keep
+//   it simpler: "<len>M with <mism> mismatches") is printed per read so the
+//   learner sees the mapping, not just a number.
 //
 // READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
 // reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
@@ -25,97 +26,99 @@
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // map_reads_gpu (GPU path), shared core via header
+#include "reference_cpu.h"    // load_problem, build_index, map_reads_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
+// Program identity. These print on the first stdout line and must stay in sync
+// with demo/expected_output.txt.
 static const char* PROJECT_ID   = "3.2";
 static const char* PROJECT_NAME = "Short-Read Mapping / Alignment";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// How many per-read rows to print (the sample has few reads, so print them all;
+// this cap keeps stdout bounded if a learner points the program at a big file).
+static constexpr int MAX_ROWS = 32;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load the problem -----------------------------------------------
+    // Default to the committed sample; allow an override path as argv[1] so the
+    // demo and a curious learner can both drive the same binary.
+    const std::string path = (argc > 1) ? argv[1]
+                                        : "data/sample/reads_sample.txt";
+    MappingProblem prob;
+    try {
+        prob = load_problem(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. Build the reference k-mer index (once, on the host) ------------
+    // Both the CPU reference and the GPU consume THIS exact index, so they seed
+    // identically -> their candidate positions (and thus results) match.
+    const KmerIndex index = build_index(prob);
+
+    // ---- 3. CPU reference mapping (timed) ----------------------------------
+    std::vector<MapResult> res_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    map_reads_cpu(prob, index, res_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 4. GPU mapping (kernel timed inside the wrapper) ------------------
+    std::vector<MapResult> res_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    map_reads_gpu(prob, index, res_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 5. Verify: EXACT integer agreement on (pos, score) per read -------
+    // Because both sides ran the same integer score_window() over the same
+    // candidates, any disagreement is a real bug, so we demand pos AND score
+    // to be identical. We also count how many reads mapped (pos != NO_HIT).
+    int mismatches = 0;     // reads where CPU and GPU disagree
+    int mapped     = 0;     // reads that found a position
+    for (int r = 0; r < prob.n_reads; ++r) {
+        const MapResult& c = res_cpu[static_cast<std::size_t>(r)];
+        const MapResult& g = res_gpu[static_cast<std::size_t>(r)];
+        if (c.pos != g.pos || c.score != g.score || c.mism != g.mism) ++mismatches;
+        if (c.pos != NO_HIT) ++mapped;
+    }
+    const bool pass = (mismatches == 0);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 6a. Deterministic report -> STDOUT (diffed by the demo) -----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("seed-and-extend: %d reads (L=%d) vs reference (L_ref=%d), "
+                "seed k=%d, match=+%d mismatch=%d\n",
+                prob.n_reads, prob.read_len, prob.ref_len, SEED_K, MATCH, MISMATCH);
+    std::printf("index: %d reference %d-mers (sorted)\n", index.n_kmers, SEED_K);
+    std::printf("per-read mapping (read -> ref pos, score, edits):\n");
+    const int rows = prob.n_reads < MAX_ROWS ? prob.n_reads : MAX_ROWS;
+    for (int r = 0; r < rows; ++r) {
+        const MapResult& g = res_gpu[static_cast<std::size_t>(r)];
+        if (g.pos == NO_HIT) {
+            // No seed hit: the read's leading k-mer is absent from the reference.
+            std::printf("  read %2d -> UNMAPPED (no seed hit)\n", r);
+        } else {
+            // "<L>M" is a CIGAR-style "L aligned columns, no gaps"; we annotate
+            // the mismatch count so the learner reads it as an edit summary.
+            std::printf("  read %2d -> pos %4d  score %3d  %dM (%d mismatch%s)\n",
+                        r, g.pos, g.score, prob.read_len, g.mism,
+                        g.mism == 1 ? "" : "es");
+        }
+    }
+    std::printf("summary: %d/%d reads mapped\n", mapped, prob.n_reads);
+    std::printf("RESULT: %s (GPU matches CPU exactly on every read)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 6b. Varying detail -> STDERR (shown, not diffed) ------------------
+    std::fprintf(stderr, "[data]   source: %s  (R=%d reads, L=%d, L_ref=%d)\n",
+                 path.c_str(), prob.n_reads, prob.read_len, prob.ref_len);
+    std::fprintf(stderr, "[timing] CPU mapping: %.3f ms   GPU kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- this tiny batch is "
+                         "dominated by launch/copy overhead; the GPU's "
+                         "one-thread-per-read parallelism wins at millions of reads.\n");
+    std::fprintf(stderr, "[verify] read-level mismatches CPU vs GPU = %d "
+                         "(exact integer comparison)\n", mismatches);
 
     // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
