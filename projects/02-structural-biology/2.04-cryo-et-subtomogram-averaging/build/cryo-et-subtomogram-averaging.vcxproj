@@ -95,9 +95,11 @@
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Console</SubSystem>
-      <!-- cudart_static.lib = the CUDA runtime; its folder is on the search
+      <!-- cufft.lib       = the cuFFT library (3-D batched FFTs for the cross-
+                              correlation theorem; see src/kernels.cu, BUILD_GUIDE 7b).
+           cudart_static.lib = the CUDA runtime. Both folders are on the search
            path thanks to the CUDA .props import above. -->
-      <AdditionalDependencies>cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>cufft.lib;cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
@@ -133,7 +135,8 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- cufft.lib for the batched 3-D FFTs (cross-correlation theorem). -->
+      <AdditionalDependencies>cufft.lib;cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>

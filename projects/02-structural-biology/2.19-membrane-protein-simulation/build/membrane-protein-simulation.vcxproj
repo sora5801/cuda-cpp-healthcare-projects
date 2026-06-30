@@ -153,6 +153,10 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- Shared host+device physics core (the __host__ __device__ idiom): the
+         single source of the per-pair/per-bead math used by BOTH the CPU
+         reference and the GPU kernels, so their results match. -->
+    <ClInclude Include="..\src\membrane.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

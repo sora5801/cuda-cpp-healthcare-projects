@@ -1,5 +1,11 @@
 2.4 -- Cryo-ET Subtomogram Averaging
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Subtomogram averaging: 1 reference vs 6 candidates, 16^3 voxels, 12 trial angles (cuFFT cross-correlation)
+per-candidate alignment (best angle index : peak NCC):
+  cand[0]  angle[1] =   30.0 deg   peak NCC = 0.9651
+  cand[1]  angle[3] =   90.0 deg   peak NCC = 0.9681
+  cand[2]  angle[5] =  150.0 deg   peak NCC = 0.9653
+  cand[3]  angle[7] =  210.0 deg   peak NCC = 0.9657
+  cand[4]  angle[9] =  270.0 deg   peak NCC = 0.9678
+  cand[5]  angle[11] =  330.0 deg   peak NCC = 0.9655
+refined average core intensity (mean|voxel|) = 0.097395
+RESULT: PASS (GPU cuFFT correlation matches CPU direct, same poses)

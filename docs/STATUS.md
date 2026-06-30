@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 54/301 projects done (17.9%) | todo 247 | in-progress 0 | missing 0
+**Progress:** 60/301 projects done (19.9%) | todo 241 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
-| 🟢 Beginner | 67 | 29 | 0 | 38 |
-| 🟡 Intermediate | 206 | 23 | 0 | 183 |
+| 🟢 Beginner | 67 | 32 | 0 | 35 |
+| 🟡 Intermediate | 206 | 26 | 0 | 180 |
 | 🔴 Advanced | 28 | 2 | 0 | 26 |
 
 ## 1. Drug Discovery & Molecular Design  (35/35 done)
@@ -50,21 +50,21 @@
 | 1.34 | Amyloid / Aggregation Propensity Prediction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.35 | QMMM/ML Potential Hybrid MD | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 
-## 2. Structural Biology & Protein Science  (7/35 done)
+## 2. Structural Biology & Protein Science  (13/35 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
 | 2.01 | Protein Structure Prediction Inference (AlphaFold-class) | 🟢 Beginner | Established | [x] done | - | - |
 | 2.02 | Protein-Protein Docking | 🟢 Beginner | Established | [x] done | - | - |
 | 2.03 | Cryo-EM Single-Particle Reconstruction | 🟢 Beginner | Established | [x] done | - | - |
-| 2.04 | Cryo-ET Subtomogram Averaging | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 2.04 | Cryo-ET Subtomogram Averaging | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 2.05 | Coarse-Grained / MARTINI Simulation | 🟢 Beginner | Established | [x] done | - | - |
 | 2.06 | Normal Mode Analysis / Elastic Network Models | 🟢 Beginner | Established | [x] done | lead | main |
-| 2.07 | Monte Carlo Protein Structure Sampling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 2.07 | Monte Carlo Protein Structure Sampling | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 2.08 | GPU Molecular Visualization & Ray Tracing | 🟢 Beginner | Established | [x] done | - | - |
 | 2.09 | Solvent-Accessible Surface & Poisson-Boltzmann Electrostatics | 🟢 Beginner | Established | [x] done | - | - |
-| 2.10 | Protein Design / Inverse Folding Inference | 🟢 Beginner | Established | [ ] todo | - | - |
-| 2.11 | Cryo-EM CTF Estimation & Particle Picking | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 2.10 | Protein Design / Inverse Folding Inference | 🟢 Beginner | Established | [x] done | - | - |
+| 2.11 | Cryo-EM CTF Estimation & Particle Picking | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 2.12 | Flexible Fitting / MDFF | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 2.13 | MSA Generation Acceleration | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 2.14 | Protein-Ligand Co-Folding | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
@@ -72,10 +72,10 @@
 | 2.16 | ΔΔG Stability Prediction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 2.17 | Allosteric Network Analysis | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 2.18 | NMR Structure Refinement | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 2.19 | Membrane Protein Simulation | 🟢 Beginner | Established | [ ] todo | - | - |
+| 2.19 | Membrane Protein Simulation | 🟢 Beginner | Established | [x] done | worker-2.19 | proj/2.19-membrane-protein-simulation |
 | 2.20 | Heterogeneous Cryo-EM Reconstruction (3D Variability) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 2.21 | Protein-Nucleic Acid Docking & Co-Folding | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 2.22 | Electron Density Map Analysis & Model Validation | 🟢 Beginner | Established | [ ] todo | - | - |
+| 2.22 | Electron Density Map Analysis & Model Validation | 🟢 Beginner | Established | [x] done | - | - |
 | 2.23 | Protein-Ligand Interaction Energy Decomposition | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 2.24 | SAXS / SANS Data-Driven Structure Modeling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 2.25 | Coevolutionary Contact Prediction & MSA Transformer | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

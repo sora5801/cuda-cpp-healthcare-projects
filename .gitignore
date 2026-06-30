@@ -16,6 +16,15 @@
 *.log
 *.exe
 
+# --- Demo-rendered image outputs (netpbm) ---
+# Some demos (e.g. 2.08 ray tracer, domain-4 imaging) render an image when run.
+# These are generated artifacts, never committed. Committed *sample* images live
+# under data/sample/ and are re-included by the exception below.
+*.pgm
+*.ppm
+*.pbm
+!**/data/sample/**
+
 # --- Python ---
 __pycache__/
 *.pyc

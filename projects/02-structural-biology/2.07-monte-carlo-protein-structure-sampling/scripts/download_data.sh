@@ -2,11 +2,12 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.7 -- Monte Carlo Protein Structure Sampling   (template skeleton)
+# Project 2.7 : Monte Carlo Protein Structure Sampling (HP lattice model)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. This reduced-scope teaching model
+# folds a SYNTHETIC HP sequence, so no external download is required to run the
+# demo. The links below point to real-world benchmarks for going further.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,18 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 2.7 -- Monte Carlo Protein Structure Sampling"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    CASP protein structure benchmarks (https://predictioncenter.org); PDB structures for folding benchmarks (https://www.rcsb.org); Dunbrack rotamer library (https://dunbrack.fccc.edu/bbdep2010/); CAMEO continuous benchmarking (https://www.cameo3d.org)."
+echo "This reduced-scope HP-lattice demo needs NO download: data/sample/hp_problem.txt"
+echo "is a tiny SYNTHETIC HP sequence and the program folds it offline."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "For a different SYNTHETIC problem (longer chain, more replicas), run:"
+echo "    python scripts/make_synthetic.py --sequence HHPPHPPHPPHPPHPPHPPHPPHH --replicas 1024"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Real-world folding/sampling benchmarks (study these to go further):"
+echo "  * CASP structure-prediction benchmarks : https://predictioncenter.org"
+echo "  * PDB experimental structures          : https://www.rcsb.org"
+echo "  * Dunbrack backbone-dependent rotamers : https://dunbrack.fccc.edu/bbdep2010/"
+echo "  * CAMEO continuous benchmarking        : https://www.cameo3d.org"
+echo
+echo "These are full 3-D coordinate / rotamer datasets that a production MC engine"
+echo "(Rosetta, OpenMM) consumes; this 2-D HP teaching model does not parse them."
+echo "Respect each site's license/registration -- this script never bypasses it."

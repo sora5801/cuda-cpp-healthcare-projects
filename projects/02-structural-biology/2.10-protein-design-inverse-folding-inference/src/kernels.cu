@@ -1,94 +1,177 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  GPU kernels + host wrapper for inverse-folding design
 // ---------------------------------------------------------------------------
-// Project 2.10 -- Protein Design / Inverse Folding Inference   (template skeleton)
+// Project 2.10 : Protein Design / Inverse Folding Inference
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// This is the GPU twin of design_cpu() in reference_cpu.cpp. main.cu runs both
+// and asserts they agree EXACTLY (integer math, shared scoring core). The two
+// kernels mirror the two serial passes:
+//     neighbor_kernel  <-> step 1 (all-pairs burial, O(L^2))
+//     design_kernel    <-> step 2 (per-residue argmax over 20 amino acids)
+// See ../THEORY.md sec "GPU mapping" for the full reasoning.
 // ===========================================================================
 #include "kernels.cuh"
+#include "inverse_folding.h"     // BackboneResidue, NUM_AA, score_aa_at_residue
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
+// 256 threads/block: a multiple of the 32-lane warp with good occupancy on
+// sm_75..sm_89 (see THEORY "GPU mapping" for the occupancy reasoning). It is
+// ALSO the shared-memory tile width in neighbor_kernel below.
 static constexpr int THREADS_PER_BLOCK = 256;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
+// neighbor_kernel: one thread per residue i counts its Calpha contacts.
+//   Launch config (set in design_gpu):
+//     grid  = ceil(L / THREADS_PER_BLOCK) blocks
 //     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x owns residue i
+//   and computes neighbors[i].
+//
+//   WHY SHARED MEMORY (the teaching point):
+//     The naive version has every thread re-read all L residue coordinates from
+//     global memory -> O(L^2) global loads, each ~hundreds of cycles. Instead we
+//     TILE: the block cooperatively loads a tile of THREADS_PER_BLOCK residues
+//     into shared memory (fast, on-chip), every thread compares its residue
+//     against that whole tile from shared memory, then we advance to the next
+//     tile. Each global coordinate is thus read once per block, not once per
+//     thread -- the same trick as a tiled matrix multiply / N-body force kernel.
+//
+//   Memory: reads res[] (global, staged through shared `tile`); writes
+//   neighbors[i] (global). No atomics: each thread owns one independent output.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void neighbor_kernel(const BackboneResidue* __restrict__ res, int L,
+                                int* __restrict__ neighbors) {
+    // Shared tile of residue coordinates, refilled tile-by-tile by the block.
+    // Size = block size, so each thread loads exactly one residue per tile.
+    __shared__ BackboneResidue tile[THREADS_PER_BLOCK];
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;   // this thread's residue
+
+    // Load THIS thread's own residue once into a register. Threads with i >= L
+    // (ragged last block) still participate in the cooperative tile loads below
+    // -- they just must not WRITE an output. We read a safe dummy for them.
+    BackboneResidue me = (i < L) ? res[i] : BackboneResidue{0.f, 0.f, 0.f};
+
+    int count = 0;   // running neighbor count for residue i (integer -> exact)
+
+    // Sweep the residue list one shared-memory tile at a time.
+    for (int base = 0; base < L; base += THREADS_PER_BLOCK) {
+        // (a) Cooperative load: thread t brings residue (base + t) into shared
+        //     memory (guarded so the last partial tile does not read past L).
+        const int load_idx = base + threadIdx.x;
+        if (load_idx < L) tile[threadIdx.x] = res[load_idx];
+        // Barrier: every thread must finish loading before anyone reads the tile.
+        __syncthreads();
+
+        // (b) Compare my residue against every residue in this tile.
+        const int tile_count = min(THREADS_PER_BLOCK, L - base);  // valid entries
+        if (i < L) {
+            for (int t = 0; t < tile_count; ++t) {
+                const int j = base + t;            // global index of tile entry t
+                if (j == i) continue;              // not a neighbor of itself
+                const float dx = me.x - tile[t].x;
+                const float dy = me.y - tile[t].y;
+                const float dz = me.z - tile[t].z;
+                const float d2 = dx * dx + dy * dy + dz * dz;   // squared dist (A^2)
+                if (d2 <= CONTACT_RADIUS_SQ) ++count;           // within contact
+            }
+        }
+        // Barrier before refilling the tile next iteration (so no thread reads a
+        // half-overwritten tile). Both __syncthreads() are required for safety.
+        __syncthreads();
     }
+
+    if (i < L) neighbors[i] = count;   // guard the ragged last block on the WRITE
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// design_kernel: one thread per residue i picks the best amino acid.
+//   Launch config: same grid/block as neighbor_kernel (one thread per residue).
+//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x owns residue i.
+//   Memory: reads neighbors[i] (global), writes designed[i], score[i] (global).
+//   No shared memory or atomics: the 20-way argmax is local to each thread, and
+//   each output element is independent.
+//
+//   The argmax loop is IDENTICAL in structure to design_cpu()'s step 2, and
+//   calls the SAME score_aa_at_residue() -> the chosen amino acid and its score
+//   match the CPU bit-for-bit (the whole reason the score core is a shared
+//   __host__ __device__ function in inverse_folding.h).
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+__global__ void design_kernel(const int* __restrict__ neighbors, int L,
+                              int* __restrict__ designed, int* __restrict__ score) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;   // this thread's residue
+    if (i >= L) return;                                    // ragged-block guard
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    const int nbr = neighbors[i];                          // this residue's burial
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // Initialize "best" with amino acid 0 so the tie-break (lowest index) is
+    // well-defined and matches the CPU exactly.
+    int best_aa    = 0;
+    int best_score = score_aa_at_residue(0, nbr);
+    #pragma unroll
+    for (int aa = 1; aa < NUM_AA; ++aa) {
+        const int s = score_aa_at_residue(aa, nbr);
+        // STRICT '>' keeps the FIRST (lowest-index) amino acid on a tie -> the
+        // same deterministic choice the CPU makes.
+        if (s > best_score) { best_score = s; best_aa = aa; }
+    }
+    designed[i] = best_aa;
+    score[i]    = best_score;
+}
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+// ---------------------------------------------------------------------------
+// design_gpu: host wrapper. The canonical CUDA steps for a two-kernel pipeline:
+//   (1) allocate device memory   (2) copy the backbone host->device
+//   (3) launch neighbor_kernel    (4) launch design_kernel (uses its output)
+//   (5) copy results device->host (6) free device memory
+// We time ONLY the two kernels (CUDA events spanning both launches), not the
+// H2D/D2H copies -- those are discussed separately in THEORY.
+// ---------------------------------------------------------------------------
+void design_gpu(const Backbone& bb, DesignResult& out, float* kernel_ms) {
+    const int L = bb.size();
+    out.neighbors.assign(L, 0);
+    out.designed.assign(L, 0);
+    out.score.assign(L, 0);
+
+    const std::size_t res_bytes = static_cast<std::size_t>(L) * sizeof(BackboneResidue);
+    const std::size_t int_bytes = static_cast<std::size_t>(L) * sizeof(int);
+
+    // (1) Device buffers. d_ marks DEVICE pointers (CLAUDE.md sec 12).
+    BackboneResidue* d_res       = nullptr;   // [L] Calpha coordinates
+    int*             d_neighbors = nullptr;   // [L] neighbor counts (kernel-1 out / kernel-2 in)
+    int*             d_designed  = nullptr;   // [L] designed amino-acid indices
+    int*             d_score     = nullptr;   // [L] best per-residue scores
+    CUDA_CHECK(cudaMalloc(&d_res,       res_bytes));   // can fail: out of device memory
+    CUDA_CHECK(cudaMalloc(&d_neighbors, int_bytes));
+    CUDA_CHECK(cudaMalloc(&d_designed,  int_bytes));
+    CUDA_CHECK(cudaMalloc(&d_score,     int_bytes));
+
+    // (2) Upload the backbone coordinates (the only large input). bb.res is a
+    //     contiguous vector<BackboneResidue>, so one memcpy suffices.
+    CUDA_CHECK(cudaMemcpy(d_res, bb.res.data(), res_bytes, cudaMemcpyHostToDevice));
+
+    // (3)+(4) Launch both kernels. Enough blocks to give one thread per residue;
+    //     ceiling division (L + B - 1) / B rounds up so no residue is dropped.
+    const int blocks = (L + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    // Pass 1: burial. Pass 2: argmax design. design_kernel depends on
+    // neighbor_kernel's output, but successive launches on the default stream
+    // run in order, so no explicit sync is needed between them.
+    neighbor_kernel<<<blocks, THREADS_PER_BLOCK>>>(d_res, L, d_neighbors);
+    design_kernel  <<<blocks, THREADS_PER_BLOCK>>>(d_neighbors, L, d_designed, d_score);
+    *kernel_ms = timer.stop_ms();          // combined GPU time for both passes
+    CUDA_CHECK_LAST("inverse-folding kernels");   // catch launch/exec errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // (5) Bring the three result arrays back to the host.
+    CUDA_CHECK(cudaMemcpy(out.neighbors.data(), d_neighbors, int_bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(out.designed.data(),  d_designed,  int_bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(out.score.data(),     d_score,     int_bytes, cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    // (6) Always free what we allocated (no GPU garbage collector exists).
+    CUDA_CHECK(cudaFree(d_res));
+    CUDA_CHECK(cudaFree(d_neighbors));
+    CUDA_CHECK(cudaFree(d_designed));
+    CUDA_CHECK(cudaFree(d_score));
 }

@@ -1,12 +1,15 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 2.19 -- Membrane Protein Simulation   (template skeleton)
+# Project 2.19 : Membrane Protein Simulation   (reduced-scope teaching version)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL, and
+# NEVER bypasses credentials/registration. This teaching project does NOT need a
+# downloaded dataset -- it BUILDS its own tiny synthetic coarse-grained membrane
+# patch (scripts/make_synthetic.py + the in-code build_system()). This script
+# therefore only points at the real-world membrane databases the catalog names,
+# for a learner who wants to go further (those need force-field setup tools and
+# are far beyond this model). Nothing here is required to run the demo.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +19,17 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.19 -- Membrane Protein Simulation"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    MemProtMD — 3133 membrane proteins in lipid bilayers (https://memprotmd.bioch.ox.ac.uk); GPCRdb — GPCR structures and MD data (https://gpcrdb.org); CGMD Platform benchmark systems (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7765266/); OPM — orientations of proteins in membranes (https://opm.phar.umich.edu)."
+Write-Host "This project runs entirely on a SYNTHETIC sample -- no download needed."
+Write-Host "  Regenerate / resize the committed sample with:"
+Write-Host "    python scripts/make_synthetic.py --n-lipids 32 --n-prot 7 --steps 400"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real-world membrane-protein resources (for further study; not auto-fetched"
+Write-Host "because they need force-field setup tools like CHARMM-GUI):"
+Write-Host "  * MemProtMD  -- 3133 membrane proteins in bilayers : https://memprotmd.bioch.ox.ac.uk"
+Write-Host "  * GPCRdb     -- GPCR structures and MD data         : https://gpcrdb.org"
+Write-Host "  * OPM        -- orientations of proteins in membranes: https://opm.phar.umich.edu"
+Write-Host "  * CGMD Platform benchmark systems                   : https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7765266/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  These are atomistic/structural sets. Building a runnable MD system from"
+Write-Host "  them requires CHARMM-GUI Membrane Builder or packmol-memgen (see README)."

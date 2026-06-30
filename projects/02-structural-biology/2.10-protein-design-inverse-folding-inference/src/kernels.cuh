@@ -1,52 +1,63 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for inverse-folding design
 // ---------------------------------------------------------------------------
-// Project 2.10 -- Protein Design / Inverse Folding Inference   (template skeleton)
+// Project 2.10 : Protein Design / Inverse Folding Inference
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   Inverse folding here is TWO independent-per-residue passes, both of which
+//   are embarrassingly parallel -- the classic "score N items independently"
+//   GPU pattern (PATTERNS.md sec 1, exemplar 1.12 Tanimoto):
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//     KERNEL 1  neighbor_kernel : one thread per residue i counts how many
+//               other residues' Calpha atoms lie within CONTACT_RADIUS. This is
+//               the all-pairs O(L^2) BURIAL computation -- thread i loops over
+//               all L residues. It is the analog of message-passing over the
+//               protein graph: every node gathers information from its spatial
+//               neighbors. The backbone coordinates are read by EVERY thread and
+//               never change, so we cache them in shared memory per block.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//     KERNEL 2  design_kernel   : one thread per residue i scores all 20 amino
+//               acids with the SHARED score_aa_at_residue() (from
+//               inverse_folding.h, identical to the CPU) and writes the argmax.
+//               This is the per-position "decode" step at temperature 0.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+//   Because both kernels call the exact same integer scoring core the CPU uses,
+//   the GPU result is bit-for-bit identical -> we verify with EXACT equality.
+//
+//   This header is included only by .cu units (it declares __global__ kernels).
+//   main.cu calls design_gpu(); reference_cpu.h carries the pure-C++ data model.
+//
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, reference_cpu.h,
+// inverse_folding.h. Then read kernels.cu. Science/GPU-mapping in ../THEORY.md.
 // ===========================================================================
 #pragma once
 
-#include <vector>
+#include "reference_cpu.h"   // Backbone, DesignResult (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ---- Device kernels (documented in detail at their definitions) -----------
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
+// neighbor_kernel: thread i -> residue i; writes neighbors[i] = contact count.
+//   res       : [L] device array of Calpha coordinates (BackboneResidue)
+//   L         : residue count
+//   neighbors : [L] device output, neighbor counts
+__global__ void neighbor_kernel(const BackboneResidue* __restrict__ res, int L,
+                                int* __restrict__ neighbors);
+
+// design_kernel: thread i -> residue i; writes designed[i] (argmax aa) and
+//   score[i] (its score), using neighbors[i] computed by neighbor_kernel.
+//   neighbors : [L] device input, per-residue burial counts
+//   L         : residue count
+//   designed  : [L] device output, chosen amino-acid index 0..NUM_AA-1
+//   score     : [L] device output, the chosen amino acid's integer score
+__global__ void design_kernel(const int* __restrict__ neighbors, int L,
+                              int* __restrict__ designed, int* __restrict__ score);
+
+// ---- Host wrapper ----------------------------------------------------------
+// design_gpu: run the whole GPU pipeline (upload backbone, launch both kernels,
+//   download results) and report the combined KERNEL time (CUDA events) via
 //   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   bb        : the loaded backbone problem (host)
+//   out       : filled with neighbors/designed/score (resized to L)
+//   kernel_ms : out-param, milliseconds spent in the two kernels (not copies)
+void design_gpu(const Backbone& bb, DesignResult& out, float* kernel_ms);

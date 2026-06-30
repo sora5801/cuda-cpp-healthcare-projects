@@ -2,8 +2,8 @@
   "id": "2.19",
   "id_padded": "2.19",
   "project": "Membrane Protein Simulation",
-  "status": "todo",
-  "owner": "",
-  "branch": "",
-  "skeleton": true
+  "status": "done",
+  "owner": "worker-2.19",
+  "branch": "proj/2.19-membrane-protein-simulation",
+  "skeleton": false
 }

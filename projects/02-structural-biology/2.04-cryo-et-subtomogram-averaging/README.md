@@ -6,29 +6,45 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+In cryo-electron tomography the same molecular machine appears thousands of times
+inside one extremely noisy 3-D tomogram, each copy at a random orientation.
+**Subtomogram averaging (STA)** recovers a clean structure by *aligning* every
+noisy copy to a common reference and *averaging* them — noise cancels as `1/√N`,
+signal reinforces. This project implements the **align + average** inner loop as
+a **reduced-scope teaching version**: each candidate cube is matched to the
+reference by an in-plane rotation search, and for each trial rotation the GPU
+computes the **cross-correlation over all 3-D shifts in Fourier space** using
+**cuFFT** (the cross-correlation theorem). A plain-C++ direct correlation is the
+trusted baseline; the synthetic data has a known answer so you can *see* the
+right poses recovered. The lesson is twofold: how an FFT library turns an
+`O(V²)` shift search into `O(V log V)`, and how to use that library without it
+being a black box.
 
 ## What this computes & why the GPU helps
 
 Cryo-electron tomography (cryo-ET) images entire cells or organelles, and subtomogram averaging (STA) extracts repeating structural units from noisy 3D tomograms by aligning and averaging thousands of subtomograms. GPU acceleration applies to: (1) tomogram reconstruction from tilt series (weighted back-projection or SART), (2) template matching for particle picking, and (3) subtomogram alignment (cross-correlation in Fourier space). RELION-4 extended STA; the IsoNet neural network corrects missing wedge artifacts with GPU inference.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** the **alignment search** — for every (candidate,
+trial-angle) pair, finding the translation that maximizes cross-correlation
+against the reference. Done directly this is `O(V²)` per job (V = d³ voxels, V
+shifts × O(V) per shift). The GPU instead computes the correlation at **all
+shifts at once** via the cross-correlation theorem: `corr = IFFT(conj(FFT(ref)) ·
+FFT(cand))`, an `O(V log V)` operation that **cuFFT batches** across all
+candidates and angles in a single launch. Rotation, the per-frequency complex
+multiply, and the peak reduction are tiny custom kernels around that library call.
 
 ## The algorithm in brief
 
-Weighted back-projection (WBP), SART tomographic reconstruction, subtomogram cross-correlation alignment, missing wedge compensation, constrained correlation, geometric 3D class averaging, equivariant NN for missing wedge correction.
+- **Zero-mean** the reference and every candidate (so correlation peaks are meaningful).
+- **Rotate** each candidate by each trial angle about z (bilinear interpolation).
+- **cuFFT R2C** (batched) every rotated cube and the reference.
+- **conj(ref) · cand** per frequency — the cross-correlation theorem.
+- **cuFFT C2R** (batched) back to a correlation field; the **peak** is the best
+  shift, the value at `(0,0,0)` is the zero-shift score; normalize to **NCC**.
+- **argmax over angles** → each candidate's pose; **average** the aligned cubes
+  → the refined reference.
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
 derivation.
@@ -94,15 +110,52 @@ reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-cuFFT for 3D Fourier-space cross-correlation; custom back-projection CUDA kernels; GPU-parallel template matching over tomogram volume; PyTorch CUDA for IsoNet missing-wedge CNN. --
+**Use a CUDA library (cuFFT) + batched independent jobs** (`docs/PATTERNS.md` §1
+and §5; exemplar flagship `8.03`). Each (candidate, angle) is an independent job;
+`cufftPlanMany` batches one 3-D R2C/C2R FFT per job, and tiny custom kernels do
+the rotation, the per-frequency `conj(ref)·cand` multiply, and a deterministic
+shared-memory reduction for the peak and zero-shift scores. The full catalog
+pattern (`cuFFT for 3D Fourier-space cross-correlation; custom back-projection
+kernels; template matching; PyTorch CUDA for IsoNet`) spans reconstruction and
+deep learning too; this teaching version implements the cross-correlation
+alignment core.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Break the conjugate.** In `xcorr_mul_kernel`, change `conj(ref)·cand` to
+   `ref·cand` (drop the conjugate). Re-run: the recovered peak shifts/mirrors.
+   Explain why — this is the difference between correlation and convolution
+   (THEORY §2, §5).
+2. **Forget the `1/V`.** Remove the `invV` scaling in `reduce_kernel`. The NCC
+   blows up by a factor of `V`. This is the cuFFT-unnormalized-inverse gotcha
+   (THEORY §5) — feel it, then put it back.
+3. **Bigger cubes.** Regenerate with `python scripts/make_synthetic.py --d 32`
+   (rebuild, re-capture `expected_output.txt`). Watch the GPU's lead over the CPU
+   grow — the FFT advantage scales with `V`.
+4. **Finer angle grid.** Bump `--angles 36` (10° steps). Do the recovered poses
+   refine? What happens to the peak NCC? (Hint: interpolation blur sets a floor.)
+5. **Use the peak shift.** The demo verifies the *zero-shift* score; extend
+   `reduce_kernel` to also return the **argmax voxel** (the best translation) and
+   apply it when building the average. This is true translational alignment.
+6. **Constant-memory reference spectrum.** At large batch sizes, put the
+   reference spectrum in `__constant__`/texture memory and measure the change
+   (THEORY §4, "Memory hierarchy").
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced scope (CLAUDE.md §13).** This is the *teaching* core of STA, not a
+  research tool. We search **one in-plane rotation about z**, not the full 3-D
+  orientation space (3 Euler angles) that RELION-4/Dynamo search. THEORY §7 maps
+  every simplification to the real algorithm.
+- **Synthetic data, labeled as such.** The sample is generated by
+  `scripts/make_synthetic.py` (Gaussian-blob motif + rotation + noise) with a
+  **planted, known answer**. It is not real cryo-ET data and implies no
+  biological or clinical result.
+- **No missing-wedge model.** Our motif is fully sampled; real subtomograms have
+  the characteristic missing wedge that requires masking / constrained
+  correlation / IsoNet-style inpainting (THEORY §1, §7).
+- **No CTF, no dose weighting, no iteration, no classification.** Production STA
+  iterates align→average→re-align with Bayesian weighting and gold-standard FSC;
+  we do a single pass.
+- **Tiny problem.** 6 cubes at `16³` is sized for a fast, deterministic demo;
+  the timing line is a *teaching artifact*, never a benchmark claim (CLAUDE.md §12).

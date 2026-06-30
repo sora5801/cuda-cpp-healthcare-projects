@@ -31,3 +31,8 @@ add_executable(cryo-em-ctf-estimation-particle-picking
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(cryo-em-ctf-estimation-particle-picking PRIVATE src)
+
+# This project links the cuFFT library for the 2-D micrograph power spectrum
+# (see src/kernels.cu). CUDA::cufft is the imported target from CUDAToolkit.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(cryo-em-ctf-estimation-particle-picking PRIVATE CUDA::cufft)

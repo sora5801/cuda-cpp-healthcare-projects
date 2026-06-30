@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 2.22 -- Electron Density Map Analysis & Model Validation   (template skeleton)
+# Project 2.22 -- Electron Density Map Analysis & Model Validation
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/electron-density-map-analysis-model-validation.sln (CLAUDE.md §5). Both
@@ -31,3 +31,7 @@ add_executable(electron-density-map-analysis-model-validation
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(electron-density-map-analysis-model-validation PRIVATE src)
+
+# This project links the cuFFT library for the 3-D forward FFT (see kernels.cu).
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(electron-density-map-analysis-model-validation PRIVATE CUDA::cufft)

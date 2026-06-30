@@ -31,3 +31,10 @@ add_executable(cryo-et-subtomogram-averaging
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(cryo-et-subtomogram-averaging PRIVATE src)
+
+# Link cuFFT: kernels.cu uses batched 3-D FFTs to compute cross-correlation via
+# the cross-correlation theorem (the same library linked as cufft.lib in the VS
+# project; see BUILD_GUIDE.md 7b). CUDA::cufft is the CMake imported target that
+# pulls in the right header and lib paths from the CUDA toolkit.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(cryo-et-subtomogram-averaging PRIVATE CUDA::cufft)

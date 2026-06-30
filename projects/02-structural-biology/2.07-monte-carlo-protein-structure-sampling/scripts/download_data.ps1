@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 2.7 -- Monte Carlo Protein Structure Sampling   (template skeleton)
+# Project 2.7 : Monte Carlo Protein Structure Sampling (HP lattice model)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. This reduced-scope teaching model
+# folds a SYNTHETIC HP sequence, so no external download is required to run the
+# demo. The links below point to the real-world benchmarks a learner would use
+# if they extended this toward a full-atom MC engine.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,19 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.7 -- Monte Carlo Protein Structure Sampling"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    CASP protein structure benchmarks (https://predictioncenter.org); PDB structures for folding benchmarks (https://www.rcsb.org); Dunbrack rotamer library (https://dunbrack.fccc.edu/bbdep2010/); CAMEO continuous benchmarking (https://www.cameo3d.org)."
+Write-Host "This reduced-scope HP-lattice demo needs NO download: data/sample/hp_problem.txt"
+Write-Host "is a tiny SYNTHETIC HP sequence and the program folds it offline."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "For a different SYNTHETIC problem (longer chain, more replicas), run:"
+Write-Host "    python scripts/make_synthetic.py --sequence HHPPHPPHPPHPPHPPHPPHPPHH --replicas 1024"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Real-world folding/sampling benchmarks (study these to go further):"
+Write-Host "  * CASP structure-prediction benchmarks : https://predictioncenter.org"
+Write-Host "  * PDB experimental structures          : https://www.rcsb.org"
+Write-Host "  * Dunbrack backbone-dependent rotamers : https://dunbrack.fccc.edu/bbdep2010/"
+Write-Host "  * CAMEO continuous benchmarking        : https://www.cameo3d.org"
+Write-Host ""
+Write-Host "These are full 3-D coordinate / rotamer datasets that a production MC engine"
+Write-Host "(Rosetta, OpenMM) consumes; this 2-D HP teaching model does not parse them."
+Write-Host "Respect each site's license/registration -- this script never bypasses it."

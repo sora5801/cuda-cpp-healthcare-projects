@@ -1,122 +1,118 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load subtomograms, align (CPU+GPU), verify, report
 // ---------------------------------------------------------------------------
-// Project 2.4 -- Cryo-ET Subtomogram Averaging   (template skeleton)
+// Project 2.4 : Cryo-ET Subtomogram Averaging  (reduced-scope teaching version)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// THE 5-STEP SHAPE every project in this repo follows:
+//   1. Load the problem (a reference cube + N candidate cubes from data/sample).
+//   2. CPU reference  (reference_cpu.cpp) : direct zero-shift NCC per angle, the
+//      best angle per candidate, and the refined average -> trusted answers.
+//   3. GPU search     (kernels.cu)        : cuFFT cross-correlation over ALL
+//      shifts, peak + zero-shift NCC per (candidate, angle) -> the thing taught.
+//   4. VERIFY: the GPU's zero-shift NCC matches the CPU's direct one (this is the
+//      cross-correlation theorem, demonstrated numerically) within tolerance.
+//   5. REPORT: deterministic per-candidate best angle + average summary -> stdout;
+//      timing + verification error -> stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic (diffed by demo/run_demo against
+//   demo/expected_output.txt); run-to-run timings go to STDERR (PATTERNS.md §3).
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then kernels.cuh -> kernels.cu (the cuFFT pipeline),
+// then reference_cpu.*. The science/GPU-mapping lives in ../THEORY.md.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // align_gpu, SubtomogramSet
+#include "reference_cpu.h"    // load_subtomograms, correlate_cpu, build_average_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "2.4";
 static const char* PROJECT_NAME = "Cryo-ET Subtomogram Averaging";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Tolerance for "GPU zero-shift NCC == CPU zero-shift NCC". Both compute the
+// same correlation sum, but by DIFFERENT routes: the CPU sums products in single
+// precision directly; the GPU goes through a single-precision cuFFT round trip
+// (forward R2C, complex multiply, inverse C2R, scaled by 1/V). The two therefore
+// differ by floating-point rounding -- measured at only ~3e-7 on these 16^3
+// cubes (the FFT's error grows ~sqrt(log V), very slowly), but we keep a roomy
+// 1e-3 ceiling so the test stays robust across GPUs/arches (PATTERNS.md §4). The
+// gap is a real, documented numerical effect, not a bug.
+static constexpr double TOLERANCE = 1.0e-3;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path =
+        (argc > 1) ? argv[1] : "data/sample/subtomograms_sample.txt";
+    SubtomogramSet set;
+    try {
+        set = load_subtomograms(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<double> ncc_cpu;     // [n_sub*n_angles] zero-shift NCC
+    std::vector<int>    best_cpu;    // [n_sub] best angle per candidate
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    correlate_cpu(set, ncc_cpu, best_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
+    std::vector<float> avg_cpu;
+    const double core_cpu = build_average_cpu(set, best_cpu, avg_cpu);
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU search (timed inside the wrapper) -------------------------
+    std::vector<double> ncc_zero_gpu, ncc_peak_gpu;
+    std::vector<int>    best_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    align_gpu(set, ncc_zero_gpu, ncc_peak_gpu, best_gpu, &gpu_kernel_ms);
+    // Build the GPU's refined average from ITS chosen angles (same routine).
+    std::vector<float> avg_gpu;
+    const double core_gpu = build_average_cpu(set, best_gpu, avg_gpu);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify ---------------------------------------------------------
+    // (a) zero-shift NCC agrees element-by-element (the FFT identity), and
+    // (b) both paths recover the same best angle per candidate.
+    double worst = 0.0;
+    for (std::size_t i = 0; i < ncc_cpu.size(); ++i) {
+        const double diff = std::fabs(ncc_cpu[i] - ncc_zero_gpu[i]);
+        if (diff > worst) worst = diff;
+    }
+    bool angles_match = (best_cpu == best_gpu);
+    const bool pass = (worst <= TOLERANCE) && angles_match;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("Subtomogram averaging: 1 reference vs %d candidates, "
+                "%d^3 voxels, %d trial angles (cuFFT cross-correlation)\n",
+                set.n_sub, set.d, set.n_angles);
+    std::printf("per-candidate alignment (best angle index : peak NCC):\n");
+    for (int s = 0; s < set.n_sub; ++s) {
+        const int k = best_gpu[static_cast<std::size_t>(s)];
+        const double peak = ncc_peak_gpu[static_cast<std::size_t>(s) * set.n_angles + k];
+        const double deg = 360.0 * static_cast<double>(k) / static_cast<double>(set.n_angles);
+        std::printf("  cand[%d]  angle[%d] = %6.1f deg   peak NCC = %.4f\n",
+                    s, k, deg, peak);
+    }
+    std::printf("refined average core intensity (mean|voxel|) = %.6f\n", core_gpu);
+    std::printf("RESULT: %s (GPU cuFFT correlation matches CPU direct, same poses)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d candidates, %d^3 voxels, %d angles)\n",
+                 path.c_str(), set.n_sub, set.d, set.n_angles);
+    std::fprintf(stderr, "[timing] CPU direct correlation: %.3f ms   GPU cuFFT pipeline: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact -- the CPU does O(V) per shift at ZERO shift "
+                         "only; the GPU does ALL %d shifts via O(V log V) cuFFT. The GPU's edge "
+                         "grows with cube size and shift count.\n", set.vol());
+    std::fprintf(stderr, "[verify] worst |NCC_gpu - NCC_cpu| (zero shift) = %.3e  (tol %.1e)\n",
+                 worst, TOLERANCE);
+    std::fprintf(stderr, "[verify] best angles match: %s   CPU avg core = %.6f (GPU %.6f)\n",
+                 angles_match ? "yes" : "NO", core_cpu, core_gpu);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

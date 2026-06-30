@@ -1,122 +1,144 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load problem, run CPU + GPU MC, verify, report
 // ---------------------------------------------------------------------------
-// Project 2.7 -- Monte Carlo Protein Structure Sampling   (template skeleton)
+// Project 2.7 : Monte Carlo Protein Structure Sampling (HP lattice model)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// WHAT THIS FILE DOES  (the 5-step shape every project in this repo follows)
+//   1. Load the HP problem (data/sample, or a built-in synthetic fallback).
+//   2. Precompute the per-replica Boltzmann acceptance tables on the host (the
+//      ONLY place exp() is evaluated -- see mc_moves.h header for why).
+//   3. CPU reference: run every replica serially          -> trusted answer.
+//   4. GPU: run every replica in parallel, one thread each -> the thing taught.
+//   5. VERIFY (exact integer match) and REPORT a deterministic summary.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Run-to-run varying numbers (timings) go to STDERR,
+//   which the demo shows but does not diff.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then mc_moves.h (RNG + the walk), kernels.cu (the GPU
+// twin), reference_cpu.cpp (the serial baseline). The science / GPU mapping is
+// in ../THEORY.md.
 // ===========================================================================
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // sample_gpu (GPU path), McProblem, McResult
+#include "reference_cpu.h"    // load_mc_problem, sample_cpu, boltzmann_table_size
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "2.7";
 static const char* PROJECT_NAME = "Monte Carlo Protein Structure Sampling";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// ---------------------------------------------------------------------------
+// make_synthetic: the built-in problem used when no data file is supplied. It
+// mirrors data/sample/hp_problem.txt exactly so the program is runnable even
+// without the sample on disk. The sequence below is the classic HPHPPHHPHH...
+// benchmark-style chain (clearly SYNTHETIC; data/README.md documents it). The
+// known ground truth for this sequence is a folded state with several H-H
+// contacts -- the demo reports how many the ensemble recovers.
+// ---------------------------------------------------------------------------
+static McProblem make_synthetic() {
+    McProblem P{};
+    const char* seq = "HPHPPHHPHHPHHPPHPH";   // 18-residue synthetic HP chain
+    P.n          = (int)std::strlen(seq);
+    for (int i = 0; i < P.n; ++i) P.hp[i] = (seq[i] == 'H') ? 1 : 0;
+    P.sweeps     = 600;     // MC sweeps per replica (1 sweep = n attempts)
+    P.n_replicas = 256;     // independent walkers -> 256 GPU threads
+    P.t_min      = 0.30;    // coldest replica (refines minima)
+    P.t_max      = 3.00;    // hottest replica (crosses energy barriers)
+    P.seed       = 20260628ULL;   // fixed seed -> deterministic demo
+    return P;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
+    // ---- 1. Load the problem (file arg, else built-in synthetic) -----------
+    McProblem prob;
     const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
+    if (argc > 1) {
+        try {
+            prob = load_mc_problem(argv[1]);
+            source = argv[1];
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[error] %s\n", e.what());
+            return 2;
+        }
     } else {
-        make_synthetic(n, a, x, y);
+        prob = make_synthetic();
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. Precompute the Boltzmann acceptance tables (host, once) --------
+    // One table per replica (it depends on that replica's temperature). This is
+    // the ONLY place exp() runs; the walk just indexes the table. Computing it
+    // here -- identically for the CPU and GPU paths -- is what makes the accept
+    // decisions, and therefore the whole trajectory, bit-identical (mc_moves.h).
+    const int stride = boltzmann_table_size();
+    std::vector<double> tables((std::size_t)prob.n_replicas * stride);
+    for (int r = 0; r < prob.n_replicas; ++r) {
+        double T = replica_temperature(prob, r);
+        build_boltzmann_table(T, tables.data() + (std::size_t)r * stride);
+    }
+
+    // ---- 3. CPU reference (timed) ------------------------------------------
+    std::vector<McResult> res_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    sample_cpu(prob, tables, res_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 4. GPU MC (kernel timed inside the wrapper) -----------------------
+    std::vector<McResult> res_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    sample_gpu(prob, tables, res_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 5. Verify: EXACT integer match, then summarize --------------------
+    // Energies are integers (= -contacts) computed by the same code on both
+    // sides, so the correct tolerance is ZERO (PATTERNS.md §4 "exact" row).
+    int mismatches = 0;
+    int best_overall = 0;          // most negative best_energy across replicas
+    int best_replica = 0;          // which replica found it
+    long long sum_best = 0;        // for the mean (integer sum -> deterministic)
+    for (int r = 0; r < prob.n_replicas; ++r) {
+        if (res_cpu[r].best_energy  != res_gpu[r].best_energy ||
+            res_cpu[r].final_energy != res_gpu[r].final_energy) ++mismatches;
+        sum_best += res_gpu[r].best_energy;
+        if (res_gpu[r].best_energy < best_overall) {
+            best_overall = res_gpu[r].best_energy;
+            best_replica = r;
+        }
+    }
+    const bool pass = (mismatches == 0);
+
+    // Count how many H residues the sequence has (context for "max possible").
+    int n_h = 0; for (int i = 0; i < prob.n; ++i) n_h += prob.hp[i];
 
     // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("[reduced-scope teaching model: 2-D HP lattice protein, Metropolis MC]\n");
+    // Echo the sequence so the output is self-describing.
+    std::printf("sequence (n=%d, %d H): ", prob.n, n_h);
+    for (int i = 0; i < prob.n; ++i) std::putchar(prob.hp[i] ? 'H' : 'P');
+    std::putchar('\n');
+    std::printf("replicas = %d, sweeps = %d, T in [%.2f, %.2f]\n",
+                prob.n_replicas, prob.sweeps, prob.t_min, prob.t_max);
+    // Lowest energy found = MOST H-H contacts buried = best fold the ensemble saw.
+    std::printf("best energy found = %d (%d H-H contacts) by replica %d\n",
+                best_overall, -best_overall, best_replica);
+    // A deterministic ensemble statistic: the integer-summed mean best energy,
+    // printed as a fraction so it stays exact and reproducible.
+    std::printf("ensemble mean best energy = %lld/%d\n", sum_best, prob.n_replicas);
+    std::printf("RESULT: %s (GPU per-replica energies match CPU exactly)\n",
                 pass ? "PASS" : "FAIL");
 
     // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
     std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    std::fprintf(stderr, "[timing] CPU MC: %.3f ms   GPU MC: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact -- the GPU's edge grows with the "
+                         "replica count; production runs use thousands of replicas.\n");
+    std::fprintf(stderr, "[verify] replica mismatches = %d (integer energy => exact match)\n",
+                 mismatches);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

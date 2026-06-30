@@ -4,31 +4,55 @@
 
 > **🟡 Intermediate · Active R&D** — Domain 2: Structural Biology & Protein Science · Catalog ID `2.7`
 >
-> _Educational only — not for clinical use (see CLAUDE.md §8)._
-
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
+> _Educational only — not for clinical use (see CLAUDE.md §8). This is a
+> **reduced-scope teaching version**: the 2-D HP lattice-protein model._
 
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+This project samples protein-like conformations with **Metropolis Monte Carlo**,
+the workhorse of computational structural biology. To keep the focus on the GPU
+pattern and the math, it uses the classic **HP lattice protein** (Lau & Dill,
+1989): a chain of **H** (hydrophobic) and **P** (polar) residues on a 2-D grid,
+whose energy rewards burying H residues next to each other — a toy model of the
+*hydrophobic collapse* that folds real proteins. We launch a large array of
+**independent Monte Carlo walkers** (replicas) across a temperature ladder, one
+**GPU thread per replica**, and report the lowest-energy (best-folded) state the
+ensemble discovers. The whole point: many independent random walks map perfectly
+onto the GPU, and a carefully-shared RNG makes the GPU result **bit-identical** to
+a plain CPU reference.
 
 ## What this computes & why the GPU helps
 
-Monte Carlo (MC) methods sample protein conformational space by proposing random moves (backbone/sidechain dihedral rotations, rigid-body domain motions) and accepting/rejecting via Metropolis criterion. GPU acceleration is applied to (i) batch scoring of many independent MC walkers in parallel and (ii) GPU-accelerated energy evaluation for each trial move. Rosetta's protein design/folding MC engine has been partially GPU-accelerated. Parallel tempering MC scales to GPU arrays via independent temperature replicas. Applications include loop modeling, sidechain packing, and protein-ligand pose sampling.
+Monte Carlo methods sample protein conformational space by proposing random moves
+and accepting/rejecting them via the Metropolis criterion. Two things are
+GPU-accelerated in practice: (i) **batch-running many independent MC walkers** in
+parallel, and (ii) the **energy evaluation** of each trial move. Parallel
+tempering scales naturally to a GPU as an array of independent temperature
+replicas. (Applications: loop modeling, side-chain packing, protein–ligand pose
+sampling.)
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** a useful MC run needs *thousands* of long,
+independent walks (replicas / random restarts) to explore a rugged energy
+landscape. Each walk is sequential, but the walks **do not interact**, so the
+dominant cost — running the whole ensemble — is embarrassingly parallel. We give
+each replica its own GPU thread; with `R` replicas the GPU does `R` walks at once.
+There is **no inter-thread communication and no atomics** (each thread owns a
+private chain and a private output slot), which makes this one of the cleanest
+parallelizations in the collection.
 
 ## The algorithm in brief
 
-Metropolis-Hastings MC, parallel tempering, fragment-based backbone moves (Rosetta), rotamer library sidechain packing (Dunbrack), basin hopping, simulated annealing, energy function evaluation (Rosetta or AMBER).
+- **Metropolis–Hastings MC:** propose a random local move, accept with
+  probability `min(1, exp(-ΔE/T))`, repeat.
+- **HP energy function:** `E = -(number of non-bonded H–H lattice contacts)` —
+  an integer, which is what makes exact verification possible.
+- **Local move set:** end moves at the chain termini + interior corner/crankshaft
+  moves, each checked for connectivity and self-avoidance.
+- **Replica temperature ladder:** geometric spacing from `T_min` to `T_max`
+  (hot replicas cross barriers, cold replicas refine) — the structure of parallel
+  tempering, minus the swaps (described in THEORY).
+- **Shared RNG + precomputed Boltzmann table:** a counter-based splitmix64 stream
+  and a discrete acceptance table make every accept/reject identical on CPU & GPU.
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
 derivation.
@@ -49,60 +73,121 @@ Command-line alternative (Developer PowerShell):
 msbuild build\monte-carlo-protein-structure-sampling.sln /p:Configuration=Release /p:Platform=x64
 ```
 
+This project links only `cudart` (the CUDA runtime) — no extra CUDA libraries —
+because the RNG is hand-rolled on purpose (see THEORY §4 on cuRAND).
+
 ## Run the demo
 
 ```powershell
 ./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.sh           # Linux/macOS (CMake build)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+The demo builds if needed, runs on `data/sample/hp_problem.txt`, prints the
+deterministic result, shows the GPU-vs-CPU agreement check, and prints a timing
+line (on stderr).
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
+- **Sample (committed):** `data/sample/hp_problem.txt` — a tiny **synthetic** HP
+  sequence + run parameters, so the demo runs offline with zero downloads.
+- **Regenerate / resize:** `python scripts/make_synthetic.py [--replicas N ...]`.
+- **Full datasets / further data:** `scripts/download_data.ps1` / `.sh` print
+  links (this reduced model needs none).
 - **Provenance & license:** see [data/README.md](data/README.md).
 
-Catalog dataset notes: CASP protein structure benchmarks (https://predictioncenter.org); PDB structures for folding benchmarks (https://www.rcsb.org); Dunbrack rotamer library (https://dunbrack.fccc.edu/bbdep2010/); CAMEO continuous benchmarking (https://www.cameo3d.org).
+Catalog dataset notes: CASP benchmarks (<https://predictioncenter.org>); PDB
+structures (<https://www.rcsb.org>); Dunbrack rotamer library
+(<https://dunbrack.fccc.edu/bbdep2010/>); CAMEO (<https://www.cameo3d.org>).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt):
+
+```
+2.7 -- Monte Carlo Protein Structure Sampling
+[reduced-scope teaching model: 2-D HP lattice protein, Metropolis MC]
+sequence (n=18, 10 H): HPHPPHHPHHPHHPPHPH
+replicas = 256, sweeps = 600, T in [0.30, 3.00]
+best energy found = -8 (8 H-H contacts) by replica 15
+ensemble mean best energy = -1114/256
+RESULT: PASS (GPU per-replica energies match CPU exactly)
+```
+
+The program runs the ensemble on the **GPU** (`src/kernels.cu`) and a **CPU
+reference** (`src/reference_cpu.cpp`) and asserts that **every replica's energies
+match exactly** (tolerance = 0, because energies are integers computed by the same
+shared code). That bit-for-bit agreement is the correctness guarantee.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — loads the problem, builds the Boltzmann tables,
+   runs CPU + GPU, verifies (exact), reports.
+2. [`src/mc_moves.h`](src/mc_moves.h) — **the heart**: the shared
+   `__host__ __device__` RNG + Metropolis walk that both paths run, and the
+   comment explaining why CPU and GPU are bit-identical.
+3. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the one-thread-per-
+   replica mapping.
+4. [`src/kernels.cu`](src/kernels.cu) — the kernel (calls the shared walk) + host
+   wrapper.
+5. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the loader and the trusted
+   serial baseline.
+6. [`src/util/`](src/util/) — shared `CUDA_CHECK`, CUDA-event timer, host I/O.
 
 ## Prior art & further reading
 
-Rosetta (https://github.com/RosettaCommons/rosetta) — protein MC sampling (GPU extensions experimental); FoldX (https://foldxsuite.crg.eu) — fast energy evaluation for MC design; OpenMM MC (https://github.com/openmm/openmm) — Python MC on GPU via custom integrators; ProteinMPNN (https://github.com/dauparas/ProteinMPNN) — GPU sequence design complementary to MC backbone sampling.
+- **Rosetta** (<https://github.com/RosettaCommons/rosetta>) — the reference protein
+  MC sampling/design suite; study its fragment moves and score function (GPU
+  extensions are experimental).
+- **FoldX** (<https://foldxsuite.crg.eu>) — fast empirical energy evaluation used
+  in MC-based design; learn how a cheap, accurate energy term is built.
+- **OpenMM** (<https://github.com/openmm/openmm>) — GPU MD/MC via custom
+  integrators; a model for how production device kernels are structured.
+- **ProteinMPNN** (<https://github.com/dauparas/ProteinMPNN>) — GPU sequence design
+  that complements MC backbone sampling.
 
 Study these to learn the production approach; **do not copy code wholesale** —
 reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-GPU-parallel scoring of independent MC replica arrays; CUDA kernels for energy evaluation (Lennard-Jones + torsion); cuRAND for GPU random number generation; warp-level acceptance ratio evaluation. --
+**Ensemble of independent histories** (PATTERNS.md §1): one GPU thread per Monte
+Carlo replica, each with its own RNG stream and a private conformation; read-only
+shared Boltzmann tables; **no atomics** (independent outputs). Contrast project
+5.01 (Monte-Carlo *dose*), where many threads tally into shared bins and *do* need
+`atomicAdd` — here the outputs are disjoint, so the parallelization is contention-
+free.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Add replica-exchange swaps** to turn the temperature *ladder* into true
+   parallel tempering: periodically attempt to swap configurations between
+   adjacent temperatures, accepting with probability `min(1, exp((βᵢ−βⱼ)(Eᵢ−Eⱼ)))`.
+   What is the minimal inter-thread synchronization this needs?
+2. **Make energy incremental.** Replace the `O(n²)` `count_contacts` recompute with
+   an `O(n)` (or `O(1)`) update that only re-scores the moved residue's
+   neighbourhood. Measure the speed-up; keep the result bit-identical.
+3. **Try harder sequences.** Use `make_synthetic.py --sequence ...` with longer
+   chains; how does the best energy found scale with `sweeps` and `n_replicas`?
+4. **Simulated annealing.** Instead of a fixed temperature per replica, cool each
+   replica's `T` over its sweeps. Compare the best energy to the fixed-T ladder.
+5. **Go 3-D.** Extend the lattice to `Z³` (6 neighbours). What changes in the move
+   set, the energy, and the register footprint per thread?
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced-scope by design.** This is the 2-D **HP lattice** model, *not* a
+  full-atom engine. Real MC (Rosetta/OpenMM) uses 3-D continuous backbone and
+  side-chain angles and physics-based energies (Lennard-Jones, electrostatics,
+  solvation). See THEORY §7.
+- **The data is synthetic.** `data/sample/hp_problem.txt` is a generated HP
+  sequence, labeled synthetic everywhere — it is not a real protein and the output
+  has **no clinical or predictive validity**.
+- **Simplifications:** naive `O(n²)` energy recompute (clarity over speed); a fixed
+  temperature per replica with **no replica-exchange swaps**; a hand-rolled RNG
+  chosen for exact CPU/GPU reproducibility rather than statistical pedigree (a real
+  run would use cuRAND).
+- **Timing is a teaching artifact**, never a benchmark claim (CLAUDE.md §12); it
+  varies run to run and lives on stderr.

@@ -2,11 +2,14 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.11 -- Cryo-EM CTF Estimation & Particle Picking   (template skeleton)
+# Project 2.11 : Cryo-EM CTF Estimation & Particle Picking
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# size, and NEVER bypasses credentials/registration. Real cryo-EM micrographs
+# live in EMPIAR and are large (tens of GB) binary MRC files; converting them to
+# this project's tiny text format is out of scope for a teaching demo, so this
+# script PRINTS guidance and defers to scripts/make_synthetic.py for an offline,
+# verifiable stand-in.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +20,18 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 2.11 -- Cryo-EM CTF Estimation & Particle Picking"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    EMPIAR micrograph archives (https://www.ebi.ac.uk/empiar/); EMPIAR-10025 (β-galactosidase), EMPIAR-10064 (80S ribosome); curated picking benchmarks from CryoBench (verify URL); RELION tutorial datasets (https://relion.readthedocs.io)."
+echo "Real cryo-EM micrograph datasets (free, but large; MRC binary format):"
+echo "  * EMPIAR archive home : https://www.ebi.ac.uk/empiar/"
+echo "  * EMPIAR-10025 (beta-galactosidase) : classic CTF/processing tutorial set"
+echo "  * EMPIAR-10064 (T20S proteasome)    : RELION tutorial micrographs"
+echo "  * RELION tutorial data : https://relion.readthedocs.io"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "These are tens of GB and need an MRC reader (e.g. Python 'mrcfile') to"
+echo "convert a micrograph into this project's text format:"
+echo "    line 1:  n pixel_size lambda cs amp_contrast true_dz"
+echo "    body  :  n*n floats (row-major)"
+echo "(set true_dz = -1 for real data, where the defocus is unknown.)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "The committed tiny SYNTHETIC sample in data/sample/ is enough to run the"
+echo "demo offline. For a larger synthetic problem, run:"
+echo "    python scripts/make_synthetic.py --n 256 --defocus 12000"

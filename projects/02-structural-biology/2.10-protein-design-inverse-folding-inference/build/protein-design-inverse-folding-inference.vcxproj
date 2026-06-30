@@ -153,6 +153,10 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- inverse_folding.h: the shared __host__ __device__ scoring core included
+         by BOTH reference_cpu.cpp (host) and kernels.cu (device) so CPU and GPU
+         compute identical integer scores (see THEORY sec "verify"). -->
+    <ClInclude Include="..\src\inverse_folding.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

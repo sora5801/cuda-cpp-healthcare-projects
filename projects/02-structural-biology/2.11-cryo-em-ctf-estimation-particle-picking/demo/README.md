@@ -1,33 +1,38 @@
-# Demo — 2.11 Cryo-EM CTF Estimation & Particle Picking
+# Demo — 2.11 Cryo-EM CTF Estimation (cuFFT defocus fit)
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+`run_demo.ps1` (Windows) / `run_demo.sh` (Linux/CMake) will:
 
-1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+1. **Build** the project (links **cuFFT**) if the executable is missing.
+2. **Run** it on `data/sample/micrograph_sample.txt` (a 96 × 96 synthetic
+   micrograph with a known 15000 Å defocus baked in).
+3. **Verify** that the GPU pipeline (cuFFT 2-D FFT → radial average → defocus
+   grid-search) recovers the **same best-defocus index** as a transparent CPU
+   reference (naive 2-D DFT → radial average → grid-search), and that their fit
+   scores agree.
+4. **Report** the recovered defocus, the fit quality (NCC), and the recovery
+   error against the synthetic ground truth.
 
-The program splits its output deliberately:
+stdout (the deterministic result) is diffed against
+[`expected_output.txt`](expected_output.txt); the timing lines are on stderr only.
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+## Canonical output
 
-## Expected result
+See [`expected_output.txt`](expected_output.txt). The fitter recovers
+**dz = 15300 Å** for a true defocus of **15000 Å** — a 300 Å error, i.e. ~3 grid
+steps of the 100 Å search, which is realistic for a single noisy micrograph and a
+coarse grid (the exercises sharpen it). `RESULT: PASS` means:
 
-```
-2.11 -- Cryo-EM CTF Estimation & Particle Picking
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
+- the GPU and CPU agree **exactly** on the recovered defocus *index*, and
+- their normalized cross-correlation at that index agrees to `< 5e-3`.
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+> **Honesty note.** The full NCC *curve* (GPU vs CPU) agrees only to ~`2e-2`, not
+> machine precision, because the CPU uses a **double**-precision naive DFT while
+> the GPU uses **single**-precision cuFFT — so the two radial profiles genuinely
+> differ at the ~1% level (PATTERNS.md §4). We verify the things that matter (the
+> answer and the fit quality at the answer) and document the rest rather than
+> pretend the two different-precision FFTs are bit-identical.
+
+> The micrograph is **synthetic** (white noise shaped by a known CTF + Gaussian
+> noise) — a demonstration of the CTF-estimation pattern, not a real EM analysis.

@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 2.10 -- Protein Design / Inverse Folding Inference   (template skeleton)
+# Project 2.10 : Protein Design / Inverse Folding Inference
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/protein-design-inverse-folding-inference.sln (CLAUDE.md §5). Both

@@ -1,52 +1,51 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU Monte Carlo interface (declarations + the big idea)
 // ---------------------------------------------------------------------------
-// Project 2.7 -- Monte Carlo Protein Structure Sampling   (template skeleton)
+// Project 2.7 : Monte Carlo Protein Structure Sampling (HP lattice model)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   Monte Carlo replicas are INDEPENDENT random walks, so this is the textbook
+//   "ensemble of independent histories" GPU pattern (PATTERNS.md §1): we give
+//   each replica its OWN GPU THREAD. With R replicas and a block of B threads we
+//   launch ceil(R / B) blocks; thread (blockIdx.x, threadIdx.x) owns replica
+//   r = blockIdx.x * blockDim.x + threadIdx.x and runs the entire walk for it.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Two MC-specific lessons live here:
+//     * PER-THREAD RNG: each thread seeds its own reproducible splitmix64 stream
+//       from its replica index (rng_seed in mc_moves.h). Because the stream is
+//       shared code, the CPU reproduces each replica's identical walk -- which is
+//       what makes the GPU-vs-CPU check EXACT, not approximate.
+//     * NO ATOMICS NEEDED: unlike a Monte-Carlo *tally* (where many threads add
+//       into shared bins and need atomicAdd, e.g. project 5.01), here each thread
+//       writes only its OWN result slot out[r]. Independent outputs => no
+//       contention => no atomics. The shared work is read-only (the sequence and
+//       the Boltzmann tables), so threads never step on each other.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   kernels.cu implements the kernel + host wrapper. main.cu calls sample_gpu().
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// This header is included ONLY by .cu units (it declares a __global__). The CPU
+// reference uses reference_cpu.h instead. Both pull McProblem/McResult from
+// mc_moves.h, so the two paths share one definition of the physics.
+//
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, mc_moves.h, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // McProblem, McResult, boltzmann_table_size (pure C++)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Device kernel: each thread runs ONE replica's full Metropolis walk and writes
+// its {best_energy, final_energy} into out[replica]. The Boltzmann tables are
+// passed as a flat device array (one table per replica, stride = table_stride).
+__global__ void sample_kernel(McProblem prob, const double* __restrict__ tables,
+                              int table_stride, McResult* __restrict__ out);
+
+// Host wrapper: upload the prebuilt Boltzmann tables, launch one thread per
+// replica, copy the per-replica results back.
+//   prob      : the problem (passed by value -> lives in constant/param space)
+//   tables    : host flat array, n_replicas * boltzmann_table_size() doubles
+//   out       : resized to n_replicas; filled with each replica's result
+//   kernel_ms : out-param, GPU kernel time in milliseconds (CUDA events)
+void sample_gpu(const McProblem& prob, const std::vector<double>& tables,
+                std::vector<McResult>& out, float* kernel_ms);

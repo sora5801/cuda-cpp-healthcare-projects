@@ -1,5 +1,22 @@
 2.22 -- Electron Density Map Analysis & Model Validation
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+map: 16^3 voxels, 2.00 A/voxel (box = 32.0 A)
+RSCC (real-space correlation) = 0.787929
+FSC curve [shell: freq(cyc/box)  res(A)  FSC  nvox]:
+  shell  0:    0     inf   +1.000000  1
+  shell  1:    1    32.00   +0.997370  18
+  shell  2:    2    16.00   +0.975124  62
+  shell  3:    3    10.67   +0.800927  98
+  shell  4:    4     8.00   +0.280280  210
+  shell  5:    5     6.40   +0.016274  350
+  shell  6:    6     5.33   +0.061839  450
+  shell  7:    7     4.57   +0.017166  602
+  shell  8:    8     4.00   -0.033215  687
+  shell  9:    9     3.56   -0.027425  776
+  shell 10:   10     3.20   -0.035110  452
+  shell 11:   11     2.91   +0.024000  255
+  shell 12:   12     2.67   -0.047032  110
+  shell 13:   13     2.46   +0.009064  24
+  shell 14:   14     2.29   -1.000000  1
+resolution @ FSC=0.143 (gold-standard half-map): 8.00 A (shell 4)
+resolution @ FSC=0.5   (map-vs-model)          : 10.67 A (shell 3)
+RESULT: PASS (GPU cuFFT validation matches CPU DFT: RSCC<=1e-9, FSC<=1e-4)

@@ -2,11 +2,13 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.4 -- Cryo-ET Subtomogram Averaging   (template skeleton)
+# Project 2.4 : Cryo-ET Subtomogram Averaging
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs and NEVER
+# bypasses credentials/registration. Real cryo-ET subtomograms are large and
+# have their own usage/citation policies, so this script prints links and
+# instructions ONLY and defers to scripts/make_synthetic.py for the offline
+# stand-in that the demo actually uses.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,24 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 2.4 -- Cryo-ET Subtomogram Averaging"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    EMDB STA deposits (https://www.ebi.ac.uk/emdb/); EMPIAR-10064 and related datasets (https://www.ebi.ac.uk/empiar/); SHREC subtomogram challenge datasets (verify URL); CryoDRGN-ET benchmark (https://github.com/ml-struct-bio/cryodrgn)."
+echo "This project ships a SYNTHETIC committed sample (data/sample/), so the demo"
+echo "runs offline with no download. Real cryo-ET data lives here:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  EMDB STA maps       : https://www.ebi.ac.uk/emdb/"
+echo "  EMPIAR raw data     : https://www.ebi.ac.uk/empiar/  (e.g. EMPIAR-10064)"
+echo "  SHREC cryo-ET bench : search 'SHREC subtomogram challenge' (URL moves yearly)"
+echo "  CryoDRGN-ET         : https://github.com/ml-struct-bio/cryodrgn"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
+echo "These sets are large (GBs-TBs) and have their own citation/usage terms;"
+echo "this repo does NOT redistribute them. Respect each source's license."
+echo
+echo "To (re)generate the synthetic sample the demo uses:"
+echo "    python scripts/make_synthetic.py            # default: 6 cubes, 16^3, 12 angles"
+echo "    python scripts/make_synthetic.py --d 32     # a bigger synthetic problem"
+echo
+echo "When wiring a real dataset, follow this idempotent pattern:"
+echo "    1) skip the download if the file already exists with the right checksum"
 echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "    3) for credentialed sets, print registration instructions ONLY (never bypass)"
+echo "    4) extract d^3 cubes around picked particles into the loader's text layout"
+echo "       (header 'n_sub d n_angles', then the reference cube, then candidate cubes)"

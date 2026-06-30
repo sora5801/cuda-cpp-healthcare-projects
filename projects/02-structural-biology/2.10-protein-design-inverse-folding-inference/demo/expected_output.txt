@@ -1,5 +1,7 @@
 2.10 -- Protein Design / Inverse Folding Inference
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+inverse folding (reduced-scope teaching model): design a sequence for a fixed backbone
+residues L = 60   buried (>=16 contacts) = 28   exposed = 32
+native   : TFFFFFFFFFFFFFNDFFFFHFFFFFFFWPPGSSKGPPNRTRDDDRRRERRRRREEEEEG
+designed : FFFFFFFFFFFFFFFFFFFFFFFFFFFFNPPGSSSGPPNRRRDDDRRRERRRRREEEEEE
+native sequence recovery: 87%
+RESULT: PASS (GPU design matches CPU reference exactly)

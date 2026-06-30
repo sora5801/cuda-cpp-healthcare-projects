@@ -3,106 +3,151 @@
 ![difficulty](https://img.shields.io/badge/difficulty-Intermediate-blue) ![maturity](https://img.shields.io/badge/maturity-Active%20R%26D-informational) ![domain](https://img.shields.io/badge/domain-Structural%20Biology%20%26%20Protein%20Science-lightgrey)
 
 > **🟡 Intermediate · Active R&D** — Domain 2: Structural Biology & Protein Science · Catalog ID `2.11`
->
-> _Educational only — not for clinical use (see CLAUDE.md §8)._
-
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
 
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+In cryo-electron microscopy, the microscope blurs the specimen with an oscillating
+**Contrast Transfer Function (CTF)** that must be estimated for *every* micrograph
+before any 3-D reconstruction. This project estimates the microscope **defocus** by
+fitting a parametric CTF model to a micrograph's radial power spectrum — the famous
+"Thon rings." It is a **reduced-scope teaching version** of the CTF-estimation stage
+of CTFFIND4 / RELION, built around two GPU patterns: the **cuFFT** 2-D power
+spectrum, and a **one-thread-per-candidate-defocus** grid search. A transparent CPU
+reference verifies the GPU result, and a synthetic micrograph with a *known* defocus
+lets the demo prove it recovers the right answer.
 
 ## What this computes & why the GPU helps
 
-Before reconstruction, cryo-EM processing requires estimating the contrast transfer function (CTF) from each micrograph and then detecting protein particle positions (particle picking). CTF estimation fits a parametric model to power spectra computed via GPU FFT. Particle picking using template matching requires cross-correlation of the micrograph with reference projections — an O(N·M) operation over image patches and reference orientations, naturally GPU-parallelized. Deep learning pickers (TOPAZ, crYOLO) run GPU CNN inference on tiled micrographs. Both stages process thousands of micrographs in real time.
+A weak-phase specimen's recorded image, in Fourier space, is multiplied by
+`CTF(k) = sin(χ(k))`, where the phase `χ` grows like `π·λ·Δz·k² − (π/2)·Cs·λ³·k⁴`.
+The power spectrum `|CTF(k)|²` shows bright concentric Thon rings whose spacing
+encodes the **defocus Δz**. We:
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+1. compute the micrograph's **2-D power spectrum** (the bottleneck — an FFT),
+2. **rotationally average** it into a 1-D radial profile,
+3. **grid-search** candidate defoci, scoring each by normalized cross-correlation
+   against the model `|CTF|²`, and report the best.
+
+The **bottleneck parallelized** is the FFT (handed to cuFFT: O(N² log N) vs the
+reference's O(N⁴) naive DFT) and the defocus search (hundreds of independent
+candidate scores, one per GPU thread). A real facility fits thousands of 4k–8k
+micrographs per session — exactly the throughput a GPU buys.
 
 ## The algorithm in brief
 
-CTF power spectrum estimation (Thon rings fitting), 2D cross-correlation template matching, GPU-batched FFT for power spectra, CNN-based particle detection (YOLO/TOPAZ), active learning picker improvement.
+- **2-D FFT power spectrum** `|FFT(image)|²` via **cuFFT** R2C.
+- **Rotational (radial) averaging** into a 1-D Thon-ring profile, with a running-mean
+  **background subtraction**.
+- **Parametric CTF model** `|CTF(k; Δz)|²` (the `k²`/`k⁴` phase of eq. 1–2).
+- **Defocus grid-search** maximizing **normalized cross-correlation** (NCC) of model
+  vs. observed profile.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+See [`THEORY.md`](THEORY.md) for the science → math → algorithm → GPU-mapping depth.
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145 toolset, *Desktop development with C++*) and
+the **CUDA Toolkit 13.3** integration (see [`docs/BUILD_GUIDE.md`](../../../docs/BUILD_GUIDE.md)).
 
-1. Open `build/cryo-em-ctf-estimation-particle-picking.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/cryo-em-ctf-estimation-particle-picking.exe`.
+1. Open [`build/cryo-em-ctf-estimation-particle-picking.sln`](build/cryo-em-ctf-estimation-particle-picking.sln) in Visual Studio 2026.
+2. Select **`Release|x64`**.
+3. **Build** (Ctrl+Shift+B). The project links **`cufft.lib`** (commented in the
+   `.vcxproj`).
 
-Command-line alternative (Developer PowerShell):
-
-```powershell
-msbuild build\cryo-em-ctf-estimation-particle-picking.sln /p:Configuration=Release /p:Platform=x64
-```
+The output `.exe` lands in `build/x64/Release/`. A CMake build is also provided
+(`cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release && cmake --build build/cmake`)
+for Linux/CI; the VS solution is the required deliverable.
 
 ## Run the demo
 
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.ps1        # Windows
+```
+```bash
+./demo/run_demo.sh         # Linux (uses the CMake build)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+One command: it builds if needed, runs on the committed sample, prints the result,
+and checks it against [`demo/expected_output.txt`](demo/expected_output.txt).
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: EMPIAR micrograph archives (https://www.ebi.ac.uk/empiar/); EMPIAR-10025 (β-galactosidase), EMPIAR-10064 (80S ribosome); curated picking benchmarks from CryoBench (verify URL); RELION tutorial datasets (https://relion.readthedocs.io).
+The committed sample [`data/sample/micrograph_sample.txt`](data/sample/micrograph_sample.txt)
+is a **tiny synthetic** 96 × 96 micrograph generated by
+[`scripts/make_synthetic.py`](scripts/make_synthetic.py), with a **known 15000 Å
+defocus** baked into its header so recovery can be scored. Real micrographs come from
+the **EMPIAR** archive (e.g. EMPIAR-10025, EMPIAR-10064) and RELION tutorials — free
+but large (tens of GB, MRC binary); [`scripts/download_data.ps1`](scripts/download_data.ps1)
+/ [`.sh`](scripts/download_data.sh) print the links and the conversion recipe (they
+never bypass any registration). Provenance and licensing are in
+[`data/README.md`](data/README.md). **All committed data is synthetic and labeled so.**
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+```
+2.11 -- Cryo-EM CTF Estimation (cuFFT defocus fit)
+micrograph: 96x96 px, pixel=1.00 A, lambda=0.0197 A, Cs=2.700e+07 A, ac=0.10
+defocus search: 5000..30000 A over 251 candidates (step 100 A)
+CPU best: dz = 15300.0 A  (idx 103, NCC 0.459625)
+GPU best: dz = 15300.0 A  (idx 103, NCC 0.461069)
+true defocus (synthetic): 15000.0 A  -> GPU error 300.0 A
+RESULT: PASS (GPU and CPU agree on defocus index; NCC at best within 5e-03)
+```
+
+The GPU result is checked against the CPU reference: the recovered defocus **index**
+must match **exactly**, and the NCC at that index to `< 5e-3`. (The full score curve
+agrees to `< 5e-2`, a documented single-vs-double-precision FFT tolerance — see the
+honesty note in [`demo/README.md`](demo/README.md).) Timing goes to **stderr** so
+stdout stays byte-identical across runs.
 
 ## Code tour
 
-Read in this order:
+Start in [`src/main.cu`](src/main.cu) — it loads the micrograph, runs the CPU then
+GPU paths, verifies, and prints. Then read:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/ctf_model.h`](src/ctf_model.h) — the shared `__host__ __device__` physics:
+   `ctf_squared()` and the NCC fit score. **This is the one true math**, used by both
+   CPU and GPU.
+2. [`src/reference_cpu.h`](src/reference_cpu.h) / [`.cpp`](src/reference_cpu.cpp) — the
+   transparent baseline: naive 2-D DFT → radial average → grid-search.
+3. [`src/kernels.cuh`](src/kernels.cuh) → [`src/kernels.cu`](src/kernels.cu) — the GPU
+   twin: the **cuFFT** call (documented, not a black box), the `|X|²` power kernel,
+   the fixed-point radial-average kernel, and the constant-memory defocus-search kernel.
 
 ## Prior art & further reading
 
-RELION CtfFind/MotionCor2 interface (https://github.com/3dem/relion) — GPU CTF + motion correction; TOPAZ (https://github.com/tbepler/topaz) — deep learning particle picker with GPU; crYOLO (https://cryolo.readthedocs.io) — YOLO-based GPU particle detector; CTFFIND4 (https://grigoriefflab.umassmed.edu/ctffind4) — GPU-accelerated CTF estimation.
-
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
-
-## CUDA pattern used here
-
-cuFFT for micrograph power spectrum; CUDA 2D cross-correlation for template matching; custom CUDA FFT-based NCC; PyTorch GPU CNN for TOPAZ/crYOLO inference; multi-stream processing for parallel micrograph batches. --
+- **CTFFIND4** (Rohou & Grigorieff, *J. Struct. Biol.* 2015,
+  <https://grigorieff.umassmed.edu/ctffind4>) — the standard fast CTF estimator; study
+  its cross-correlation objective and astigmatism handling.
+- **RELION** (<https://github.com/3dem/relion>) — its CtfFind/gCTF stage runs CTF
+  estimation on the GPU inside a full pipeline; study how it scales over micrographs.
+- **TOPAZ** (<https://github.com/tbepler/topaz>) — deep-learning particle picker;
+  study the CNN-on-tiles inference pattern (the picking half of this catalog entry).
+- **crYOLO** (<https://cryolo.readthedocs.io>) — YOLO-based GPU particle detector.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Sharpen the estimate.** Halve the search step (`n_dz` → 501) or add a parabolic
+   refinement around the argmax to push the 300 Å error below the grid resolution.
+2. **Add astigmatism.** Extend the model to two defoci `(Δz₁, Δz₂, α)` and fit the
+   **2-D** power spectrum directly (skip the rotational average) — the production case.
+3. **Tiled periodogram.** Average the power spectra of many overlapping image patches
+   before fitting; watch the rings sharpen against noise.
+4. **Particle picking.** Add an FFT-based template-matching cross-correlation kernel
+   that scores each pixel as a particle-centre candidate (the second half of 2.11).
+5. **Double-precision FFT.** Switch cuFFT to `CUFFT_D2Z` and re-check the verification
+   tolerance — how close to the CPU does the curve get now, and at what speed cost?
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Synthetic data.** The sample is forward-modeled (white noise × known CTF + noise),
+  not a real specimen; it shows genuine Thon rings but makes no scientific claim.
+- **Reduced scope.** We fit a single isotropic defocus, not astigmatism, and do a grid
+  search without continuous refinement. The full pipeline (astigmatism, refinement,
+  picking) is described in [`THEORY.md`](THEORY.md) "Where this sits in the real world."
+- **Precision.** cuFFT is single-precision here; the CPU reference is double. The
+  radial profiles differ at ~1%, so we verify the recovered **index** exactly and the
+  NCC curve to a documented tolerance — never claiming bit-identical FP32-vs-FP64 FFTs.
+- **Teaching-scale size.** The CPU reference uses an O(N⁴) naive DFT, so the sample is
+  small (96²). The GPU path (cuFFT) is what scales to real 4k micrographs.
+- **Not for clinical or scientific use.** Educational material only.
