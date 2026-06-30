@@ -1,5 +1,16 @@
 2.28 -- Replica Exchange Solute Tempering (REST2) on GPU
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+REST2: 8 replicas, 60 rounds x 200 sweeps, 8 solute beads; barrier h=5.00 tilt=2.00
+lambda ladder (cold->hot): 1.0000 0.8548 0.7306 0.6245 0.5338 0.4562 0.3900 0.3333 
+per-replica (idx lambda  accept%  beadsRight):
+  r0   1.0000   58.90  8/8
+  r1   0.8548   61.75  8/8
+  r2   0.7306   64.56  8/8
+  r3   0.6245   67.24  8/8
+  r4   0.5338   70.44  8/8
+  r5   0.4562   73.55  8/8
+  r6   0.3900   76.91  7/8
+  r7   0.3333   79.56  8/8
+cold replica r0: 8/8 beads in the global (right) well [start was 0/8, trapped left]
+total right-well beads across ladder: 63/64
+exchanges accepted over the run: 152
+RESULT: PASS (GPU matches CPU on robust observables: well occupancy +/-16 beads, acceptance +/-1%)

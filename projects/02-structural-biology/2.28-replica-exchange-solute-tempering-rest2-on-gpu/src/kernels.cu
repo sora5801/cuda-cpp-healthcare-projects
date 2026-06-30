@@ -1,94 +1,117 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  GPU REST2 sampler (one thread per replica)
 // ---------------------------------------------------------------------------
-// Project 2.28 -- Replica Exchange Solute Tempering (REST2) on GPU   (template skeleton)
+// Project 2.28 : Replica Exchange Solute Tempering (REST2) on GPU
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of cpu_sample_round(): each thread runs the same Metropolis MC loop
+// (rest2.h) for one replica, then writes back its updated coordinates and accept
+// count. The host (main.cu) does the periodic REST2 exchange between rounds.
+// Because the per-replica math is shared and the RNG is a deterministic counter
+// hash, the GPU result matches the CPU reference exactly. See ../THEORY.md.
 // ===========================================================================
 #include "kernels.cuh"
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "util/timer.cuh"        // GpuTimer (CUDA-event kernel timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// Threads per block. Replica counts in REST2 are modest (tens, occasionally low
+// hundreds), so one block usually covers the whole ladder. 64 is a comfortable
+// default: a multiple of the 32-thread warp, low enough that a small ladder does
+// not waste a giant block. The grid is sized to cover any n_replicas.
+static constexpr int THREADS_PER_BLOCK = 64;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// sample_round_kernel: thread r owns replica r.
+//   Thread-to-data map: r = blockIdx.x * blockDim.x + threadIdx.x indexes the
+//   replica. The guard `if (r >= n)` retires threads in the ragged last block.
+//   The replica's N_SOLUTE coordinates are loaded into a small register array,
+//   advanced by sweeps_per_round MC sweeps entirely in registers (no global
+//   traffic in the inner loop -> fast and divergence-free except the Metropolis
+//   accept branch), then written back. There is NO inter-thread communication,
+//   so no __syncthreads / shared memory / atomics are needed here.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void sample_round_kernel(SimConfig cfg,
+                                    const ReplicaParams* __restrict__ reps,
+                                    double*   __restrict__ coords,
+                                    long*     __restrict__ accepted,
+                                    uint64_t* __restrict__ rng_ctr) {
+    const int r = blockIdx.x * blockDim.x + threadIdx.x;   // this thread's replica
+    if (r >= cfg.n_replicas) return;                       // guard ragged last block
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+    // Pull this replica's beads into registers/local memory. N_SOLUTE is a
+    // compile-time constant, so the compiler can keep this array in registers.
+    double x[N_SOLUTE];
+    #pragma unroll
+    for (int i = 0; i < N_SOLUTE; ++i)
+        x[i] = coords[static_cast<long long>(r) * N_SOLUTE + i];
+
+    const ReplicaParams p = reps[r];   // (lambda, seed) for this replica
+    uint64_t ctr = rng_ctr[r];         // this replica's RNG stream cursor
+    long acc = 0;                      // accepted moves this round
+
+    // The full sampling loop runs in this single thread -- exactly the inner work
+    // cpu_sample_round() does serially for one replica. mc_sweep() is the shared
+    // __host__ __device__ routine, so the numbers match the CPU bit-for-bit.
+    for (int s = 0; s < cfg.sweeps_per_round; ++s)
+        acc += mc_sweep(x, p, cfg, ctr);
+
+    // Write the updated state back to global memory for the host to read and
+    // (possibly) exchange between rounds.
+    #pragma unroll
+    for (int i = 0; i < N_SOLUTE; ++i)
+        coords[static_cast<long long>(r) * N_SOLUTE + i] = x[i];
+    accepted[r] += acc;     // accumulate (each thread owns its own slot -> no race)
+    rng_ctr[r]   = ctr;     // persist the advanced cursor for the next round
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// gpu_sample_round: host wrapper -- upload state, launch, download state.
+//   We allocate fresh device buffers each call for clarity (the per-round data
+//   is tiny). A production code would allocate once and keep state resident; the
+//   re-upload here makes the host<->device data flow visible to the learner and
+//   lets the host own the exchange step. Kernel time is measured with CUDA events
+//   (util/timer.cuh) and reported as a teaching artifact, never a benchmark.
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void gpu_sample_round(const SimConfig& cfg,
+                      const std::vector<ReplicaParams>& reps,
+                      std::vector<double>& coords,
+                      std::vector<long>& accepted,
+                      std::vector<uint64_t>& rng_ctr,
+                      float* kernel_ms) {
+    const int M = cfg.n_replicas;
+    const std::size_t n_coords = static_cast<std::size_t>(M) * N_SOLUTE;
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // --- device buffers ----------------------------------------------------
+    ReplicaParams* d_reps = nullptr;
+    double*        d_coords = nullptr;
+    long*          d_acc = nullptr;
+    uint64_t*      d_ctr = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_reps,   static_cast<std::size_t>(M) * sizeof(ReplicaParams)));
+    CUDA_CHECK(cudaMalloc(&d_coords, n_coords * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_acc,    static_cast<std::size_t>(M) * sizeof(long)));
+    CUDA_CHECK(cudaMalloc(&d_ctr,    static_cast<std::size_t>(M) * sizeof(uint64_t)));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // --- upload current state (H2D) ---------------------------------------
+    CUDA_CHECK(cudaMemcpy(d_reps,   reps.data(),     static_cast<std::size_t>(M) * sizeof(ReplicaParams), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_coords, coords.data(),   n_coords * sizeof(double),                           cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_acc,    accepted.data(), static_cast<std::size_t>(M) * sizeof(long),          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_ctr,    rng_ctr.data(),  static_cast<std::size_t>(M) * sizeof(uint64_t),      cudaMemcpyHostToDevice));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // --- launch: one thread per replica -----------------------------------
+    const int blocks = (M + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    sample_round_kernel<<<blocks, THREADS_PER_BLOCK>>>(cfg, d_reps, d_coords, d_acc, d_ctr);
+    *kernel_ms = timer.stop_ms();        // blocks until the kernel finishes
+    CUDA_CHECK_LAST("sample_round_kernel");
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // --- download updated state (D2H) -------------------------------------
+    CUDA_CHECK(cudaMemcpy(coords.data(),   d_coords, n_coords * sizeof(double),                  cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(accepted.data(), d_acc,    static_cast<std::size_t>(M) * sizeof(long), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(rng_ctr.data(),  d_ctr,    static_cast<std::size_t>(M) * sizeof(uint64_t), cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    // --- free -------------------------------------------------------------
+    CUDA_CHECK(cudaFree(d_reps));
+    CUDA_CHECK(cudaFree(d_coords));
+    CUDA_CHECK(cudaFree(d_acc));
+    CUDA_CHECK(cudaFree(d_ctr));
 }

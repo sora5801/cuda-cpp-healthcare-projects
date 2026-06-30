@@ -1,87 +1,196 @@
 # THEORY — 2.31 Cryo-EM Tilt-Series Alignment & Tomogram Reconstruction
 
-> The deep didactic explanation (the "why"). Written for a sharp student who
-> knows C++ but is new to CUDA and new to this domain. Diagrams in Mermaid/ASCII
-> are welcome. See [README.md](README.md) for the quick tour and build steps.
->
-> _Educational only — not for clinical use._
-
-<!-- =======================================================================
-     The block below is the verbatim catalog deep-dive for this project,
-     stamped in by scaffold.py as raw material. Use it to write the sections
-     that follow, then DELETE it (or fold it into "The science"). Every
-     TODO(theory) below must be completed before the project is "done".
-     ======================================================================= -->
-
-<details>
-<summary>Catalog deep-dive (raw source material — fold into the sections below, then remove)</summary>
-
-### 2.31 Cryo-EM Tilt-Series Alignment & Tomogram Reconstruction 🟡 · Active R&D
-
-- **Deep dive:** Cryo-ET tilt-series reconstruction requires (1) frame alignment (beam-induced motion), (2) tilt-series alignment (fiducial or fiducial-free), and (3) tomogram reconstruction (weighted back-projection or iterative SART/ASTRA). All three steps are GPU-parallelizable: GPU-accelerated SART iterates over projection angles simultaneously; WBP uses GPU FFT and filter application. IMOD, AreTomo, and etomo handle tilt-series alignment; the ASTRA Toolbox provides GPU iterative reconstruction via CUDA. Cryo-ET remains limited by the missing wedge artifact, which deep learning (IsoNet) corrects post hoc on GPU.
-- **Key algorithms:** Weighted back-projection (WBP), SART (simultaneous algebraic reconstruction), AreTomo beam-induced motion correction, fiducial marker alignment, beam-induced motion correction (MotionCor2-TomoTilt), iterative reconstruction convergence.
-- **Datasets:** EMPIAR tilt series archives (https://www.ebi.ac.uk/empiar/); EMDB subtomogram averages (https://www.ebi.ac.uk/emdb/); SHREC cryo-ET benchmark (verify URL); in situ ribosome tilt series (EMPIAR-10045).
-- **Starter repos/tools:** IMOD (https://bio3d.colorado.edu/imod/) — standard tomographic reconstruction suite; ASTRA Toolbox (https://github.com/astra-toolbox/astra-toolbox) — GPU CUDA reconstruction algorithms; AreTomo2 (https://github.com/czimaginginstitute/AreTomo2) — GPU tilt-series alignment; IsoNet (https://github.com/IsoNet-cryoET/IsoNet) — GPU deep learning missing wedge correction.
-- **CUDA libraries & GPU pattern:** Custom CUDA WBP kernel over tilt projection angles; cuFFT for filter application in filtered back-projection; GPU SART iteration with CUDA atomic updates; PyTorch CNN for IsoNet missing-wedge correction; multi-GPU for large tomogram reconstruction.
-
-</details>
-
----
+> For a reader who knows C++ but is new to CUDA and to cryo electron tomography.
+> See [README.md](README.md) for the tour and build. _Educational only — a
+> reduced-scope, 2-D teaching version. Not for any clinical or research-grade use._
 
 ## 1. The science
 
-TODO(theory): The biology / medicine / physics being modeled — enough for a
-reader to understand the *problem* before any math. What real-world question
-does computing this answer?
+Cryo electron tomography (cryo-ET) images a single, frozen-hydrated biological
+specimen — a slab of cell, a virus, a molecular machine *in situ*. The microscope
+**tilts** the specimen to a series of angles (typically every few degrees from
+roughly −60° to +60°) and records a 2-D projection image at each tilt. That stack
+of images is the **tilt series**. From it we reconstruct the specimen's 3-D
+density (the **tomogram**).
+
+Three problems stand between the raw tilt series and a clean tomogram, and a real
+pipeline solves all three:
+
+1. **Frame / beam-induced motion** — the electron beam makes the thin ice move
+   during each exposure (corrected by motion-correction like MotionCor2).
+2. **Tilt-series alignment** — between exposures the stage drifts, so projections
+   are translated (and slightly rotated/scaled) relative to each other; they must
+   be registered to a common frame before reconstruction.
+3. **Tomogram reconstruction** — invert the aligned projections into 3-D density,
+   classically by **Weighted Back-Projection (WBP)**.
+
+A fourth, unavoidable issue is the **missing wedge**: because the holder cannot
+tilt past ~±60°, a wedge of Fourier space is never measured, smearing the
+reconstruction along the beam axis. (Deep-learning tools such as IsoNet try to
+*fill* the wedge after the fact.)
+
+This project implements a **reduced-scope, 2-D** version of steps 2 and 3:
+translational tilt-series alignment by cross-correlation, then WBP of a single
+slice with a **cuFFT** ramp filter.
 
 ## 2. The math
 
-TODO(theory): The governing equations / formal problem statement, with **every
-symbol defined** (units, ranges). State inputs, outputs, and the objective.
+A projection is a **line integral** of the density `f`. In 2-D, the projection at
+tilt angle `θ` and detector position `s` is the **Radon transform**:
+
+```
+p(θ, s) = ∫ f(x, y) δ(x·cosθ + y·sinθ − s) dx dy
+```
+
+The **Fourier-slice theorem** says the 1-D Fourier transform of `p(θ, ·)` is a
+radial slice, at angle `θ`, of the 2-D Fourier transform of `f`. Inverting the
+polar→Cartesian change of variables introduces the Jacobian `|ω|`, giving
+**weighted back-projection**:
+
+```
+f(x, y) = Σ_k  ( p(θ_k, ·) * h )( x·cosθ_k + y·sinθ_k ) · Δθ
+```
+
+where `*` is 1-D convolution and `h` is the **ramp filter** with frequency
+response `|ω|` (Ram-Lak). "Weighted" = the ramp; "back-projection" = the angular
+sum. Without `h`, the sum is `1/r`-blurred.
+
+**Alignment.** If projection `k` is the true projection drifted by `d_k` detector
+bins, two adjacent projections (only a few degrees apart) have nearly identical
+content, so their **cross-correlation**
+
+```
+CC_{k,k-1}(L) = Σ_j  p_{k-1}[j] · p_k[j + L]
+```
+
+peaks at `L = d_k − d_{k-1}` — the *relative* drift. Accumulating those relative
+lags outward from a reference projection recovers each absolute drift `d_k`.
 
 ## 3. The algorithm
 
-TODO(theory): Step-by-step. Include **complexity analysis**: serial cost vs. the
-parallel work/depth. Where is the arithmetic intensity? What is the data-access
-pattern?
+```
+# Step 1 — tilt-series alignment (sequential cross-correlation)
+ref = argmin_k |tilt_k|
+shift[ref] = 0
+for k from ref-1 down to 0:    shift[k] = shift[k+1] + argmax_L CC(p_{k+1}, p_k)
+for k from ref+1 up to K-1:    shift[k] = shift[k-1] + argmax_L CC(p_{k-1}, p_k)
+aligned[k] = translate(p_k, shift[k])
+
+# Step 2 — ramp filter (per projection row), in the frequency domain
+for each aligned row:  X = FFT(row);  X *= ramp(|f|);  filtered = IFFT(X)
+
+# Step 3 — weighted back-projection (per output pixel)
+for each pixel (x,y):
+    f(x,y) = (pi/K) * Σ_k  interp( filtered_k, x·cosθ_k + y·sinθ_k )
+```
+
+**Complexity.**
+- Alignment: `O(K · n_det · W)` for a search window `W` (here a small ±8-bin scan).
+- Ramp filter: `O(K · n_det log n_det)` with the FFT.
+- Back-projection: `O(img² · K)` — the dominant term, and the part we put on the
+  GPU. In 3-D it is `O(vox³ · K)`, where the GPU becomes essential.
 
 ## 4. The GPU mapping
 
-TODO(theory): How the algorithm becomes **threads / blocks / grids**.
-- Thread-to-data mapping (which thread owns which element).
-- Launch configuration and the reasoning (block size, grid size).
-- Memory hierarchy used and **why**: global / shared / registers / constant /
-  texture. Where is the bandwidth bottleneck? What is the occupancy story?
-- Which CUDA library (cuBLAS / cuFFT / cuRAND / cuSOLVER / Thrust) does what,
-  and what it would take to write that step by hand (no black boxes — §6.1.6).
+Two GPU teaching points, matching the catalog's named pattern ("custom CUDA WBP
+kernel … cuFFT for filter application").
+
+**(a) Ramp filter with cuFFT.** We run a **batched** real-to-complex FFT over all
+`K` projection rows at once (`cufftPlan1d(…, CUFFT_R2C, K)`), multiply each
+spectrum by the ramp weight with a tiny element-wise kernel (one thread per
+spectral bin, `i % nf` selects the weight), then a batched complex-to-real inverse
+FFT. cuFFT owns the `O(n log n)` transform; we own the *physics* (the `|f|` ramp).
+What hand-rolling would cost: a mixed-radix FFT with bit-reversal and twiddle
+factors — exactly the solved primitive a library should provide.
+
+**(b) Back-projection as a per-pixel gather.** One thread per output pixel, on a
+2-D grid of 16×16 blocks tiling the slice. Thread `(px,py)` owns pixel `(px,py)`:
 
 ```
-TODO(theory): an ASCII or Mermaid diagram of the grid/block decomposition.
+  for each tilt k:
+     s    = wx*cos[k] + wy*sin[k]      # where this pixel's ray hits detector k
+     fidx = s/ds + center             # fractional detector index
+     acc += lerp(filtered_k[fidx])    # linear interpolation in the detector
+  slice = acc * (pi / K)
 ```
+
+**Memory hierarchy.** `filtered`, `cos`, `sin`, and the output slice are in global
+memory. Each thread reads `K` interpolated samples; neighbouring pixels read
+nearby detector positions, so locality is good and the kernel is
+**bandwidth-bound** — the regime GPUs dominate. Production code binds `filtered`
+to a **texture** so the hardware sampler does the interpolation for free.
+
+**Independence.** Pixels are independent: no shared memory, no atomics, no
+sync — the canonical tomographic kernel. The 3-D tomogram is a *stack* of these
+independent slices (trivially parallel across slices too).
+
+**CPU/GPU parity (the key idiom).** The per-sample interpolation lives in **one**
+`__host__ __device__` function (`wbp_core.h::sample_projection_hd`), included by
+both the CPU reference and the kernel, so they run byte-identical float math. The
+ramp *weight* is likewise one shared `ramp_weight_hd`, so the cuFFT ramp and the
+CPU DFT ramp are the same filter. `cos`/`sin` are precomputed once on the host and
+uploaded, so the GPU never uses `cosf` where the CPU uses `cos`.
 
 ## 5. Numerical considerations
 
-TODO(theory): Precision (FP32 vs FP64) and why. Stability. Race conditions and
-whether atomics are used. **Determinism**: does the parallel reduction reorder
-floating-point sums? If so, say so and quantify the caveat.
+- **Precision.** Reconstruction sums are single precision; the CPU reference DFT
+  accumulates in `double` for a clean baseline, then stores `float`.
+- **The ramp and noise.** `|ω|` amplifies high frequencies and noise, so we apply
+  a raised-cosine (Hann) roll-off toward Nyquist — standard apodization in WBP.
+- **Determinism.** Alignment uses integer-bin lags with a fixed scan order and a
+  tie-break toward zero; the per-pixel back-projection sum is in a fixed tilt
+  order with no cross-thread reduction. So **stdout is byte-reproducible**
+  (PATTERNS.md §3) — integer shifts plus fixed-precision samples.
+- **FFT vs spatial convolution.** A frequency-domain ramp is a *periodic*
+  convolution; a spatial Ram-Lak is a *linear* one. They differ near row edges
+  (wrap-around vs zero-pad). We make the CPU reference an explicit **DFT** with the
+  *same* ramp weights so both ramp paths are the same operation, and verify on the
+  interior bins to a documented `5e-2` tolerance (the edge bins are largely outside
+  the reconstructed field of view).
 
 ## 6. How we verify correctness
 
-TODO(theory): The CPU reference (`src/reference_cpu.cpp`), the **tolerance** and
-why that value, and the edge cases checked. Explain why agreement between an
-independent serial implementation and the GPU implementation is convincing
-evidence of correctness.
+`main.cu` runs two checks (see also the `[verify]` line on stderr):
+
+1. **Back-projection parity.** `backproject_cpu` and `backproject_gpu` consume the
+   *same* (cuFFT-filtered) sinogram and their slices are compared with
+   `max_abs_err`. They agree to ~`1e-6`, far inside the `1e-3` tolerance (the only
+   difference is float FMA contraction order).
+2. **Ramp parity.** The cuFFT ramp filter is compared against the CPU DFT ramp on
+   the interior detector bins (tolerance `5e-2`); they agree to ~`1e-6` there.
+
+Beyond CPU==GPU agreement, the result is **physically meaningful**: the recovered
+`estimated shifts` track the injected drift to within ~1 bin (alignment works),
+and the reconstruction's bright spot is the central disc (back-projection works) —
+so the pipeline actually inverts the (limited-angle) Radon transform, not just
+"the two implementations agree".
 
 ## 7. Where this sits in the real world
 
-TODO(theory): How production tools (named in the catalog "Prior art") do this
-differently — what they add (scale, accuracy, features) that this teaching
-version omits. If this is a 🔴 frontier project shipped as a reduced-scope
-teaching version, describe the full approach here.
+Production cryo-ET is far richer than this 2-D slice:
 
----
+- **Alignment.** IMOD's `etomo`/`tiltxcorr` tracks **gold fiducial beads** across
+  the whole series and solves a global model for translation, rotation,
+  magnification, and the tilt-axis position; **AreTomo2** does fiducial-free patch
+  cross-correlation / projection matching, on the GPU, and also corrects
+  beam-induced motion. We teach only the 1-D translational, integer-precision
+  core — the cross-correlation that underlies the coarse pass.
+- **Reconstruction.** WBP is the fast classic; iterative **SART**/SIRT (as in the
+  **ASTRA Toolbox**, CUDA) trade compute for fewer limited-angle artifacts. Both
+  are GPU-accelerated for full 3-D volumes (a stack of the slice kernel here),
+  often multi-GPU.
+- **Missing wedge.** The ±60° limit leaves the wedge of unmeasured Fourier space;
+  **IsoNet** (a PyTorch CNN) learns to restore isotropic resolution post hoc.
+
+The two computational hearts you see here — the cross-correlation alignment and
+the back-projection gather — are exactly the kernels those production tools
+accelerate.
 
 ## References
 
-TODO(theory): Papers, docs, and the starter repos from the catalog, with one
-line each on what to learn from them.
+- Kak & Slaney, *Principles of Computerized Tomographic Imaging* (1988) — Radon/FBP.
+- Mastronarde (1997, 2005) — IMOD tilt-series alignment with fiducials.
+- Zheng et al. (2022) — *AreTomo*: GPU fiducial-free alignment + reconstruction.
+- van Aarle et al. (2015, 2016) — the **ASTRA Toolbox** GPU reconstruction algorithms.
+- Liu et al. (2022) — *IsoNet*: deep-learning missing-wedge correction.
+- NVIDIA cuFFT documentation — batched R2C/C2R transforms.

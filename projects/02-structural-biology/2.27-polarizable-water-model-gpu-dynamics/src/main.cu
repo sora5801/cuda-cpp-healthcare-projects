@@ -1,122 +1,163 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load system, solve on CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 2.27 -- Polarizable Water Model GPU Dynamics   (template skeleton)
+// Project 2.27 : Polarizable Water Model GPU Dynamics
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load the polarizable-water cluster (data/sample, or a built-in fallback).
+//   2. Solve the induced dipoles on the CPU (reference_cpu.cpp) -> trusted answer.
+//   3. Solve them on the GPU (kernels.cu)                        -> the thing taught.
+//   4. VERIFY: GPU dipoles + energy agree with CPU within tolerance.
+//   5. REPORT: deterministic result to STDOUT; timing to STDERR.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Run-to-run varying numbers (timings) go to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+//   The committed sample is engineered to TEACH (data/README.md): the first
+//   site is an isolated polarizable site in a known uniform external field, so
+//   its converged dipole must equal the ANALYTIC mu = alpha*E -- a physics check
+//   on top of the CPU==GPU check (PATTERNS.md §4, §6). The remaining sites form a
+//   small water-like cluster whose mutual polarization needs the SCF loop.
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// READ THIS FIRST in the code tour, then polar.h (the physics), kernels.cuh ->
+// kernels.cu (GPU), and reference_cpu.cpp (baseline). See ../THEORY.md for "why".
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // solve_dipoles_gpu (GPU path)
+#include "reference_cpu.h"    // PolarSystem, load_system, solve_dipoles_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
+// Identity tokens (kept in sync with demo/expected_output.txt).
 static const char* PROJECT_ID   = "2.27";
 static const char* PROJECT_NAME = "Polarizable Water Model GPU Dynamics";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Verification tolerance. The CPU and GPU run the SAME double-precision Jacobi
+// arithmetic (polar.h) and reduce in fixed point, so they agree to ~1e-11. We
+// verify to 1e-9 -- generous enough to absorb the last fixed-point digit, tight
+// enough to catch any real divergence. (THEORY.md §Numerics explains the choice.)
+static constexpr double TOLERANCE = 1.0e-9;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
+// ---------------------------------------------------------------------------
+// build_synthetic_system: a tiny, fully-deterministic fallback used when no data
+//   file is supplied. It is the SAME content as data/sample/water_cluster.txt so
+//   the demo's expected output holds with or without the file:
+//     * site 0 : an isolated polarizable site (q=0) in a uniform field Eext, far
+//                from the cluster -> its dipole tests the analytic mu = alpha*E.
+//     * sites 1.. : two water-like molecules (O carries the polarizable charge,
+//                two H carry positive fixed charges) close enough to mutually
+//                polarize, so the SCF loop actually does work.
+//   Coordinates in Angstrom, charges in e, alpha in A^3.
+// ---------------------------------------------------------------------------
+static PolarSystem build_synthetic_system() {
+    PolarSystem s;
+    s.a_thole   = 0.39;       // AMOEBA-like Thole screening
+    s.max_iters = 200;
+    s.tol       = 1.0e-9;
+    s.Eext      = Vec3{0.0, 0.0, 0.05};   // uniform external field along +z (e/A^2)
 
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+    auto add = [&](double x, double y, double z, double q, double alpha) {
+        s.sites.push_back(Site{Vec3{x, y, z}, q, alpha});
+    };
+    // Isolated probe far away (50 A) so the cluster's field at it is negligible.
+    add(50.0, 0.0, 0.0,  0.0, 1.444);           // site 0: polarizable probe
+    // Water A (TIP4P-ish geometry), O is the polarizable carrier of -0.834 e.
+    add( 0.000, 0.000, 0.000, -0.834, 1.444);   // O  (polarizable)
+    add( 0.757, 0.586, 0.000,  0.417, 0.0);     // H  (fixed)
+    add(-0.757, 0.586, 0.000,  0.417, 0.0);     // H  (fixed)
+    // Water B, displaced ~2.9 A along x (a hydrogen-bond-like separation).
+    add( 2.900, 0.000, 0.000, -0.834, 1.444);   // O  (polarizable)
+    add( 3.657, 0.586, 0.000,  0.417, 0.0);     // H  (fixed)
+    add( 3.657,-0.586, 0.000,  0.417, 0.0);     // H  (fixed)
+    return s;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
+    // ---- 1. Load -----------------------------------------------------------
+    PolarSystem sys;
     const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    bool loaded = false;
+    if (argc > 1) {
+        try {
+            sys = load_system(argv[1]);
+            source = argv[1];
+            loaded = true;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[warn] could not load '%s' (%s); using built-in synthetic system\n",
+                         argv[1], e.what());
+        }
     }
+    if (!loaded) sys = build_synthetic_system();
+    const int N = num_sites(sys);
 
     // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    const SolveResult cpu = solve_dipoles_cpu(sys);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU solve (kernels timed inside the wrapper) -------------------
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    const SolveResult gpu = solve_dipoles_gpu(sys, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify ---------------------------------------------------------
+    // (a) Largest per-component dipole difference across all sites.
+    double dip_err = 0.0;
+    for (int i = 0; i < N; ++i) {
+        dip_err = std::fmax(dip_err, std::fabs(cpu.mu[i].x - gpu.mu[i].x));
+        dip_err = std::fmax(dip_err, std::fabs(cpu.mu[i].y - gpu.mu[i].y));
+        dip_err = std::fmax(dip_err, std::fabs(cpu.mu[i].z - gpu.mu[i].z));
+    }
+    // (b) Polarization-energy difference (internal units).
+    const double e_err = std::fabs(cpu.U_pol - gpu.U_pol);
+    const bool pass = (dip_err <= TOLERANCE) && (e_err <= TOLERANCE);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // (c) PHYSICS cross-check: site 0 is an isolated probe in the uniform field
+    //     Eext, so its converged dipole must equal the analytic mu = alpha * Eext
+    //     (cluster ~50 A away contributes < 1e-6). magnitude of |mu0| vs |alpha*E|.
+    const double alpha0 = sys.sites[0].alpha;
+    const double mu0_mag = std::sqrt(gpu.mu[0].x * gpu.mu[0].x +
+                                     gpu.mu[0].y * gpu.mu[0].y +
+                                     gpu.mu[0].z * gpu.mu[0].z);
+    const double eext_mag = std::sqrt(sys.Eext.x * sys.Eext.x +
+                                      sys.Eext.y * sys.Eext.y +
+                                      sys.Eext.z * sys.Eext.z);
+    const double mu0_analytic = alpha0 * eext_mag;
+
+    // ---- 5a. Deterministic report -> STDOUT --------------------------------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("self-consistent induced dipoles (Jacobi SCF) on %d sites\n", N);
+    std::printf("a_thole = %.3f  tol = %.1e  max_iters = %d\n",
+                sys.a_thole, sys.tol, sys.max_iters);
+    std::printf("converged in %d sweeps\n", gpu.iters);
+    std::printf("induced dipole magnitude |mu| per site (e*A):\n");
+    for (int i = 0; i < N; ++i) {
+        const double m = std::sqrt(gpu.mu[i].x * gpu.mu[i].x +
+                                   gpu.mu[i].y * gpu.mu[i].y +
+                                   gpu.mu[i].z * gpu.mu[i].z);
+        std::printf("  site %2d: q=%+.3f alpha=%.3f  |mu|=%.9f\n",
+                    i, sys.sites[i].q, sys.sites[i].alpha, m);
+    }
+    std::printf("polarization energy U_pol = %.9f e^2/A = %.6f kcal/mol\n",
+                gpu.U_pol, gpu.U_pol_kcal);
+    std::printf("probe check: |mu0| = %.9f  analytic alpha*Eext = %.9f\n",
+                mu0_mag, mu0_analytic);
+    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-09)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR --------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d sites)\n", source, N);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact only -- this tiny cluster is launch-bound; "
+                         "the GPU's edge grows with site count (real boxes have 10^3-10^6 sites).\n");
+    std::fprintf(stderr, "[verify] worst dipole diff = %.3e   energy diff = %.3e   (tol %.1e)\n",
+                 dip_err, e_err, TOLERANCE);
+    std::fprintf(stderr, "[verify] probe |mu0| error vs analytic = %.3e e*A\n",
+                 std::fabs(mu0_mag - mu0_analytic));
+    std::fprintf(stderr, "[solver] CPU sweeps=%d (residual %.3e)   GPU sweeps=%d (residual %.3e)\n",
+                 cpu.iters, cpu.final_dmu, gpu.iters, gpu.final_dmu);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

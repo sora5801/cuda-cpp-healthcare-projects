@@ -1,12 +1,15 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Reference-data pointers (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 2.27 -- Polarizable Water Model GPU Dynamics   (template skeleton)
+# Project 2.27 : Polarizable Water Model GPU Dynamics
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL, and
+# NEVER bypasses credentials/registration. The reference data for polarizable
+# water is (a) tabular thermophysical properties and (b) force-field parameter
+# files / trajectory archives -- none of which this teaching demo needs, because
+# its committed synthetic cluster (data/sample/water_cluster.txt) is complete and
+# self-contained. So this script PRINTS where the real data lives and defers to
+# scripts/make_synthetic.py for larger offline inputs.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +19,18 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.27 -- Polarizable Water Model GPU Dynamics"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    NIST water thermophysical properties (https://webbook.nist.gov); HBond dynamics NMR benchmark datasets; MD2PDB water trajectory archives; SPC/E, TIP4P-2005 reference simulation datasets."
+Write-Host "This demo needs NO download: data/sample/water_cluster.txt is a complete,"
+Write-Host "self-contained SYNTHETIC cluster. The real-world reference data for"
+Write-Host "polarizable water models is:"
+Write-Host "  * NIST water thermophysical properties (density/dielectric vs T,P):"
+Write-Host "      https://webbook.nist.gov/chemistry/fluid/"
+Write-Host "  * TIP4P-2005 / SPC/E reference simulation data and force-field params"
+Write-Host "    (water density anomaly, dielectric constant convergence benchmarks)."
+Write-Host "  * MB-pol / AMOEBA polarizable parameters & code:"
+Write-Host "      MBX        https://github.com/paesanilab/MBX"
+Write-Host "      OpenMM     https://github.com/openmm/openmm"
+Write-Host "      Tinker-HP  https://github.com/TinkerTools/tinker-hp"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
-Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "For a larger SYNTHETIC cluster (e.g. 64 waters), run:"
+Write-Host "    python scripts/make_synthetic.py --waters 64"

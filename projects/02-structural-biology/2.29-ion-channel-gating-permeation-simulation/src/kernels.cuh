@@ -1,52 +1,63 @@
 // ===========================================================================
 // src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 2.29 -- Ion Channel Gating & Permeation Simulation   (template skeleton)
+// Project 2.29 : Ion Channel Gating & Permeation Simulation
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   The "what the GPU offers" header. main.cu calls permeation_gpu(); kernels.cu
+//   implements both the host wrapper and the device kernel. Included only by .cu
+//   translation units (it pulls in CUDA-only declarations), so the plain C++
+//   compiler never sees it -- which is why the CPU reference's prototype lives in
+//   the separate pure-C++ reference_cpu.h.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+// THE BIG IDEA  (PATTERNS.md §1: stochastic / Monte-Carlo histories)
+//   The ions are INDEPENDENT Brownian walkers, so we assign ONE GPU THREAD PER
+//   ION. With n_ions trajectories and a block of B threads we use a grid-stride
+//   loop so a fixed grid covers any number of ions: thread
+//   i0 = blockIdx.x*blockDim.x + threadIdx.x handles ions i0, i0+stride, ...
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Two Monte-Carlo lessons made concrete here:
+//     * PER-THREAD RNG: each thread re-seeds its private splitmix64 stream from
+//       the ion index (rng_seed in channel_physics.h). Because the CPU reference
+//       seeds the SAME way from the SAME index, it reproduces the identical
+//       trajectory -- enabling EXACT verification.
+//     * ATOMIC SCORING: many threads add into the SAME occupancy bins and the
+//       SAME two crossing counters, so we use atomicAdd. The tallied quantities
+//       are INTEGERS, so the atomic adds commute -> the GPU result is
+//       deterministic and equals the CPU tally bit-for-bit (a float current sum
+//       would not have this property; see THEORY.md "Numerical considerations").
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+//   kernels.cu defines the kernel. main.cu calls permeation_gpu().
+//
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, channel_physics.h,
+//                  reference_cpu.h. Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
-#include <vector>
+#include "reference_cpu.h"   // PermeationProblem, PermeationResult, ChannelParams
 
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// permeation_kernel: each thread integrates one or more ion trajectories and
+// scores integer occupancy + crossing counts via atomicAdd.
+//   cp        : channel/protocol parameters (passed by value -> per-thread regs)
+//   n_ions    : number of independent trajectories (grid-stride loop bound)
+//   seed      : base RNG seed (ion i uses the reproducible stream (seed, i))
+//   occupancy : device tally [n_bins], one bucket per z-bin (atomicAdd target)
+//   crossings : device tally [2] = {forward, reverse} permeation counts
+__global__ void permeation_kernel(ChannelParams cp,
+                                  unsigned long long n_ions,
+                                  unsigned long long seed,
+                                  unsigned long long* __restrict__ occupancy,
+                                  unsigned long long* __restrict__ crossings);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// permeation_gpu: the host-callable "do the whole GPU computation" function.
+//   Allocates + zeroes the device tallies, launches permeation_kernel, copies
+//   the integer results back, and reports the measured KERNEL time (CUDA events)
+//   via *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
+//   prob      : the simulation job (channel params + n_ions + seed)
+//   out       : filled with occupancy histogram + forward/reverse counts
 //   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+void permeation_gpu(const PermeationProblem& prob, PermeationResult& out,
+                    float* kernel_ms);

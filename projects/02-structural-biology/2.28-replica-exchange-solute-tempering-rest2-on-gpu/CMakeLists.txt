@@ -31,3 +31,11 @@ add_executable(replica-exchange-solute-tempering-rest2-on-gpu
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(replica-exchange-solute-tempering-rest2-on-gpu PRIVATE src)
+
+# --fmad=false : disable fused-multiply-add CONTRACTION on the device so the
+# GPU energy arithmetic matches the host MSVC/g++ build (IEEE * and + become
+# bit-identical). This shrinks the CPU/GPU drift to the transcendental floor
+# (exp() still differs ~1 ULP), which is why we verify robust aggregate
+# observables, not the exact trajectory. Mirrors the VS .vcxproj setting.
+target_compile_options(replica-exchange-solute-tempering-rest2-on-gpu PRIVATE
+  $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)

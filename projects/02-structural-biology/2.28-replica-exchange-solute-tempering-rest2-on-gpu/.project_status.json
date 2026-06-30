@@ -2,7 +2,7 @@
   "id": "2.28",
   "id_padded": "2.28",
   "project": "Replica Exchange Solute Tempering (REST2) on GPU",
-  "status": "todo",
+  "status": "done",
   "owner": "",
   "branch": "",
   "skeleton": true

@@ -1,0 +1,37 @@
+# ===========================================================================
+# data/sample/water_cluster.txt  --  TINY SYNTHETIC polarizable-water cluster
+# Project 2.27 : Polarizable Water Model GPU Dynamics
+#
+# SYNTHETIC, NOT EXPERIMENTAL. These coordinates/charges are a hand-built
+# teaching configuration (TIP4P-like geometry, AMOEBA-like polarizabilities),
+# NOT a measured structure. See data/README.md for provenance + real-data
+# pointers. No clinical or research claim is implied.
+#
+# FORMAT (comments after '#' are ignored; whitespace-separated):
+#   line 1 : N  a_thole  max_iters  tol   Eext_x Eext_y Eext_z
+#   next N : x  y  z   q   alpha
+# Units: length=Angstrom, charge=e, alpha=Angstrom^3, field=e/A^2.
+#
+# This file reproduces the program's built-in synthetic system exactly, so the
+# demo's expected_output.txt holds whether or not this file is passed.
+# ===========================================================================
+7   0.39   200   1e-9    0.0 0.0 0.05
+
+# --- site 0: an ISOLATED polarizable probe, 50 A from the cluster -----------
+# In the uniform external field Eext (= 0.05 e/A^2 along +z) and with the
+# cluster's field negligible at this distance, its converged dipole must equal
+# the ANALYTIC mu = alpha * Eext = 1.444 * 0.05 = 0.0722 e*A. The demo checks it.
+#   x       y       z       q        alpha
+  50.000   0.000   0.000   0.000    1.444
+
+# --- water A (TIP4P-like geometry); O carries the polarizable charge --------
+   0.000   0.000   0.000  -0.834    1.444    # O  (polarizable)
+   0.757   0.586   0.000   0.417    0.000    # H  (fixed charge, no dipole)
+  -0.757   0.586   0.000   0.417    0.000    # H  (fixed charge, no dipole)
+
+# --- water B, ~2.9 A away (hydrogen-bond-like separation) -------------------
+# Close enough that A and B MUTUALLY polarize -> the self-consistent SCF loop
+# actually does work here (not just the direct guess).
+   2.900   0.000   0.000  -0.834    1.444    # O  (polarizable)
+   3.657   0.586   0.000   0.417    0.000    # H  (fixed charge, no dipole)
+   3.657  -0.586   0.000   0.417    0.000    # H  (fixed charge, no dipole)

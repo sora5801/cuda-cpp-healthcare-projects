@@ -2,11 +2,14 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.33 -- Structure-Based Pharmacophore Modeling from MD Ensembles   (template skeleton)
+# Project 2.33 : Structure-Based Pharmacophore Modeling from MD Ensembles
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. The real sources below need registration
+# and/or a pharmacophore-typing pipeline to turn structures and MD frames into
+# feature points; that is out of scope for this teaching version, so this script
+# only PRINTS guidance and defers to scripts/make_synthetic.py for an offline,
+# fully-synthetic stand-in.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +20,16 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 2.33 -- Structure-Based Pharmacophore Modeling from MD Ensembles"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    GPCRmd trajectory archive (https://gpcrmd.org); DUD-E actives/decoys for validation (https://dude.docking.org); PDB structures of target classes (https://www.rcsb.org); ZINC drug-like library for screening (https://zinc20.docking.org)."
+echo "This project ships a fully SYNTHETIC sample (data/sample/pharmacophore_sample.txt)."
+echo "No real dataset is downloaded. Real sources (require registration and a"
+echo "pharmacophore-typing pipeline -- see THEORY.md 'Where this sits in the real world'):"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  GPCRmd trajectory archive : https://gpcrmd.org        (GPCR MD ensembles)"
+echo "  DUD-E actives/decoys      : https://dude.docking.org  (screening validation)"
+echo "  RCSB PDB                  : https://www.rcsb.org      (target-class structures)"
+echo "  ZINC drug-like library    : https://zinc20.docking.org (screening library)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "  Respect each source's license; none of that data is redistributed here."
+echo "  The committed tiny sample is enough to run the demo offline."
+echo "  For a larger SYNTHETIC screen, run:"
+echo "    python scripts/make_synthetic.py --N 1000000"

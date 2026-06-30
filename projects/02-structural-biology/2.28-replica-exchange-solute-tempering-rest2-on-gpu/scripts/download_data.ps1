@@ -1,12 +1,14 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Pointers to the FULL datasets (Windows)
 # ---------------------------------------------------------------------------
-# Project 2.28 -- Replica Exchange Solute Tempering (REST2) on GPU   (template skeleton)
+# Project 2.28 : Replica Exchange Solute Tempering (REST2) on GPU
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and
+# NEVER bypasses credentials/registration. This teaching project runs entirely
+# on the committed SYNTHETIC sample (data/sample/rest2_config.txt); the datasets
+# below are where a *real* REST2 study gets its validation data, so this script
+# only prints instructions + links and defers to scripts/make_synthetic.py for
+# the offline run.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +18,16 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.28 -- Replica Exchange Solute Tempering (REST2) on GPU"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Shaw millisecond folding trajectories for validation; SAMPL challenges (https://github.com/samplchallenges/SAMPL); GPCRmd REST2 enhanced sampling data (https://gpcrmd.org); chignolin/Trp-cage fast-folder benchmarks."
+Write-Host "This project's demo needs NO download: it runs on the committed synthetic"
+Write-Host "sample data/sample/rest2_config.txt. Regenerate or sweep it with:"
+Write-Host "    python scripts/make_synthetic.py --barrier-h 9 --n-replicas 16"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real-world REST2 VALIDATION datasets (open the links; respect each license):"
+Write-Host "  * Shaw millisecond folding trajectories -- by request/collaboration; not redistributable."
+Write-Host "  * SAMPL challenges      : https://github.com/samplchallenges/SAMPL  (open)"
+Write-Host "  * GPCRmd REST2 data     : https://gpcrmd.org                        (web access; site terms)"
+Write-Host "  * Chignolin / Trp-cage fast-folder benchmarks -- public sequences; standard REMD test systems."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "None of these is required for the demo. For credentialed sets, register at the"
+Write-Host "source FIRST; this script will never bypass authentication (CLAUDE.md section 8)."

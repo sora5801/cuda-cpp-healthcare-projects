@@ -1,122 +1,126 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: run GIST on CPU + GPU, verify, report sites
 // ---------------------------------------------------------------------------
-// Project 2.26 -- Hydrogen Bond Network & Water Placement Analysis   (template skeleton)
+// Project 2.26 : Hydrogen Bond Network & Water Placement Analysis
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (every project in this repo follows it):
+//   1. LOAD the MD frames + solute + grid (data/sample, or arg path).
+//   2. CPU reference GIST (reference_cpu.cpp)  -> trusted voxel tallies + ranking.
+//   3. GPU GIST (kernels.cu): grid accumulation with atomic fixed-point updates.
+//   4. VERIFY: per-voxel occupancy + fixed-point energy match EXACTLY (integer
+//      atomics commute), and the ranked hydration-site list is identical.
+//   5. REPORT: deterministic top hydration sites -> stdout; timing -> stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Run-varying numbers (timings) go to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then gist.h (the physics + fixed-point), reference_cpu.*
+// (loader + serial baseline + shared reduce), kernels.cuh -> kernels.cu (the GPU
+// scatter). See ../THEORY.md for the science and the GPU mapping.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // gist_gpu, Dataset, VoxelResult
+#include "reference_cpu.h"    // load_dataset, gist_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "2.26";
 static const char* PROJECT_NAME = "Hydrogen Bond Network & Water Placement Analysis";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// How many top-ranked hydration sites to print. Small + fixed so stdout is short
+// and deterministic; the full list is available programmatically.
+static constexpr int TOP_SITES = 8;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1)
+        ? argv[1]
+        : "data/sample/water_sample.txt";
+    Dataset d;
+    try {
+        d = load_dataset(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<unsigned int> counts_cpu;
+    std::vector<gist_fixed_t> esum_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    const std::vector<VoxelResult> sites_cpu = gist_cpu(d, counts_cpu, esum_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU GIST (kernel timed inside the wrapper) --------------------
+    std::vector<unsigned int> counts_gpu;
+    std::vector<gist_fixed_t> esum_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    const std::vector<VoxelResult> sites_gpu = gist_gpu(d, counts_gpu, esum_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (exact: integer/fixed-point atomics commute) -----------
+    // (a) Per-voxel raw tallies must match bit-for-bit.
+    const int nv = d.grid.num_voxels();
+    long long count_mismatch = 0;     // voxels whose occupancy differs
+    long long esum_mismatch  = 0;     // voxels whose fixed-point energy differs
+    for (int v = 0; v < nv; ++v) {
+        if (counts_cpu[v] != counts_gpu[v]) ++count_mismatch;
+        if (esum_cpu[v]   != esum_gpu[v])   ++esum_mismatch;
+    }
+    // (b) The ranked hydration-site lists must be identical (same length, same
+    //     voxel order, same dG to within a hair -- they are computed from equal
+    //     tallies so any diff would be a bug, not floating-point noise).
+    bool ranking_match = (sites_cpu.size() == sites_gpu.size());
+    double max_dG_diff = 0.0;
+    if (ranking_match) {
+        for (std::size_t i = 0; i < sites_cpu.size(); ++i) {
+            if (sites_cpu[i].index != sites_gpu[i].index) { ranking_match = false; break; }
+            max_dG_diff = std::fmax(max_dG_diff, std::fabs(sites_cpu[i].dG - sites_gpu[i].dG));
+        }
+    }
+    const bool pass = (count_mismatch == 0) && (esum_mismatch == 0) && ranking_match;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) ----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("GIST grid: %dx%dx%d voxels @ %.2f A spacing  (%d voxels)\n",
+                d.grid.nx, d.grid.ny, d.grid.nz, d.grid.spacing, nv);
+    std::printf("samples: %d frames x %d waters = %lld water observations; %d solute atoms\n",
+                d.nframes, d.waters_per_frame, d.num_samples(), d.natoms);
+    std::printf("hydration sites (voxels with adequate occupancy): %zu\n", sites_gpu.size());
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    // Header for the ranked table. Sites are ranked by OCCUPANCY (the water
+    // occupancy map identifies them), and each is annotated with its GIST
+    // thermodynamics. Columns:
+    //   rank, (ix,iy,iz) voxel, occupancy count, density g, dE, -TdS, dG.
+    std::printf("top %d hydration sites (ranked by occupancy; GIST dG = displaceability, kcal/mol):\n",
+                TOP_SITES);
+    std::printf("  rank  voxel(ix,iy,iz)   n      g      dE     -TdS      dG\n");
+    const int show = (static_cast<int>(sites_gpu.size()) < TOP_SITES)
+                     ? static_cast<int>(sites_gpu.size()) : TOP_SITES;
+    for (int i = 0; i < show; ++i) {
+        const VoxelResult& s = sites_gpu[i];
+        // Recover (ix,iy,iz) from the flat index for a human-readable location.
+        const int ix = s.index % d.grid.nx;
+        const int iy = (s.index / d.grid.nx) % d.grid.ny;
+        const int iz = s.index / (d.grid.nx * d.grid.ny);
+        std::printf("  %3d   (%2d,%2d,%2d)      %5u  %5.2f  %6.2f  %6.2f  %6.2f\n",
+                    i + 1, ix, iy, iz, s.count, s.g, s.dE, s.mTdS, s.dG);
+    }
+    std::printf("\n");
+    std::printf("RESULT: %s (GPU voxel tallies + site ranking match CPU exactly)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
+    std::fprintf(stderr, "[data]   source: %s\n", path.c_str());
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernel: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact only -- the GPU edge grows with the number of "
+                         "(water x frame) samples; real GIST runs stream 10^6-10^9 of them.\n");
+    std::fprintf(stderr, "[verify] count mismatches = %lld, fixed-point energy mismatches = %lld, "
+                         "max dG diff = %.3e kcal/mol, ranking identical = %s\n",
+                 count_mismatch, esum_mismatch, max_dG_diff, ranking_match ? "yes" : "no");
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

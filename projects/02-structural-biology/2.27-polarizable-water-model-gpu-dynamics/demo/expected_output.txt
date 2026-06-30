@@ -1,5 +1,15 @@
 2.27 -- Polarizable Water Model GPU Dynamics
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+self-consistent induced dipoles (Jacobi SCF) on 7 sites
+a_thole = 0.390  tol = 1.0e-09  max_iters = 200
+converged in 10 sweeps
+induced dipole magnitude |mu| per site (e*A):
+  site  0: q=+0.000 alpha=1.444  |mu|=0.072198272
+  site  1: q=-0.834 alpha=1.444  |mu|=0.810270988
+  site  2: q=+0.417 alpha=0.000  |mu|=0.000000000
+  site  3: q=+0.417 alpha=0.000  |mu|=0.000000000
+  site  4: q=-0.834 alpha=1.444  |mu|=1.031002668
+  site  5: q=+0.417 alpha=0.000  |mu|=0.000000000
+  site  6: q=+0.417 alpha=0.000  |mu|=0.000000000
+polarization energy U_pol = -0.591838205 e^2/A = -196.527992 kcal/mol
+probe check: |mu0| = 0.072198272  analytic alpha*Eext = 0.072200000
+RESULT: PASS (GPU matches CPU within tol=1.0e-09)

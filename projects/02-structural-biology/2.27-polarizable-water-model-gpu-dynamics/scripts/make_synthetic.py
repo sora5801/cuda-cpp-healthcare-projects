@@ -1,48 +1,92 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate a synthetic polarizable-water cluster
 # ---------------------------------------------------------------------------
-# Project 2.27 -- Polarizable Water Model GPU Dynamics   (template skeleton)
+# Project 2.27 : Polarizable Water Model GPU Dynamics
 #
 # WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+#   Real polarizable-water reference data (NIST thermophysical tables, TIP4P-2005
+#   trajectory archives) is either tabular (not a molecular cluster) or large /
+#   credentialed (see scripts/download_data.*). To keep the demo runnable offline
+#   we generate a clearly-SYNTHETIC cluster in the exact text format the loader
+#   (src/reference_cpu.cpp::load_system) expects. Synthetic data is always
+#   LABELED synthetic and makes NO clinical or research claim.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
+#   The cluster is deterministic (no RNG by default) so the demo's
+#   expected_output.txt stays stable. It always begins with an ISOLATED
+#   polarizable PROBE 50 A away in a uniform external field, whose converged
+#   dipole must equal the analytic mu = alpha*Eext -- the demo's physics check.
+#   The remaining sites are `--waters` TIP4P-like water molecules placed on a
+#   line so neighbours mutually polarize and the SCF loop does real work.
 #
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# FILE FORMAT (see data/README.md):
+#   line 1 : N a_thole max_iters tol  Eext_x Eext_y Eext_z
+#   next N : x y z q alpha            (Angstrom, e, A^3)
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py                 # default: probe + 2 waters
+#   python scripts/make_synthetic.py --waters 64     # bigger cluster
+#   python scripts/make_synthetic.py --out other.txt
 # ===========================================================================
 import argparse
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+ROOT = Path(__file__).resolve().parent.parent              # the project folder
+OUT = ROOT / "data" / "sample" / "water_cluster.txt"
+
+# Single-water internal geometry (TIP4P-like), Angstrom. O at the origin of the
+# molecule; the two H's splayed in the xy-plane. Charges in e; only the O carries
+# a polarizability (it is the polarizable carrier in our simplified model).
+O_CHARGE, O_ALPHA = -0.834, 1.444
+H_CHARGE = 0.417
+WATER_SPACING = 2.9                                        # A between O atoms (H-bond-like)
+
+# Per-water H offsets. To exactly reproduce the hand-built committed sample
+# (data/sample/water_cluster.txt) at the default --waters 2, the FIRST water's
+# H's splay symmetrically about +y while every SUBSEQUENT water's H's both lean
+# toward +x (donor-like orientation). This deliberate asymmetry breaks the mirror
+# symmetry so the two oxygens get DIFFERENT induced dipoles -- a more interesting
+# SCF result. For w == 0 we use the symmetric pair; otherwise the donor pair.
+H_OFFS_FIRST = [(0.757, 0.586, 0.0), (-0.757, 0.586, 0.0)]
+H_OFFS_DONOR = [(0.757, 0.586, 0.0), (0.757, -0.586, 0.0)]
+
+
+def water(ox, oy, oz, first):
+    """Return the 3 site lines (O, H, H) for a water whose O is at (ox,oy,oz)."""
+    sites = [(ox, oy, oz, O_CHARGE, O_ALPHA)]
+    offs = H_OFFS_FIRST if first else H_OFFS_DONOR
+    for dx, dy, dz in offs:
+        sites.append((ox + dx, oy + dy, oz + dz, H_CHARGE, 0.0))
+    return sites
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
+    ap = argparse.ArgumentParser(description="Generate a synthetic polarizable-water cluster.")
+    ap.add_argument("--waters", type=int, default=2, help="number of water molecules")
+    ap.add_argument("--a-thole", type=float, default=0.39, help="Thole screening parameter")
+    ap.add_argument("--max-iters", type=int, default=200, help="SCF sweep cap")
+    ap.add_argument("--tol", type=float, default=1e-9, help="SCF convergence tolerance (e*A)")
+    ap.add_argument("--eext", type=float, default=0.05, help="uniform external field along +z (e/A^2)")
     ap.add_argument("--out", default=str(OUT), help="output path")
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    sites = []
+    # Site 0: the isolated polarizable probe, far from the cluster (+x 50 A).
+    sites.append((50.0, 0.0, 0.0, 0.0, O_ALPHA))
+    # Then `--waters` waters along the x-axis, spaced WATER_SPACING apart.
+    for w in range(args.waters):
+        sites.extend(water(w * WATER_SPACING, 0.0, 0.0, first=(w == 0)))
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    N = len(sites)
+    lines = [f"# SYNTHETIC polarizable-water cluster (probe + {args.waters} waters) "
+             f"-- generated by make_synthetic.py; not experimental data."]
+    lines.append(f"{N} {args.a_thole:g} {args.max_iters} {args.tol:g}  0 0 {args.eext:g}")
+    for (x, y, z, q, alpha) in sites:
+        lines.append(f"{x:.3f} {y:.3f} {z:.3f}  {q:+.3f}  {alpha:.3f}")
+
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    print(f"[make_synthetic] wrote {args.out}  (N={N} sites, {args.waters} waters; SYNTHETIC)")
 
 
 if __name__ == "__main__":

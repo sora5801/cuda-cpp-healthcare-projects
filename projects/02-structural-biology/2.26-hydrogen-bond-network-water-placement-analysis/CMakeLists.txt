@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 2.26 -- Hydrogen Bond Network & Water Placement Analysis   (template skeleton)
+# Project 2.26 -- Hydrogen Bond Network & Water Placement Analysis
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/hydrogen-bond-network-water-placement-analysis.sln (CLAUDE.md §5). Both

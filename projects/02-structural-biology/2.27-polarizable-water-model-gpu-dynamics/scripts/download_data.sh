@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Reference-data pointers (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.27 -- Polarizable Water Model GPU Dynamics   (template skeleton)
+# Project 2.27 : Polarizable Water Model GPU Dynamics
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL, and
+# NEVER bypasses credentials/registration. This teaching demo needs no download
+# (its committed synthetic cluster is complete); this script PRINTS where the
+# real data lives and defers to scripts/make_synthetic.py for larger inputs.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,15 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 2.27 -- Polarizable Water Model GPU Dynamics"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    NIST water thermophysical properties (https://webbook.nist.gov); HBond dynamics NMR benchmark datasets; MD2PDB water trajectory archives; SPC/E, TIP4P-2005 reference simulation datasets."
+echo "This demo needs NO download: data/sample/water_cluster.txt is a complete,"
+echo "self-contained SYNTHETIC cluster. The real-world reference data is:"
+echo "  * NIST water thermophysical properties (density/dielectric vs T,P):"
+echo "      https://webbook.nist.gov/chemistry/fluid/"
+echo "  * TIP4P-2005 / SPC/E reference simulation data and force-field params."
+echo "  * MB-pol / AMOEBA polarizable parameters & code:"
+echo "      MBX        https://github.com/paesanilab/MBX"
+echo "      OpenMM     https://github.com/openmm/openmm"
+echo "      Tinker-HP  https://github.com/TinkerTools/tinker-hp"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
-echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "For a larger SYNTHETIC cluster (e.g. 64 waters), run:"
+echo "    python scripts/make_synthetic.py --waters 64"

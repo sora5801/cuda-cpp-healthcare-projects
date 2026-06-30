@@ -2,7 +2,7 @@
 # ===========================================================================
 # demo/run_demo.sh  --  One command: build (if needed) + run + verify (Linux)
 # ---------------------------------------------------------------------------
-# Project 2.29 -- Ion Channel Gating & Permeation Simulation   (template skeleton)
+# Project 2.29 : Ion Channel Gating & Permeation Simulation
 #
 # Uses the OPTIONAL CMake build (the required deliverable is the VS solution).
 # Mirrors run_demo.ps1: deterministic stdout is diffed against
@@ -14,7 +14,7 @@ set -euo pipefail
 DEMO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$DEMO")"
 SLUG="ion-channel-gating-permeation-simulation"
-SAMPLE="$ROOT/data/sample/saxpy_sample.txt"
+SAMPLE="$ROOT/data/sample/channel_params.txt"
 EXPECTED="$DEMO/expected_output.txt"
 BUILD="$ROOT/build/cmake"
 EXE="$BUILD/$SLUG"

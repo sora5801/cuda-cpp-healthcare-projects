@@ -1,5 +1,16 @@
 2.33 -- Structure-Based Pharmacophore Modeling from MD Ensembles
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
+ensemble pharmacophore: 5 features
+  feature[0] aromatic   at (10.39, 10.28, 9.38) weight 0.78
+  feature[1] pos-charge at (2.28, 9.65, 5.71) weight 0.85
+  feature[2] acceptor   at (1.13, 3.64, 1.09) weight 0.92
+  feature[3] neg-charge at (7.61, 7.14, 4.75) weight 0.78
+  feature[4] neg-charge at (7.39, 1.89, 0.18) weight 0.81
+screen: 1 pharmacophore vs 512 library molecules
+top-5 hits (ROCS-style color Tanimoto):
+  #1  mol[7]  score = 0.593165
+  #2  mol[147]  score = 0.108589
+  #3  mol[280]  score = 0.101253
+  #4  mol[444]  score = 0.096770
+  #5  mol[102]  score = 0.072042
+planted target mol[7] score = 0.593165, rank = 1 of 512
 RESULT: PASS (GPU matches CPU within tol=1.0e-05)

@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 2.33 -- Structure-Based Pharmacophore Modeling from MD Ensembles   (template skeleton)
+# Project 2.33 -- Structure-Based Pharmacophore Modeling from MD Ensembles
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/structure-based-pharmacophore-modeling-from-md-ensembles.sln (CLAUDE.md §5). Both

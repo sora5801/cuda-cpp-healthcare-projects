@@ -1,5 +1,9 @@
 2.29 -- Ion Channel Gating & Permeation Simulation
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+pore L=3.00 nm, 12 bins, barrier U=4.00 kT (sigma=0.50 nm), q=+1, V=4.00 kT/e
+BD: D=0.400 nm^2/step, dt=0.200, steps=2000, ions=256
+permeations: forward=63334  reverse=58579  net=4755
+net flux per ion-step = 9.287109e-03 (conductance proxy)
+occupancy histogram (ion-steps per z-bin):
+  92953 93269 75883 47341 24625 11481 6143 6143 11095 24354 46755 71958
+peak occupancy at bin 1 (z ~ 0.38 nm)
+RESULT: PASS (GPU tallies match CPU exactly)

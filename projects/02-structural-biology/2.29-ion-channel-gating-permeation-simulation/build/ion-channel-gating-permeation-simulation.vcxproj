@@ -153,6 +153,9 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- Shared host+device physics: the RNG and the per-step Brownian update that
+         BOTH the CPU reference and the GPU kernel call, so their tallies match. -->
+    <ClInclude Include="..\src\channel_physics.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

@@ -1,5 +1,17 @@
 2.26 -- Hydrogen Bond Network & Water Placement Analysis
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+GIST grid: 10x10x10 voxels @ 0.50 A spacing  (1000 voxels)
+samples: 120 frames x 8 waters = 960 water observations; 14 solute atoms
+hydration sites (voxels with adequate occupancy): 38
+
+top 8 hydration sites (ranked by occupancy; GIST dG = displaceability, kcal/mol):
+  rank  voxel(ix,iy,iz)   n      g      dE     -TdS      dG
+    1   ( 4, 5, 5)        120  239.52   15.16    3.25   18.41
+    2   ( 6, 4, 4)        120  239.52   14.93    3.25   18.18
+    3   ( 9, 8, 0)         37  73.85   14.78    2.55   17.33
+    4   ( 0, 1, 9)         35  69.86    8.97    2.52   11.48
+    5   ( 0, 9, 9)         34  67.86   11.59    2.50   14.09
+    6   ( 0, 9, 8)         31  61.88   13.79    2.44   16.23
+    7   ( 0, 8, 9)         30  59.88   13.85    2.42   16.28
+    8   ( 0, 9, 1)         29  57.88    9.00    2.40   11.41
+
+RESULT: PASS (GPU voxel tallies + site ranking match CPU exactly)

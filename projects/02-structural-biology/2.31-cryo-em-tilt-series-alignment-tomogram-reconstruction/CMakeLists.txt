@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 2.31 -- Cryo-EM Tilt-Series Alignment & Tomogram Reconstruction   (template skeleton)
+# Project 2.31 -- Cryo-EM Tilt-Series Alignment & Tomogram Reconstruction
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/cryo-em-tilt-series-alignment-tomogram-reconstruction.sln (CLAUDE.md §5). Both
@@ -31,3 +31,9 @@ add_executable(cryo-em-tilt-series-alignment-tomogram-reconstruction
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(cryo-em-tilt-series-alignment-tomogram-reconstruction PRIVATE src)
+
+# Link cuFFT: ramp_filter_gpu() applies the ramp filter in the frequency domain
+# (R2C FFT -> |f| ramp -> C2R FFT). CUDA::cufft is the CMake import for cufft.lib
+# / libcufft.so (matches the .vcxproj's AdditionalDependencies on Windows).
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(cryo-em-tilt-series-alignment-tomogram-reconstruction PRIVATE CUDA::cufft)

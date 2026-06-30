@@ -1,12 +1,14 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 2.33 -- Structure-Based Pharmacophore Modeling from MD Ensembles   (template skeleton)
+# Project 2.33 : Structure-Based Pharmacophore Modeling from MD Ensembles
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs and
+# NEVER bypasses credentials/registration. The real sources below need
+# registration and/or a feature-extraction pipeline to turn structures and MD
+# frames into pharmacophore feature points; that is out of scope for this
+# teaching version, so this script only PRINTS guidance and defers to
+# scripts/make_synthetic.py for an offline, fully-synthetic stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +18,17 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.33 -- Structure-Based Pharmacophore Modeling from MD Ensembles"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    GPCRmd trajectory archive (https://gpcrmd.org); DUD-E actives/decoys for validation (https://dude.docking.org); PDB structures of target classes (https://www.rcsb.org); ZINC drug-like library for screening (https://zinc20.docking.org)."
+Write-Host "This project ships a fully SYNTHETIC sample (data/sample/pharmacophore_sample.txt)."
+Write-Host "No real dataset is downloaded. Real sources (require registration and a"
+Write-Host "pharmacophore-typing pipeline -- see THEORY.md 'Where this sits in the real world'):"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  GPCRmd trajectory archive : https://gpcrmd.org        (GPCR MD ensembles)"
+Write-Host "  DUD-E actives/decoys      : https://dude.docking.org  (screening validation)"
+Write-Host "  RCSB PDB                  : https://www.rcsb.org      (target-class structures)"
+Write-Host "  ZINC drug-like library    : https://zinc20.docking.org (screening library)"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  Respect each source's license; none of that data is redistributed here."
+Write-Host "  The committed tiny sample is enough to run the demo offline."
+Write-Host "  For a larger SYNTHETIC screen, run:"
+Write-Host "    python scripts/make_synthetic.py --N 1000000"

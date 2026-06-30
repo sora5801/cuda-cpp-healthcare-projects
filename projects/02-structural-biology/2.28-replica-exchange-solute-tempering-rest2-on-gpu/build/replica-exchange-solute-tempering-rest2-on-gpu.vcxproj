@@ -112,6 +112,17 @@
       <!-- fast math is OFF by default; enable per-project only where the
            numerics tolerate it, and document it (CLAUDE.md section 5). -->
       <FastMath>false</FastMath>
+      <!-- AdditionalOptions passes nvcc's fmad=false flag: compute a*b+c as a
+           SEPARATE multiply then add (no fused multiply add CONTRACTION), which
+           brings the device energy arithmetic in line with the host MSVC
+           compiler (IEEE * and + are then bit identical). It SHRINKS the CPU/GPU
+           drift to the transcendental floor: exp() in the Metropolis test still
+           differs by about 1 ULP host vs device, and a borderline accept can
+           flip and (because MC trajectories are chaotic) diverge afterwards.
+           That is why we verify ROBUST AGGREGATE observables (well occupancy,
+           acceptance ratio) within a small tolerance, not the exact trajectory.
+           See THEORY.md "Numerical considerations" and "How we verify". -->
+      <AdditionalOptions>--fmad=false %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
 
@@ -142,6 +153,11 @@
       <!-- -lineinfo: source mapping for Nsight profiling without the -G slowdown. -->
       <GenerateLineInfo>true</GenerateLineInfo>
       <FastMath>false</FastMath>
+      <!-- nvcc fmad=false (see the Debug block for the full rationale): no
+           fused multiply add contraction, so device energy arithmetic tracks the
+           host. Residual ~1 ULP exp() drift in the Metropolis test means we
+           verify robust aggregate observables, not the exact trajectory. -->
+      <AdditionalOptions>--fmad=false %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
 
@@ -153,6 +169,7 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <ClInclude Include="..\src\rest2.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

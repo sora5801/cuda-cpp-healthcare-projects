@@ -14,7 +14,7 @@ set -euo pipefail
 DEMO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$DEMO")"
 SLUG="replica-exchange-solute-tempering-rest2-on-gpu"
-SAMPLE="$ROOT/data/sample/saxpy_sample.txt"
+SAMPLE="$ROOT/data/sample/rest2_config.txt"
 EXPECTED="$DEMO/expected_output.txt"
 BUILD="$ROOT/build/cmake"
 EXE="$BUILD/$SLUG"

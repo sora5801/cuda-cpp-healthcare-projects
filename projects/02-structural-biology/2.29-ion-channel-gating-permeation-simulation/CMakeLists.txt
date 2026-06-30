@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 2.29 -- Ion Channel Gating & Permeation Simulation   (template skeleton)
+# Project 2.29 : Ion Channel Gating & Permeation Simulation
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/ion-channel-gating-permeation-simulation.sln (CLAUDE.md §5). Both

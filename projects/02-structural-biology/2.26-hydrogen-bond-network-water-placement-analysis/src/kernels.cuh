@@ -1,52 +1,69 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU GIST interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 2.26 -- Hydrogen Bond Network & Water Placement Analysis   (template skeleton)
+// Project 2.26 : Hydrogen Bond Network & Water Placement Analysis
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA  (pattern: GRID ACCUMULATION WITH ATOMIC UPDATES)
+//   GIST is a SCATTER reduction. There are nframes * waters_per_frame independent
+//   (water, frame) samples; each one:
+//       1. finds the voxel it occupies                       (read-only lookup),
+//       2. computes its water<->solute interaction energy    (independent),
+//       3. ATOMICALLY adds 1 to that voxel's occupancy and its energy into the
+//          voxel's running sum                               (colliding writes).
+//   We give ONE THREAD PER SAMPLE: thread t handles sample t = frame*W + water.
+//   Many threads land in the same voxel, so the accumulation uses atomicAdd. To
+//   keep the result DETERMINISTIC and CPU-matching, the energy sum is accumulated
+//   in FIXED-POINT integers (gist.h) -- integer atomic adds commute, unlike float.
+//   This is the same pattern as Monte-Carlo dose (5.01) and k-means accumulate
+//   (11.09); see docs/PATTERNS.md.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   After the kernel, the raw tallies are copied back and the SHARED host helper
+//   derive_voxels() (reference_cpu.cpp) turns them into the ranked hydration-site
+//   list -- the very same function the CPU path uses, so CPU and GPU agree exactly.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   kernels.cu defines the kernel + the host wrapper gist_gpu(). main.cu calls it.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, gist.h, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // Dataset, VoxelResult, gist_fixed_t (pure C++; safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ---------------------------------------------------------------------------
+// gist_accumulate_kernel: one thread per (water, frame) sample.
+//   Launch (set in gist_gpu):
+//     grid  = ceil(num_samples / THREADS_PER_BLOCK) blocks
+//     block = THREADS_PER_BLOCK threads
+//   Thread map: t = blockIdx.x*blockDim.x + threadIdx.x -> sample t (frame, water).
+//   Memory: reads waters[t*3..] and all atoms[] from global memory; atomicAdds
+//     into counts[voxel] (unsigned int) and esum[voxel] (fixed-point long long).
+//   Atomics: yes -- the scatter destination (a voxel) is shared by many samples.
+//   The solute atoms array is read by every thread; for the tiny teaching solute
+//   it stays hot in the L2/constant-ish caches, so a plain __restrict__ global
+//   pointer is fine (production GIST would stage atoms in shared/constant memory).
+// ---------------------------------------------------------------------------
+__global__ void gist_accumulate_kernel(const float* __restrict__ waters,
+                                       long long num_samples,
+                                       const float* __restrict__ atoms, int natoms,
+                                       GistGrid grid,
+                                       unsigned int* __restrict__ counts,
+                                       gist_fixed_t* __restrict__ esum);
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// ---------------------------------------------------------------------------
+// gist_gpu: host wrapper -- the whole GPU computation behind one call.
+//   Allocates device buffers, copies the waters + atoms H2D, zeroes the voxel
+//   tallies, launches the accumulation kernel (timed with CUDA events), copies the
+//   raw tallies back, and runs the SHARED derive_voxels() reduction on the host so
+//   the ranked list matches the CPU bit-for-bit.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   d         : the loaded dataset (frames, waters, atoms, grid).
+//   counts    : OUT, length grid.num_voxels(), GPU occupancy per voxel.
+//   esum      : OUT, length grid.num_voxels(), GPU fixed-point energy sum per voxel.
+//   kernel_ms : OUT, milliseconds spent in the accumulation kernel (not copies).
+//   returns   : the ranked VoxelResult list (highest GIST dG first).
+// ---------------------------------------------------------------------------
+std::vector<VoxelResult> gist_gpu(const Dataset& d,
+                                  std::vector<unsigned int>& counts,
+                                  std::vector<gist_fixed_t>& esum,
+                                  float* kernel_ms);

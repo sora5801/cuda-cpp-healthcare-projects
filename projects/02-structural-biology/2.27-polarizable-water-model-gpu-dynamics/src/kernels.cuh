@@ -1,52 +1,50 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU induced-dipole SCF interface (declarations + idea)
 // ---------------------------------------------------------------------------
-// Project 2.27 -- Polarizable Water Model GPU Dynamics   (template skeleton)
+// Project 2.27 : Polarizable Water Model GPU Dynamics
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (PATTERNS.md: iterative relaxation + N-body field eval)
+//   The self-consistent induced-dipole problem (polar.h) is solved by JACOBI
+//   ITERATION: each sweep recomputes every site's dipole from the PREVIOUS
+//   sweep's dipoles. Within a sweep the N updates are INDEPENDENT, so we give
+//   ONE GPU THREAD PER SITE. Each thread does an O(N) loop over the other sites
+//   to gather the dipole field at its own site (an N-body field evaluation),
+//   re-induces its dipole, and writes it to a SECOND buffer (ping-pong, so we
+//   never read a half-updated array). The host drives the sweep loop and checks
+//   convergence. This is the same "relax until self-consistent" structure as the
+//   PBD flagship 10.02 and the stencil solvers, but the coupling is all-to-all.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Two design choices keep the GPU result DETERMINISTIC and matched to the CPU
+//   (PATTERNS.md §3):
+//     * Each thread sums the field over j in the SAME fixed index order the CPU
+//       uses -> identical floating-point arithmetic -> dipoles agree to round-off.
+//     * The two scalar reductions (max dipole change, total energy) are done in
+//       FIXED-POINT integers via atomicAdd/atomicMax, so the answer does not
+//       depend on the (nondeterministic) order in which threads finish.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Included only by .cu files (it declares __global__ kernels). PolarSystem /
+//   SolveResult come from the pure-C++ reference_cpu.h so this stays consistent
+//   with the CPU side.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, polar.h, reference_cpu.h.
+// Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
-#include <vector>
+#include "reference_cpu.h"   // PolarSystem, SolveResult, Site, Vec3 (pure C++)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
-
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// ---------------------------------------------------------------------------
+// solve_dipoles_gpu: the host-callable "do the whole SCF on the GPU" entry.
+//   Uploads the geometry, computes the permanent field once, runs the Jacobi
+//   sweep loop on the device (ping-ponging two dipole buffers) until the
+//   max dipole change drops below sys.tol or sys.max_iters is hit, then reduces
+//   the polarization energy. Returns the converged dipoles + diagnostics in the
+//   same SolveResult shape as the CPU reference, so main.cu can compare them.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   sys        : the system to solve (geometry, charges, polarizabilities, tol).
+//   kernel_ms  : out-param, total GPU time across all sweep kernels (CUDA events).
+//
+// All CUDA bookkeeping (malloc/memcpy/launch/free) is hidden inside; main.cu
+// only sees this one function, mirroring integrate_gpu() in the 9.02 flagship.
+// ---------------------------------------------------------------------------
+SolveResult solve_dipoles_gpu(const PolarSystem& sys, float* kernel_ms);

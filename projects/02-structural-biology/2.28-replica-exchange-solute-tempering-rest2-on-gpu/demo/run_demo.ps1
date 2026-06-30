@@ -18,7 +18,7 @@ $ProjectRoot = Split-Path -Parent $Demo
 $Slug        = "replica-exchange-solute-tempering-rest2-on-gpu"
 $Sln         = Join-Path $ProjectRoot "build\$Slug.sln"
 $Exe         = Join-Path $ProjectRoot "build\x64\Release\$Slug.exe"
-$Sample      = Join-Path $ProjectRoot "data\sample\saxpy_sample.txt"
+$Sample      = Join-Path $ProjectRoot "data\sample\rest2_config.txt"
 $Expected    = Join-Path $Demo "expected_output.txt"
 
 function Find-MSBuild {
@@ -46,17 +46,37 @@ if (-not (Test-Path $Exe)) {
 }
 
 # --- 2. Run, capturing stdout and stderr separately -----------------------
+# We use Start-Process with file redirection (NOT "& $Exe 2> file"): under
+# Windows PowerShell 5.1 with $ErrorActionPreference='Stop', a native program
+# writing ANYTHING to stderr is surfaced as a terminating NativeCommandError --
+# even though our program only writes timing/info there. Start-Process keeps the
+# child's stderr out of PowerShell's error stream, so the demo stays robust.
+# [System.IO.Path]::GetTempFileName() works on every PowerShell edition.
 Write-Host "[run_demo] Running $Slug on the committed sample ..."
-$outFile = New-TemporaryFile
-$errFile = New-TemporaryFile
+$outFile = [System.IO.Path]::GetTempFileName()
+$errFile = [System.IO.Path]::GetTempFileName()
 $proc = Start-Process -FilePath $Exe -ArgumentList "`"$Sample`"" -NoNewWindow -Wait -PassThru `
           -RedirectStandardOutput $outFile -RedirectStandardError $errFile
-$stdout = (Get-Content $outFile -Raw) -replace "`r",""
-$stderr = (Get-Content $errFile -Raw) -replace "`r",""
+
+# Read both streams. Get-Content -Raw returns $null for an empty file; coercing
+# to [string] FIRST avoids the "$null -replace ... -> @()" array trap that then
+# fails on .TrimEnd(). We also retry the stdout read briefly in case the OS has
+# not finished flushing the child's redirected handle yet.
+$stdoutRaw = ""
+for ($try = 0; $try -lt 20; $try++) {
+    $stdoutRaw = [string](Get-Content $outFile -Raw)
+    if ($stdoutRaw.Trim().Length -gt 0) { break }
+    Start-Sleep -Milliseconds 25
+}
+$stderr = ([string](Get-Content $errFile -Raw)) -replace "`r",""
 Remove-Item $outFile, $errFile -ErrorAction SilentlyContinue
 
+# Normalize stdout (strip CR) to a clean LF string.
+$stdout = $stdoutRaw -replace "`r",""
+$exitCode = $proc.ExitCode
+
 # --- 3. Compare stdout to expected ----------------------------------------
-$expected = (Get-Content $Expected -Raw) -replace "`r",""
+$expected = ([string](Get-Content $Expected -Raw)) -replace "`r",""
 $actualLines   = $stdout.TrimEnd("`n").Split("`n")
 $expectedLines = $expected.TrimEnd("`n").Split("`n")
 
@@ -74,7 +94,7 @@ if ($match) {
     }
 }
 
-if ($match -and $proc.ExitCode -eq 0) {
+if ($match -and $exitCode -eq 0) {
     Write-Host "[run_demo] PASS: output matches expected_output.txt and GPU==CPU." -ForegroundColor Green
     exit 0
 } else {
