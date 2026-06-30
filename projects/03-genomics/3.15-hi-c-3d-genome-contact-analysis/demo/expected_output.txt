@@ -1,5 +1,32 @@
 3.15 -- Hi-C / 3D Genome Contact Analysis
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+matrix: 12 bins, 78 stored contacts (upper triangle)
+ICE: 30 iterations, balanced bias per bin (occupied bins):
+  bin  0: bias = 0.800760
+  bin  1: bias = 1.412130
+  bin  2: bias = 0.728166
+  bin  3: bias = 1.025493
+  bin  4: bias = 1.200840
+  bin  5: bias = 0.832109
+  bin  6: bias = 1.025928
+  bin  7: bias = 1.100455
+  bin  8: bias = 0.596836
+  bin  9: bias = 1.360904
+  bin 10: bias = 0.885158
+  bin 11: bias = 0.953422
+insulation score (window=3):
+  bin  0:   n/a (edge)
+  bin  1:   n/a (edge)
+  bin  2:   n/a (edge)
+  bin  3: 18.363248
+  bin  4: 6.492788
+  bin  5: 17.534416
+  bin  6: 20.980602
+  bin  7: 17.532726
+  bin  8: 6.237471
+  bin  9: 18.068300
+  bin 10:   n/a (edge)
+  bin 11:   n/a (edge)
+TAD boundaries (local minima, radius=1): 2 found
+  boundary at bin 4
+  boundary at bin 8
+RESULT: PASS (GPU bias matches CPU reference within 1e-09)

@@ -5,29 +5,43 @@
 Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on the committed `data/sample/graph_sample.txt` (a tiny synthetic
+   variation graph + one read).
+3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`):
+   every cell of every per-node score block must match **exactly** (integer DP),
+   printing a clear `PASS`/`FAIL`.
+4. **Time** the per-node wavefront (CUDA events) and the CPU baseline — a
+   *teaching artifact*, not a benchmark claim.
 
-The program splits its output deliberately:
+The program splits its output deliberately (PATTERNS.md §3):
 
 - **stdout** is byte-for-byte deterministic and is diffed against
   [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+- **stderr** carries the timing and the cell-mismatch count (which vary run to
+  run), so it is shown but never diffed.
+
+## What to look at in the output
+
+```
+best local score = 96  ending at node a4, cell (i,j)=(54,6)
+best path through graph = a0>s0ref>a1>s1alt>a2>s2ref>a3>s3alt>a4
+aligned length = 54, identities = 50/54 (92.6%)
+  Q: GCTAATTACAATACATAATATTCACGTCAGCACGAAACTTGTTGGACCGTTTGA
+     |||||..|||||||||||.|||||||||||||||||||||||||||||||.|||
+  G: GCTAAAGACAATACATAACATTCACGTCAGCACGAAACTTGTTGGACCGTGTGA
+RESULT: PASS (GPU blocks match CPU exactly)
+```
+
+The headline is the **best path through graph**: the read was synthesised to
+follow the `ref` allele on even SNP bubbles and the `alt` allele on odd ones
+(`data/README.md`), and the aligner recovers exactly that path
+(`a0>s0ref>a1>s1alt>a2>s2ref>a3>s3alt>a4`). The `.` markers are the few seeded
+point mutations (4 of them → 92.6 % identity). `RESULT: PASS` confirms the GPU's
+per-node wavefront fill reproduced the CPU reference cell-for-cell.
 
 ## Expected result
 
-```
-3.13 -- Pangenome Graph Alignment
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
-
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+The committed [`expected_output.txt`](expected_output.txt) was **captured from a
+real run** on an NVIDIA RTX 2080 (Turing, `sm_75`), CUDA 13.3 + VS 2026. The
+stdout is deterministic, so it should match on any machine; the stderr timings
+will differ and are not compared.

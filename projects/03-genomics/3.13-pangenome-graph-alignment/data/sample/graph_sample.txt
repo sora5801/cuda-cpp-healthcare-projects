@@ -1,0 +1,34 @@
+# SYNTHETIC pangenome variation graph + query read (project 3.13).
+# Each 's<k>ref'/'s<k>alt' pair is a SNP bubble (two alleles).
+# The read follows path: a0>s0ref>a1>s1alt>a2>s2ref>a3>s3alt>a4
+# (ref on even SNPs, alt on odd), with ~8% point mutations.
+Q GCTAATTACAATACATAATATTCACGTCAGCACGAAACTTGTTGGACCGTTTGA
+N a0 GCTAAA
+N s0ref GACAAT
+N s0alt GACGAT
+N a1 ACATAA
+N s1ref CATACA
+N s1alt CATTCA
+N a2 CGTCAG
+N s2ref CACGAA
+N s2alt CACTAA
+N a3 ACTTGT
+N s3ref TGGCCC
+N s3alt TGGACC
+N a4 GTGTGA
+E a0 s0ref
+E a0 s0alt
+E s0ref a1
+E s0alt a1
+E a1 s1ref
+E a1 s1alt
+E s1ref a2
+E s1alt a2
+E a2 s2ref
+E a2 s2alt
+E s2ref a3
+E s2alt a3
+E a3 s3ref
+E a3 s3alt
+E s3ref a4
+E s3alt a4

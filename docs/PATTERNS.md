@@ -83,7 +83,9 @@ mean AUC `13.02`) — that validates the science, not just CPU==GPU agreement.
 When a step is a solved problem (FFT, eigensolve, sort, GEMM), **use the library**
 (cuFFT, cuSOLVER, cuBLAS, Thrust/CUB) — but document **what it computes, the data
 layout it expects, and what hand-rolling would take** (CLAUDE.md §6.1.6). See
-`8.03` (cuFFT R2C) and `2.06` (cuSOLVER `Dsyevd`). To link an extra library, add it
+`8.03` (cuFFT R2C), `2.06` (cuSOLVER `Dsyevd`), `2.20` (cuSOLVER `Dsyevd` for PCA),
+`1.08` (cuSOLVER **batched** `Dsyevj`), and `3.11` (cuBLAS **`Dgemm`** for the GWAS
+relatedness matrix `GRM = (1/M)ZZ^T` — the canonical GEMM use). To link an extra library, add it
 to **both** Link sections of the `.vcxproj` and to `CMakeLists.txt`:
 
 ```xml

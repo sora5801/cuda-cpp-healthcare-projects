@@ -1,5 +1,13 @@
 3.17 -- CRISPR Guide Design & Off-Target Scoring
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+guide 'demoGuide' vs genome of 418 bases (396 candidate windows, PAM=NGG)
+on-target: 1 site(s); first at position 40  GACCGGTACTGATCGATTGC(CGG)
+off-target sites (>=1 mismatch, CFD>=1e-06): 6
+top-5 off-targets by CFD:
+  #1  pos 103  mm 1  CFD 0.857756  GTCCGGTACTGATCGATTGC(AGG)
+  #2  pos 229  mm 2  CFD 0.061864  GACGGGTACTGATCGGTTGC(GGG)
+  #3  pos 166  mm 1  CFD 0.050000  GACCGGTACTGATCGATTGG(TGG)
+  #4  pos 355  mm 3  CFD 0.030436  GATCGGTATTGATCTATTGC(AGG)
+  #5  pos 292  mm 2  CFD 0.002625  GACCGGTACTGATCGATTCA(CGG)
+aggregate off-target CFD sum = 1.002689
+guide specificity score = 0.4993  (100 = perfectly specific)
+RESULT: PASS (GPU matches CPU: 0 mismatch-count diffs, CFD err <= 1e-12)

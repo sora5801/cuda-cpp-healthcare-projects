@@ -1,48 +1,118 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate the synthetic CRISPR sample dataset
 # ---------------------------------------------------------------------------
-# Project 3.17 -- CRISPR Guide Design & Off-Target Scoring   (template skeleton)
+# Project 3.17 : CRISPR Guide Design & Off-Target Scoring
 #
-# WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+# WHY SYNTHETIC
+#   Real off-target scanning runs a guide against a reference genome (hg38/mm10,
+#   gigabytes; see scripts/download_data.* and data/README.md). To keep the demo
+#   OFFLINE and REPRODUCIBLE we generate a tiny, clearly-SYNTHETIC genome that is
+#   ENGINEERED so the result is interpretable and verifiable:
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
+#     * exactly ONE on-target site -- the guide's exact 20-mer followed by a
+#       "CGG" (NGG) PAM, so the scan must recover one perfect hit;
+#     * several OFF-TARGET sites built by mutating the guide a controlled number
+#       of bases at controlled positions, then appending an NGG PAM, so the CFD
+#       scores span a wide, meaningful range:
+#         - a 1-mismatch DISTAL site  -> high CFD (barely penalized);
+#         - a 1-mismatch SEED site    -> low  CFD (heavily penalized);
+#         - 2- and 3-mismatch sites   -> intermediate / low CFD;
+#     * random filler between sites (with PAMs scrubbed so filler does not add
+#       accidental off-targets), so the scan also sees many no-PAM windows.
 #
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+#   A fixed RNG seed makes the output byte-for-byte reproducible, so
+#   demo/expected_output.txt is stable. Synthetic data is LABELED synthetic
+#   everywhere (CLAUDE.md §8); the scores carry no biological meaning.
+#
+# OUTPUT FORMAT (data/README.md):
+#   # comment lines allowed
+#   guide  <NAME>  <20-letter ACGT spacer>
+#   genome <ACGT string>            # one long line (the loader concatenates)
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py                 # default tiny sample
+#   python scripts/make_synthetic.py --filler 5000   # a bigger genome
 # ===========================================================================
 import argparse
+import random
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+OUT = ROOT / "data" / "sample" / "guide_genome_sample.txt"
+
+GUIDE_LEN = 20
+BASES = "ACGT"
+
+
+def scrub_pams(seq):
+    """Break any accidental 'NGG' PAM in a filler string so filler windows never
+    become off-targets: wherever two consecutive G's appear, flip the second to
+    an A. Deterministic and local; only used on RANDOM filler, never on the
+    engineered sites."""
+    s = list(seq)
+    for i in range(len(s) - 1):
+        if s[i] == "G" and s[i + 1] == "G":
+            s[i + 1] = "A"
+    return "".join(s)
+
+
+def mutate(guide, positions, rng):
+    """Return a copy of `guide` with the bases at `positions` changed to a
+    DIFFERENT base (so each is a guaranteed mismatch). Deterministic given rng."""
+    s = list(guide)
+    for p in positions:
+        choices = [b for b in BASES if b != s[p]]
+        s[p] = rng.choice(choices)
+    return "".join(s)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
+    ap = argparse.ArgumentParser(description="Generate the synthetic CRISPR sample.")
+    ap.add_argument("--filler", type=int, default=40,
+                    help="random filler bases placed between engineered sites")
+    ap.add_argument("--seed", type=int, default=17, help="RNG seed (determinism)")
+    ap.add_argument("--out", default=str(OUT))
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    rng = random.Random(args.seed)
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    # The guide spacer (20 nt). A fixed, human-readable sequence so the on-target
+    # protospacer is easy to eyeball in the demo output.
+    guide = "GACCGGTACTGATCGATTGC"
+    assert len(guide) == GUIDE_LEN
+
+    # Engineered sites: (protospacer, PAM). Positions are 0=PAM-distal(5') ...
+    # 19=PAM-proximal(3', the seed). We pick mismatch positions to exercise the
+    # seed effect so CFD scores spread out.
+    sites = []
+    sites.append((guide, "CGG"))                                  # on-target (0 mm)
+    sites.append((mutate(guide, [1], rng), "AGG"))                # 1 mm, DISTAL -> high CFD
+    sites.append((mutate(guide, [19], rng), "TGG"))               # 1 mm, SEED   -> low  CFD
+    sites.append((mutate(guide, [3, 15], rng), "GGG"))            # 2 mm (mixed)
+    sites.append((mutate(guide, [18, 19], rng), "CGG"))           # 2 mm, both seed -> very low
+    sites.append((mutate(guide, [2, 8, 14], rng), "AGG"))         # 3 mm (spread)
+
+    # Assemble: filler, then each site, then filler, ... Each site is the 20-base
+    # protospacer immediately followed by its 3-base PAM. Filler is PAM-scrubbed.
+    def filler(n):
+        return scrub_pams("".join(rng.choice(BASES) for _ in range(n)))
+
+    genome = filler(args.filler)
+    for proto, pam in sites:
+        genome += proto + pam + filler(args.filler)
+
+    lines = [
+        "# SYNTHETIC CRISPR sample for project 3.17 -- NOT real genomic data.",
+        "# Engineered: 1 on-target (exact 20-mer + NGG) + several off-targets.",
+        "# Generated by scripts/make_synthetic.py (seed={}).".format(args.seed),
+        "guide  demoGuide  " + guide,
+        "genome " + genome,
+    ]
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    print(f"[make_synthetic] wrote {args.out}  "
+          f"(guide={guide}, genome_len={len(genome)}; SYNTHETIC, seed={args.seed})")
 
 
 if __name__ == "__main__":

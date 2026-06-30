@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  How to get a REAL reference genome (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 3.17 -- CRISPR Guide Design & Off-Target Scoring   (template skeleton)
+# Project 3.17 : CRISPR Guide Design & Off-Target Scoring
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# Prints the recipe for fetching a reference genome (FASTA) to scan against and
+# the benchmark guide sets. Downloads nothing and needs no credentials; defers
+# to scripts/make_synthetic.py for an offline stand-in (CLAUDE.md §8).
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +17,22 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 3.17 -- CRISPR Guide Design & Off-Target Scoring"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    CRISPOR benchmark — validated guide efficiencies and off-targets (https://crispor.gi.ucsc.edu/); GeCKO v2 library — genome-scale CRISPR knockout screen guides (https://www.addgene.org/pooled-library/leczkowski-gecko-v2/); Azimuth / Rule Set 2 training data — published guide efficiency datasets (verify URL); hg38/mm10 reference genomes — for off-target genome scanning (https://genome.ucsc.edu/)."
+echo "Real off-target scanning runs a guide against a reference genome:"
+echo "  1) Download a reference genome (FASTA) from UCSC, e.g. one human"
+echo "     chromosome (smaller than the whole genome):"
+echo "       https://hgdownload.soe.ucsc.edu/goldenPath/hg38/chromosomes/chr21.fa.gz"
+echo "     (whole genome: https://genome.ucsc.edu/  | mouse: mm10)"
+echo "  2) gunzip it, strip the '>' header and newlines to get one ACGT string:"
+echo "       zcat chr21.fa.gz | grep -v '^>' | tr -d '\\n' > chr21.seq"
+echo "  3) Write the loader format documented in data/README.md:"
+echo "       guide  myGuide  <20-letter ACGT spacer>"
+echo "       genome <the ACGT string>"
+echo "  4) Validated guide efficiencies/off-targets for benchmarking:"
+echo "       CRISPOR  https://crispor.gi.ucsc.edu/"
+echo "       GeCKO v2 https://www.addgene.org/pooled-library/"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Offline stand-in (no download, fully reproducible):"
+echo "  python scripts/make_synthetic.py --filler 100000   # a larger synthetic genome"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Note: the guide must be exactly 20 ACGT bases; the genome must be at"
+echo "least 23 bases (one window). See data/README.md for the exact format."

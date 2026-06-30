@@ -1,12 +1,12 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Fetch / locate the FULL dataset (Windows)
 # ---------------------------------------------------------------------------
-# Project 3.13 -- Pangenome Graph Alignment   (template skeleton)
+# Project 3.13 : Pangenome Graph Alignment
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration or data-use agreements. Real pangenome graphs
+# are large GFA files; this project does not redistribute them. For the demo, the
+# committed SYNTHETIC sample in data/sample/ is sufficient and runs offline.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,24 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 3.13 -- Pangenome Graph Alignment"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Human Pangenome Reference Consortium (HPRC) — 94 haplotype-resolved assemblies (https://humanpangenome.org/); 1000 Genomes Project GVCFs — variant calls for graph construction (https://www.internationalgenome.org/data); Ensembl Pangenome — multi-species graphs (https://www.ensembl.org/); PGGB tutorial data (https://github.com/pangenome/pggb)."
+Write-Host "This project ships a tiny SYNTHETIC graph (data/sample/graph_sample.txt)"
+Write-Host "that is enough to build and run the demo offline. Real pangenome graphs"
+Write-Host "are large and governed by data-use terms; fetch them yourself from:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  HPRC (94 haplotype assemblies) : https://humanpangenome.org/"
+Write-Host "  1000 Genomes (GVCFs)           : https://www.internationalgenome.org/data"
+Write-Host "  Ensembl Pangenome              : https://www.ensembl.org/"
+Write-Host "  PGGB tutorial graphs (small)   : https://github.com/pangenome/pggb"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Typical real pipeline (run on Linux with the pangenome toolkit):"
+Write-Host "  1) build a graph:    pggb -i seqs.fa -o out/        # -> out/*.gfa"
+Write-Host "  2) sort/inspect:     odgi sort -i out/*.gfa -o sorted.og"
+Write-Host "  3) align reads:      vg giraffe -Z graph.giraffe.gbz -f reads.fq"
+Write-Host ""
+Write-Host "To feed a real GFA into THIS teaching program, emit one 'N <id> <seq>'"
+Write-Host "line per GFA 'S' record and one 'E <src> <dst>' per 'L' record, after a"
+Write-Host "topological sort (vg ids -s / odgi sort). See data/README.md."
+Write-Host ""
+Write-Host "For a larger SYNTHETIC problem instead, run:"
+Write-Host "  python scripts/make_synthetic.py --snps 8 --seg 10"

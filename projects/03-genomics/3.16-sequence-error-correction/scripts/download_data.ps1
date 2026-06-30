@@ -1,12 +1,13 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  How to get REAL reads (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 3.16 -- Sequence Error Correction   (template skeleton)
+# Project 3.16 : Sequence Error Correction
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md sec 8): idempotent, documented, prints source URLs and
+# NEVER bypasses credentials/registration. This project's demo runs on a
+# committed SYNTHETIC sample; real benchmark reads are large public archives, so
+# this script prints the recipe and defers to make_synthetic.py for an offline
+# stand-in. It downloads nothing by itself.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,24 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 3.16 -- Sequence Error Correction"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    GAGE short-read datasets — benchmark reads with known errors (http://gage.cbcb.umd.edu/); GiaB HG001-HG007 — truth-set comparison for corrected reads (https://www.nist.gov/programs-projects/genome-bottle); ONT long-read SRA archives (https://www.ncbi.nlm.nih.gov/sra); PacBio CLR SRA datasets — high-error long reads (https://www.ncbi.nlm.nih.gov/sra)."
+Write-Host "The demo runs on the committed SYNTHETIC sample (data/sample/reads_sample.txt)."
+Write-Host "To experiment on REAL reads with known error profiles, use a public archive:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  GAGE benchmark short reads (known reference -> measurable error rates):"
+Write-Host "    http://gage.cbcb.umd.edu/"
+Write-Host "  GIAB / Genome in a Bottle (NIST truth sets to score corrected reads):"
+Write-Host "    https://www.nist.gov/programs-projects/genome-bottle"
+Write-Host "  SRA (ONT / PacBio CLR high-error long reads -- a different regime):"
+Write-Host "    https://www.ncbi.nlm.nih.gov/sra"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Convert a FASTA/FASTQ slice into this project's simple text format"
+Write-Host "(see data/README.md): one '<n> <has_truth>' header line, then the reads."
+Write-Host "Set has_truth=0 when you have no error-free reference."
+Write-Host ""
+Write-Host "Offline stand-in (no download, fully reproducible):"
+Write-Host "  python scripts/make_synthetic.py                 # the committed 120-read sample"
+Write-Host "  python scripts/make_synthetic.py --reads 200000  # a larger, GPU-friendlier set"
+Write-Host ""
+Write-Host "Note: real corrected-read evaluation respects each archive's terms; this"
+Write-Host "script never bypasses registration or logins."

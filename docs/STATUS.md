@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 94/301 projects done (31.2%) | todo 207 | in-progress 0 | missing 0
+**Progress:** 100/301 projects done (33.2%) | todo 201 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 39 | 0 | 28 |
-| 🟡 Intermediate | 206 | 49 | 0 | 157 |
+| 🟡 Intermediate | 206 | 55 | 0 | 151 |
 | 🔴 Advanced | 28 | 6 | 0 | 22 |
 
 ## 1. Drug Discovery & Molecular Design  (35/35 done)
@@ -90,7 +90,7 @@
 | 2.34 | Biophysical Simulation of Biomolecular Condensates (Active Learning Loop) | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 | 2.35 | Electron Paramagnetic Resonance (EPR/DEER) Constrained Modeling | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 
-## 3. Genomics, Sequencing & Bioinformatics  (13/30 done)
+## 3. Genomics, Sequencing & Bioinformatics  (19/30 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -105,12 +105,12 @@
 | 3.09 | Phylogenetic Likelihood / Tree Inference | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 3.10 | RNA Secondary-Structure Prediction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 3.11 | GWAS at Scale | 🟡 Intermediate | Active R&D | [x] done | - | - |
-| 3.12 | Single-Cell RNA-seq Analysis | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.13 | Pangenome Graph Alignment | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.14 | Metagenomic Taxonomic Classification | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.15 | Hi-C / 3D Genome Contact Analysis | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.16 | Sequence Error Correction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 3.17 | CRISPR Guide Design & Off-Target Scoring | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 3.12 | Single-Cell RNA-seq Analysis | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 3.13 | Pangenome Graph Alignment | 🟡 Intermediate | Active R&D | [x] done | worker | proj/3.13-pangenome-graph-alignment |
+| 3.14 | Metagenomic Taxonomic Classification | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 3.15 | Hi-C / 3D Genome Contact Analysis | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 3.16 | Sequence Error Correction | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 3.17 | CRISPR Guide Design & Off-Target Scoring | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 3.18 | Protein Language Model Inference | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 3.19 | Variant Effect / Pathogenicity Prediction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 3.20 | Long-Read HiFi Assembly Overlap & Polishing | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

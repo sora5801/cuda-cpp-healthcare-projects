@@ -1,5 +1,8 @@
 3.16 -- Sequence Error Correction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+k-mer spectrum error correction (k=9, trust T=3)
+reads: 120   total bases: 7200
+spectrum: 1247 distinct 9-mers observed
+corrections applied: 99 base(s) over 120 read(s)
+errors vs truth:  before = 132   after = 39   (removed 93)
+verify: spectrum_mismatch=0  corrected_mismatch=0
+RESULT: PASS (GPU matches CPU exactly: spectrum + corrected reads)

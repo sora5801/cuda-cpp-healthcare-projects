@@ -1,122 +1,122 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: balance a Hi-C matrix, find TADs, verify, report
 // ---------------------------------------------------------------------------
-// Project 3.15 -- Hi-C / 3D Genome Contact Analysis   (template skeleton)
+// Project 3.15 : Hi-C / 3D Genome Contact Analysis
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (every project in this repo follows it):
+//   1. Load the sparse contact matrix (data/sample, or a path argument).
+//   2. CPU reference ICE balancing (reference_cpu.cpp)        -> trusted bias.
+//   3. GPU ICE balancing (kernels.cu): parallel fixed-point row-sum reduction.
+//   4. VERIFY: GPU bias == CPU bias (fixed-point atomics => exact agreement),
+//      to a documented tolerance.
+//   5. REPORT (deterministic -> stdout): bias summary, insulation score, and the
+//      called TAD boundaries. Timing/detail -> stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// The downstream insulation score + boundary calling run on the BALANCED matrix
+// using the GPU's bias, so the reported biology depends on the GPU result.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then hic.h (shared math), reference_cpu.cpp (baseline),
+// kernels.cu (GPU twin). See ../THEORY.md for the science and the GPU mapping.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // ice_balance_gpu (also pulls in reference_cpu.h)
+#include "reference_cpu.h"    // load_matrix, ice_balance_cpu, insulation_score, ...
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "3.15";
 static const char* PROJECT_NAME = "Hi-C / 3D Genome Contact Analysis";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// ICE iteration count: fixed so the run is deterministic. ~30 iterations is
+// plenty to balance the tiny sample (real runs use ~20-50 with a tolerance stop).
+static constexpr int    ICE_ITERS = 30;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
+// Insulation diamond half-size (in bins) and local-minimum search radius (bins).
+// The sample is engineered (data/README.md) so two TAD borders sit at known bins;
+// these settings recover them. Both are deterministic constants.
+static constexpr int    INSULATION_WINDOW = 3;
+// Radius 1 = compare each bin against its immediate neighbours. The insulation
+// window already blanks the 3 bins at each matrix edge, so a wider radius would
+// disqualify the bin-4 border (its radius-2 neighbour, bin 2, is an edge n/a).
+static constexpr int    BOUNDARY_RADIUS   = 1;
 
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Verification tolerance on the per-bin bias. The reduction is fixed-point exact
+// (CPU and GPU sum identical integers), but the host bias update does ~30 rounds
+// of double-precision multiply/divide; FMA contraction differences between the
+// host compiler and nvcc can drift the bias by ~1e-12 over those rounds. We
+// verify to 1e-9 -- far below any biological significance (docs/PATTERNS.md §4).
+static constexpr double BIAS_TOLERANCE = 1.0e-9;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load ----------------------------------------------------------
+    const std::string path =
+        (argc > 1) ? argv[1] : "data/sample/hic_sample.txt";
+    HicMatrix m;
+    try {
+        m = load_matrix(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference ICE (timed) -------------------------------------
+    std::vector<double> bias_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    const double var_cpu = ice_balance_cpu(m, ICE_ITERS, bias_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU ICE (kernel time via CUDA events) -------------------------
+    std::vector<double> bias_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    const double var_gpu = ice_balance_gpu(m, ICE_ITERS, bias_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify GPU bias vs CPU bias -----------------------------------
+    double max_bias_diff = 0.0;
+    for (int k = 0; k < m.n; ++k)
+        max_bias_diff = std::fmax(max_bias_diff,
+                                  std::fabs(bias_cpu[k] - bias_gpu[k]));
+    const bool pass = (max_bias_diff <= BIAS_TOLERANCE);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5. Downstream biology on the BALANCED matrix (GPU bias) ----------
+    // Insulation score then TAD boundaries -- the headline result a Hi-C analyst
+    // cares about. We use the GPU bias so the reported biology reflects the GPU.
+    const std::vector<double> score = insulation_score(m, bias_gpu, INSULATION_WINDOW);
+    const std::vector<int> boundaries = call_boundaries(score, BOUNDARY_RADIUS);
+
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("matrix: %d bins, %zu stored contacts (upper triangle)\n",
+                m.n, m.entries.size());
+    std::printf("ICE: %d iterations, balanced bias per bin (occupied bins):\n", ICE_ITERS);
+    for (int k = 0; k < m.n; ++k) {
+        // Print biases at 6 decimals -- deterministic across CPU/GPU at our tol.
+        std::printf("  bin %2d: bias = %.6f\n", k, bias_gpu[k]);
+    }
+    std::printf("insulation score (window=%d):\n", INSULATION_WINDOW);
+    for (int k = 0; k < m.n; ++k) {
+        if (score[k] < 0.0) std::printf("  bin %2d:   n/a (edge)\n", k);
+        else                std::printf("  bin %2d: %.6f\n", k, score[k]);
+    }
+    std::printf("TAD boundaries (local minima, radius=%d): %zu found\n",
+                BOUNDARY_RADIUS, boundaries.size());
+    for (int b : boundaries) std::printf("  boundary at bin %d\n", b);
+    std::printf("RESULT: %s (GPU bias matches CPU reference within %.0e)\n",
+                pass ? "PASS" : "FAIL", BIAS_TOLERANCE);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d bins, %zu contacts)\n",
+                 path.c_str(), m.n, m.entries.size());
+    std::fprintf(stderr, "[timing] CPU ICE: %.3f ms   GPU ICE (kernels): %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact -- the GPU edge grows with matrix size; "
+                         "real Hi-C has 10^6-10^9 nonzeros.\n");
+    std::fprintf(stderr, "[verify] max |bias_cpu - bias_gpu| = %.3e (tol %.0e); "
+                         "convergence var cpu/gpu = %.3e / %.3e\n",
+                 max_bias_diff, BIAS_TOLERANCE, var_cpu, var_gpu);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

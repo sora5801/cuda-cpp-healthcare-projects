@@ -1,122 +1,137 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load, classify (CPU+GPU), verify, report
 // ---------------------------------------------------------------------------
-// Project 3.14 -- Metagenomic Taxonomic Classification   (template skeleton)
+// Project 3.14 : Metagenomic Taxonomic Classification
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// The 5-step shape every project in this repo follows:
+//   1. Load the problem (reference genomes + reads from data/sample).
+//   2. CPU reference  (reference_cpu.cpp)  -> trusted per-read taxon ids.
+//   3. GPU classify   (kernels.cu)         -> the thing being taught.
+//   4. VERIFY: the GPU's integer taxon ids match the CPU's EXACTLY (tolerance 0,
+//      because both call the same __host__ __device__ classify_read core).
+//   5. REPORT: a deterministic taxonomic abundance profile + accuracy vs the
+//      synthetic ground truth to stdout; timings to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// STDOUT is byte-for-byte deterministic (diffed by demo/run_demo against
+// demo/expected_output.txt); run-to-run timings go to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then kmer_core.h (the shared math), kernels.cuh ->
+// kernels.cu (the GPU harness), then reference_cpu.* (the baseline + loader).
 // ===========================================================================
+#include <chrono>     // steady_clock for the CPU-reference stopwatch
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // classify_gpu, RefDatabase, ReadSet
+#include "reference_cpu.h"    // load_problem, classify_cpu
+#include "kmer_core.h"        // KMER_K, MAX_TAXA, TAXON_UNCLASSIFIED
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "3.14";
 static const char* PROJECT_NAME = "Metagenomic Taxonomic Classification";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Default dataset if none is given on the command line.
+static const char* DEFAULT_SAMPLE = "data/sample/metagenome_sample.txt";
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : DEFAULT_SAMPLE;
+    RefDatabase db;
+    ReadSet     reads;
+    try {
+        load_problem(path, db, reads);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
-    util::CpuTimer cpu_timer;
-    cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    // A std::chrono stopwatch around the serial classifier. We avoid pulling in
+    // util/io.hpp's float helpers here (the result is integer ids), so we time
+    // inline with the standard library.
+    std::vector<uint32_t> taxa_cpu;
+    auto t0 = std::chrono::steady_clock::now();
+    classify_cpu(reads, db, taxa_cpu);
+    auto t1 = std::chrono::steady_clock::now();
+    const double cpu_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU classify (kernel timed inside the wrapper) ----------------
+    std::vector<uint32_t> taxa_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    classify_gpu(reads, db, taxa_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify: integer-exact agreement -------------------------------
+    // Both sides ran the identical __host__ __device__ classify_read core, so the
+    // taxon ids must match bit-for-bit. A single mismatch is a real bug, not a
+    // floating-point rounding artifact -> the tolerance is exactly 0.
+    int mismatches = 0;
+    int first_bad = -1;
+    if (taxa_cpu.size() != taxa_gpu.size()) {
+        mismatches = reads.n_reads;   // shape bug
+    } else {
+        for (int i = 0; i < reads.n_reads; ++i) {
+            if (taxa_cpu[i] != taxa_gpu[i]) {
+                if (first_bad < 0) first_bad = i;
+                ++mismatches;
+            }
+        }
+    }
+    const bool pass = (mismatches == 0);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    // (a) Per-taxon abundance: how many reads were assigned to each taxon. This
+    //     IS the metagenomic profile -- the headline scientific output. We scan
+    //     taxon ids in ascending order so the listing is deterministic.
+    std::vector<int> assigned(db.names.size(), 0);   // assigned[id] = read count
+    int unclassified = 0;
+    for (int i = 0; i < reads.n_reads; ++i) {
+        uint32_t t = taxa_gpu[i];
+        if (t == TAXON_UNCLASSIFIED || t >= db.names.size()) ++unclassified;
+        else ++assigned[t];
+    }
+    // (b) Accuracy vs the synthetic ground truth: of the reads we DID classify,
+    //     how many got the correct taxon? (Integer counts -> deterministic.)
+    int correct = 0, classified = 0;
+    for (int i = 0; i < reads.n_reads; ++i) {
+        if (taxa_gpu[i] != TAXON_UNCLASSIFIED) {
+            ++classified;
+            if (taxa_gpu[i] == reads.truth[i]) ++correct;
+        }
+    }
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("k-mer classification: %d reads vs %llu reference %d-mers (%d taxa)\n",
+                reads.n_reads, (unsigned long long)db.num_kmers, KMER_K,
+                (int)db.names.size() - 1);
+    std::printf("taxonomic abundance profile (reads assigned per taxon):\n");
+    // Fixed-width columns so the listing is tidy and byte-identical every run:
+    //   "  taxon <id>  <name padded to 24>  <count> reads".
+    for (std::size_t id = 1; id < db.names.size(); ++id) {
+        std::printf("  taxon %zu  %-24s  %d reads\n", id, db.names[id].c_str(), assigned[id]);
+    }
+    // The unclassified bin uses the same column layout (taxon id column blanked).
+    std::printf("  %-8s %-24s  %d reads\n", "(none)", "unclassified", unclassified);
+    std::printf("accuracy on classified reads: %d/%d correct\n", correct, classified);
+    std::printf("RESULT: %s (GPU taxon ids match CPU exactly; %d/%d reads agree)\n",
+                pass ? "PASS" : "FAIL", reads.n_reads - mismatches, reads.n_reads);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (reads=%d, taxa=%d, table_capacity=%llu)\n",
+                 path.c_str(), reads.n_reads, (int)db.names.size() - 1,
+                 (unsigned long long)db.capacity);
     std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- this tiny sample is dominated by "
+                         "launch/copy overhead; the GPU wins at clinical scale (millions of reads).\n");
+    if (!pass)
+        std::fprintf(stderr, "[verify] %d mismatch(es); first at read %d (cpu=%u gpu=%u)\n",
+                     mismatches, first_bad,
+                     first_bad >= 0 ? taxa_cpu[first_bad] : 0u,
+                     first_bad >= 0 ? taxa_gpu[first_bad] : 0u);
+    else
+        std::fprintf(stderr, "[verify] all %d reads agree (integer taxon ids, tolerance 0)\n",
+                     reads.n_reads);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

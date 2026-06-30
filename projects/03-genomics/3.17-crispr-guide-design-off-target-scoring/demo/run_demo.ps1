@@ -18,7 +18,7 @@ $ProjectRoot = Split-Path -Parent $Demo
 $Slug        = "crispr-guide-design-off-target-scoring"
 $Sln         = Join-Path $ProjectRoot "build\$Slug.sln"
 $Exe         = Join-Path $ProjectRoot "build\x64\Release\$Slug.exe"
-$Sample      = Join-Path $ProjectRoot "data\sample\saxpy_sample.txt"
+$Sample      = Join-Path $ProjectRoot "data\sample\guide_genome_sample.txt"
 $Expected    = Join-Path $Demo "expected_output.txt"
 
 function Find-MSBuild {

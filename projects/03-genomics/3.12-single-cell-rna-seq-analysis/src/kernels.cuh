@@ -1,52 +1,61 @@
 // ===========================================================================
 // src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 3.12 -- Single-Cell RNA-seq Analysis   (template skeleton)
+// Project 3.12 : Single-Cell RNA-seq Analysis  (reduced-scope teaching version)
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   The "what the GPU offers" header. main.cu calls run_gpu(); kernels.cu
+//   implements the two host wrappers and the two device kernels. Included only
+//   by .cu translation units (it declares __global__ kernels, so the plain C++
+//   compiler must never see it -- that is why the CPU reference lives in the
+//   separate pure-C++ reference_cpu.h).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+// THE TWO STEPS THE GPU DOES (both embarrassingly parallel over cells)
+//   (1) normalize_kernel : one thread per CELL. The thread sums its cell's G
+//       counts (the library size) and writes the normalized row (counts-per-
+//       target + log1p) using the SHARED math in scrna.h. No communication
+//       between threads -> a textbook map.
+//   (2) knn_kernel       : one thread per QUERY CELL. The thread scans all N
+//       cells, keeps a fixed-size top-k list in registers/local memory, and
+//       writes its k nearest neighbours. This is the O(N^2) step the deep dive
+//       flags as the GPU win; each query is independent (the "score one item vs
+//       N, each independent" pattern -- docs/PATTERNS.md sec 1, exemplar 1.12).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Both kernels call the SAME inline functions the CPU reference calls, so the
+//   results match (CLAUDE.md section 5). main.cu verifies index-for-index.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, scrna.h. Then kernels.cu.
 // ===========================================================================
 #pragma once
 
-#include <vector>
+#include "reference_cpu.h"   // Dataset, KnnGraph (shared host types)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ---- Device kernels (defined in kernels.cu; declared here for documentation) ----
+//
+// normalize_kernel: thread c normalizes cell c's whole row.
+//   counts     : [N*G] device, raw counts, row-major.
+//   N, G       : dimensions.
+//   target_sum : the fixed total each cell is scaled to.
+//   normalized : [N*G] device OUTPUT, the normalized matrix.
+__global__ void normalize_kernel(const float* __restrict__ counts, int N, int G,
+                                 double target_sum, float* __restrict__ normalized);
+
+// knn_kernel: thread q finds the k nearest neighbours of query cell q.
+//   normalized : [N*G] device, the normalized matrix (read by every thread).
+//   N, G, k    : dimensions and neighbour count.
+//   nbr_idx    : [N*k] device OUTPUT neighbour indices (nearest first).
+//   nbr_dist   : [N*k] device OUTPUT Euclidean distances (ascending).
+__global__ void knn_kernel(const float* __restrict__ normalized, int N, int G, int k,
+                           int* __restrict__ nbr_idx, float* __restrict__ nbr_dist);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// run_gpu: do the WHOLE GPU pipeline (normalize + KNN) and fill `out`.
+//   Allocates device buffers, uploads the raw counts, launches the two kernels,
+//   copies the normalized matrix + neighbour graph back, and reports the summed
+//   KERNEL time (CUDA events) via *kernel_ms. main.cu calls exactly this; all
+//   CUDA bookkeeping is hidden here.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   d         : the loaded dataset (host, read-only).
+//   out       : host output (normalized + KNN graph), filled here.
+//   kernel_ms : out-param, milliseconds spent in the two kernels (not copies).
+void run_gpu(const Dataset& d, KnnGraph& out, float* kernel_ms);

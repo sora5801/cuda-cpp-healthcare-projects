@@ -1,5 +1,6 @@
 # Changelog — newest first; each entry links to its push-note in `push-notes/`.
 
+- 2026-06-30 #05 -- [phase2 batch4c genomics intermediate 100milestone](push-notes/2026-06-30-05-phase2-batch4c-genomics-intermediate-100milestone.md)
 - 2026-06-30 #04 -- [phase2 batch4b genomics intermediate](push-notes/2026-06-30-04-phase2-batch4b-genomics-intermediate.md)
 - 2026-06-30 #03 -- [phase2 batch4a genomics](push-notes/2026-06-30-03-phase2-batch4a-genomics.md)
 - 2026-06-30 #02 -- [phase2 batch3f domain2-complete](push-notes/2026-06-30-02-phase2-batch3f-domain2-complete.md)

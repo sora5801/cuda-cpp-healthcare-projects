@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  How to get REAL reads (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 3.16 -- Sequence Error Correction   (template skeleton)
+# Project 3.16 : Sequence Error Correction
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md sec 8): idempotent, documented, prints source URLs and
+# NEVER bypasses credentials/registration. The demo runs on a committed
+# SYNTHETIC sample; real benchmark reads are large public archives, so this
+# script prints the recipe and defers to make_synthetic.py for an offline
+# stand-in. It downloads nothing by itself.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,23 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 3.16 -- Sequence Error Correction"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    GAGE short-read datasets — benchmark reads with known errors (http://gage.cbcb.umd.edu/); GiaB HG001-HG007 — truth-set comparison for corrected reads (https://www.nist.gov/programs-projects/genome-bottle); ONT long-read SRA archives (https://www.ncbi.nlm.nih.gov/sra); PacBio CLR SRA datasets — high-error long reads (https://www.ncbi.nlm.nih.gov/sra)."
+echo "The demo runs on the committed SYNTHETIC sample (data/sample/reads_sample.txt)."
+echo "To experiment on REAL reads with known error profiles, use a public archive:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  GAGE benchmark short reads (known reference -> measurable error rates):"
+echo "    http://gage.cbcb.umd.edu/"
+echo "  GIAB / Genome in a Bottle (NIST truth sets to score corrected reads):"
+echo "    https://www.nist.gov/programs-projects/genome-bottle"
+echo "  SRA (ONT / PacBio CLR high-error long reads -- a different regime):"
+echo "    https://www.ncbi.nlm.nih.gov/sra"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Convert a FASTA/FASTQ slice into this project's simple text format"
+echo "(see data/README.md): one '<n> <has_truth>' header line, then the reads."
+echo "Set has_truth=0 when you have no error-free reference."
+echo
+echo "Offline stand-in (no download, fully reproducible):"
+echo "  python scripts/make_synthetic.py                 # the committed 120-read sample"
+echo "  python scripts/make_synthetic.py --reads 200000  # a larger, GPU-friendlier set"
+echo
+echo "Note: real corrected-read evaluation respects each archive's terms; this"
+echo "script never bypasses registration or logins."

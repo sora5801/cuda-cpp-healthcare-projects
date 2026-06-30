@@ -2,8 +2,8 @@
   "id": "3.13",
   "id_padded": "3.13",
   "project": "Pangenome Graph Alignment",
-  "status": "todo",
-  "owner": "",
-  "branch": "",
-  "skeleton": true
+  "status": "done",
+  "owner": "worker",
+  "branch": "proj/3.13-pangenome-graph-alignment",
+  "skeleton": false
 }

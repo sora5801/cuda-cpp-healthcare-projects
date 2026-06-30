@@ -1,122 +1,110 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load graph + read, align, verify, report
 // ---------------------------------------------------------------------------
-// Project 3.13 -- Pangenome Graph Alignment   (template skeleton)
+// Project 3.13 : Pangenome Graph Alignment
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// The repo's 5-step shape:
+//   1. Load the pangenome graph + query read (data/sample, see data/README.md).
+//   2. CPU reference fills every node's score block (reference_cpu.cpp).
+//   3. GPU fills the SAME blocks via the per-node anti-diagonal wavefront
+//      (kernels.cu), nodes in topological order.
+//   4. VERIFY: every cell of every GPU block equals the CPU block (exact ints).
+//   5. REPORT: deterministic best score + node path + alignment to stdout;
+//      timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// We traceback ONCE on the host (from the GPU-filled blocks) to display the best
+// path; the GPU teaching point is the parallel block FILL, not the serial
+// traceback. STDOUT is byte-for-byte deterministic so demo/run_demo can diff it;
+// timings (run-to-run varying) go to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then kernels.cuh -> kernels.cu, then reference_cpu.*.
 // ===========================================================================
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // graph_sw_gpu
+#include "reference_cpu.h"    // load_problem, graph_sw_cpu, traceback, structs
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "3.13";
 static const char* PROJECT_NAME = "Pangenome Graph Alignment";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+static constexpr int PREVIEW_COLS = 60;   // how many alignment columns to print
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/graph_sample.txt";
+    Problem prob;
+    try {
+        prob = load_problem(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const Graph& g = prob.graph;
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    GraphDP dp_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    graph_sw_cpu(prob, dp_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU wavefront (timed) -----------------------------------------
+    GraphDP dp_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    graph_sw_gpu(prob, dp_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (all blocks must be identical, exact integers) ---------
+    int max_abs_diff = 0, mismatches = 0;
+    const std::size_t ncells = dp_cpu.H.size();
+    const bool shape_ok = (dp_gpu.H.size() == ncells);
+    if (shape_ok) {
+        for (std::size_t k = 0; k < ncells; ++k) {
+            const int d = dp_cpu.H[k] - dp_gpu.H[k];
+            const int ad = d < 0 ? -d : d;
+            if (ad) { ++mismatches; if (ad > max_abs_diff) max_abs_diff = ad; }
+        }
+    }
+    const bool pass = shape_ok && (mismatches == 0);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    const PathAlignment a = traceback(prob, dp_gpu);
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("Graph: %d nodes, %d bases; query length = %d; "
+                "scoring match=+%d mismatch=%d gap=%d\n",
+                g.num_nodes, g.total_bases, prob.qlen, MATCH, MISMATCH, GAP);
+    std::printf("best local score = %d  ending at node %s, cell (i,j)=(%d,%d)\n",
+                a.score, (a.end_node >= 0 ? g.name[a.end_node].c_str() : "-"),
+                a.end_i, a.end_j);
+    std::printf("best path through graph = %s\n", a.node_path.c_str());
+    if (a.length > 0) {
+        const double pct = 100.0 * a.identities / a.length;
+        std::printf("aligned length = %d, identities = %d/%d (%.1f%%)\n",
+                    a.length, a.identities, a.length, pct);
+        const int show = a.length < PREVIEW_COLS ? a.length : PREVIEW_COLS;
+        std::printf("alignment (first %d columns):\n", show);
+        std::printf("  Q: %s\n", a.q_line.substr(0, show).c_str());
+        std::printf("     %s\n", a.m_line.substr(0, show).c_str());
+        std::printf("  G: %s\n", a.t_line.substr(0, show).c_str());
+    } else {
+        std::printf("aligned length = 0 (no positive-scoring local alignment)\n");
+    }
+    std::printf("RESULT: %s (GPU blocks match CPU exactly)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d nodes, %zu DP cells across all blocks)\n",
+                 path.c_str(), g.num_nodes, ncells);
+    std::fprintf(stderr, "[timing] CPU fill: %.3f ms   GPU wavefront: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact -- a tiny graph issues many small per-diagonal "
+                         "launches; the GPU wins on long reads / large bubbles / batched reads.\n");
+    if (!shape_ok)
+        std::fprintf(stderr, "[verify] SHAPE MISMATCH: cpu cells=%zu gpu cells=%zu\n",
+                     ncells, dp_gpu.H.size());
+    std::fprintf(stderr, "[verify] block-cell mismatches = %d, max_abs_diff = %d\n",
+                 mismatches, max_abs_diff);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

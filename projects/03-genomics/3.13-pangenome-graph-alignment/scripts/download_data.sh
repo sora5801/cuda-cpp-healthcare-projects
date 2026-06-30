@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Fetch / locate the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 3.13 -- Pangenome Graph Alignment   (template skeleton)
+# Project 3.13 : Pangenome Graph Alignment
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration or data-use agreements. Real pangenome graphs
+# are large GFA files; this project does not redistribute them. For the demo, the
+# committed SYNTHETIC sample in data/sample/ is sufficient and runs offline.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,23 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 3.13 -- Pangenome Graph Alignment"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    Human Pangenome Reference Consortium (HPRC) — 94 haplotype-resolved assemblies (https://humanpangenome.org/); 1000 Genomes Project GVCFs — variant calls for graph construction (https://www.internationalgenome.org/data); Ensembl Pangenome — multi-species graphs (https://www.ensembl.org/); PGGB tutorial data (https://github.com/pangenome/pggb)."
+echo "This project ships a tiny SYNTHETIC graph (data/sample/graph_sample.txt)"
+echo "that is enough to build and run the demo offline. Real pangenome graphs"
+echo "are large and governed by data-use terms; fetch them yourself from:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  HPRC (94 haplotype assemblies) : https://humanpangenome.org/"
+echo "  1000 Genomes (GVCFs)           : https://www.internationalgenome.org/data"
+echo "  Ensembl Pangenome              : https://www.ensembl.org/"
+echo "  PGGB tutorial graphs (small)   : https://github.com/pangenome/pggb"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Typical real pipeline (pangenome toolkit):"
+echo "  1) build a graph:    pggb -i seqs.fa -o out/        # -> out/*.gfa"
+echo "  2) sort/inspect:     odgi sort -i out/*.gfa -o sorted.og"
+echo "  3) align reads:      vg giraffe -Z graph.giraffe.gbz -f reads.fq"
+echo
+echo "To feed a real GFA into THIS teaching program, emit one 'N <id> <seq>'"
+echo "line per GFA 'S' record and one 'E <src> <dst>' per 'L' record, after a"
+echo "topological sort (vg ids -s / odgi sort). See data/README.md."
+echo
+echo "For a larger SYNTHETIC problem instead, run:"
+echo "  python scripts/make_synthetic.py --snps 8 --seg 10"

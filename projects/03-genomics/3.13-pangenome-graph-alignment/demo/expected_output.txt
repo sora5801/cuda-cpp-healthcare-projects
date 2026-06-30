@@ -1,5 +1,10 @@
 3.13 -- Pangenome Graph Alignment
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Graph: 13 nodes, 78 bases; query length = 54; scoring match=+2 mismatch=-1 gap=-2
+best local score = 96  ending at node a4, cell (i,j)=(54,6)
+best path through graph = a0>s0ref>a1>s1alt>a2>s2ref>a3>s3alt>a4
+aligned length = 54, identities = 50/54 (92.6%)
+alignment (first 54 columns):
+  Q: GCTAATTACAATACATAATATTCACGTCAGCACGAAACTTGTTGGACCGTTTGA
+     |||||..|||||||||||.|||||||||||||||||||||||||||||||.|||
+  G: GCTAAAGACAATACATAACATTCACGTCAGCACGAAACTTGTTGGACCGTGTGA
+RESULT: PASS (GPU blocks match CPU exactly)

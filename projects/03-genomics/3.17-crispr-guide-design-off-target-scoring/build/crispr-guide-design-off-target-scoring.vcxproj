@@ -153,6 +153,9 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- The shared __host__ __device__ scorer, compiled by BOTH cl.exe (host)
+         and nvcc (device) so CPU and GPU run identical CFD math. -->
+    <ClInclude Include="..\src\cfd_score.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />
