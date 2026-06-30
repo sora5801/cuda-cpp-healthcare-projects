@@ -31,3 +31,10 @@ add_executable(heterogeneous-cryo-em-reconstruction-3d-variability
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(heterogeneous-cryo-em-reconstruction-3d-variability PRIVATE src)
+
+# This project links cuSOLVER for the dense symmetric eigendecomposition of the
+# N x N Gram matrix (Dsyevd; see src/kernels.cu). cuBLAS/cuSPARSE are its
+# transitive dependencies (PATTERNS.md §5; BUILD_GUIDE §7b).
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(heterogeneous-cryo-em-reconstruction-3d-variability
+  PRIVATE CUDA::cusolver CUDA::cublas CUDA::cusparse)

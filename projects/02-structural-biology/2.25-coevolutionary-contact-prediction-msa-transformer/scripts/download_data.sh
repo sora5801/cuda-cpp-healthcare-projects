@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real coevolution-MSA pointers (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.25 -- Coevolutionary Contact Prediction & MSA Transformer   (template skeleton)
+# Project 2.25 : Coevolutionary Contact Prediction & MSA Transformer
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. Real coevolution needs a DEEP MSA of a real
+# protein family; building or downloading one is a multi-GB, tool-heavy step, so
+# this script only prints the pointers and defers to the committed synthetic
+# sample (or scripts/make_synthetic.py) for an offline, runnable demo.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,18 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 2.25 -- Coevolutionary Contact Prediction & MSA Transformer"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    UniRef50/UniRef90 for MSA construction (https://www.uniprot.org); Pfam MSA database (https://pfam.xfam.org); EVcouplings benchmark contact sets (https://github.com/debbiemarkslab/EVcouplings); CASP14 contact prediction benchmarks (https://predictioncenter.org)."
+echo "Nothing is auto-downloaded. The program reads an aligned-FASTA MSA"
+echo "(one record per sequence, all the same length). To use a REAL family:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  Pfam family MSAs   : http://pfam.xfam.org           (Stockholm -> aligned FASTA)"
+echo "  UniRef50/UniRef90  : https://www.uniprot.org/help/uniref  (build an MSA via jackhmmer/HHblits)"
+echo "  EVcouplings        : https://github.com/debbiemarkslab/EVcouplings  (benchmark families + PDB contacts)"
+echo "  CASP14 contacts    : https://predictioncenter.org   (community contact benchmark)"
+echo "  ESM-MSA-1b         : https://github.com/facebookresearch/esm  (MSA Transformer, the deep-learning route)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Build an MSA, save it as aligned FASTA, then run:"
+echo "  ./build/cmake/coevolutionary-contact-prediction-msa-transformer path/to/family.fasta"
+echo
+echo "No download needed for the demo -- the committed synthetic sample suffices."
+echo "Bigger synthetic MSA (deeper, sharper signal):"
+echo "  python scripts/make_synthetic.py --n 4000 --seed 7"

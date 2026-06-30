@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 66/301 projects done (21.9%) | todo 235 | in-progress 0 | missing 0
+**Progress:** 72/301 projects done (23.9%) | todo 229 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 32 | 0 | 35 |
-| 🟡 Intermediate | 206 | 32 | 0 | 174 |
+| 🟡 Intermediate | 206 | 38 | 0 | 168 |
 | 🔴 Advanced | 28 | 2 | 0 | 26 |
 
 ## 1. Drug Discovery & Molecular Design  (35/35 done)
@@ -50,7 +50,7 @@
 | 1.34 | Amyloid / Aggregation Propensity Prediction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.35 | QMMM/ML Potential Hybrid MD | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 
-## 2. Structural Biology & Protein Science  (19/35 done)
+## 2. Structural Biology & Protein Science  (25/35 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -71,14 +71,14 @@
 | 2.15 | Antibody Structure Prediction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 2.16 | ΔΔG Stability Prediction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 2.17 | Allosteric Network Analysis | 🟡 Intermediate | Active R&D | [x] done | - | - |
-| 2.18 | NMR Structure Refinement | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 2.18 | NMR Structure Refinement | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 2.19 | Membrane Protein Simulation | 🟢 Beginner | Established | [x] done | worker-2.19 | proj/2.19-membrane-protein-simulation |
-| 2.20 | Heterogeneous Cryo-EM Reconstruction (3D Variability) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 2.21 | Protein-Nucleic Acid Docking & Co-Folding | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 2.20 | Heterogeneous Cryo-EM Reconstruction (3D Variability) | 🟡 Intermediate | Active R&D | [x] done | worker-2.20 | proj/2.20-heterogeneous-cryo-em-reconstruction-3d-variability |
+| 2.21 | Protein-Nucleic Acid Docking & Co-Folding | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 2.22 | Electron Density Map Analysis & Model Validation | 🟢 Beginner | Established | [x] done | - | - |
-| 2.23 | Protein-Ligand Interaction Energy Decomposition | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 2.24 | SAXS / SANS Data-Driven Structure Modeling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 2.25 | Coevolutionary Contact Prediction & MSA Transformer | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 2.23 | Protein-Ligand Interaction Energy Decomposition | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 2.24 | SAXS / SANS Data-Driven Structure Modeling | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 2.25 | Coevolutionary Contact Prediction & MSA Transformer | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 2.26 | Hydrogen Bond Network & Water Placement Analysis | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 2.27 | Polarizable Water Model GPU Dynamics | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 2.28 | Replica Exchange Solute Tempering (REST2) on GPU | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

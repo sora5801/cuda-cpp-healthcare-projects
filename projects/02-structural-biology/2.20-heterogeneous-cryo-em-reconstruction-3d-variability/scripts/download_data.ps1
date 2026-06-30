@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 2.20 -- Heterogeneous Cryo-EM Reconstruction (3D Variability)   (template skeleton)
+# Project 2.20 -- Heterogeneous Cryo-EM Reconstruction (3D Variability)
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# expected size, and NEVER bypasses credentials/registration. This project is a
+# REDUCED-SCOPE teaching version that runs on a committed SYNTHETIC sample, so
+# this script only prints pointers to the real datasets and defers to
+# scripts/make_synthetic.py for a larger offline stand-in. It downloads nothing.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,18 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.20 -- Heterogeneous Cryo-EM Reconstruction (3D Variability)"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    EMPIAR-10180 (spliceosome), EMPIAR-10076 (80S ribosome), EMPIAR-10028 (TRPV1) (all at https://www.ebi.ac.uk/empiar/); cryoDRGN benchmark datasets (https://github.com/ml-struct-bio/cryodrgn); simulated heterogeneous datasets from IgG/spike protein."
+Write-Host "This teaching project ships a SYNTHETIC sample (data/sample/volumes.txt);"
+Write-Host "no download is required to run the demo. The real heterogeneous cryo-EM"
+Write-Host "datasets the catalog points at are large and need preprocessing:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  EMPIAR-10180 (spliceosome), EMPIAR-10076 (80S ribosome),"
+Write-Host "  EMPIAR-10028 (TRPV1)              -> https://www.ebi.ac.uk/empiar/"
+Write-Host "  cryoDRGN benchmark sets + tooling -> https://github.com/ml-struct-bio/cryodrgn"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  EMPIAR entries are openly downloadable but tens-to-hundreds of GB; turning"
+Write-Host "  a particle stack into per-particle volumes (CTF, poses, back-projection)"
+Write-Host "  is upstream of this project. Respect each dataset's license."
+Write-Host ""
+Write-Host "  For a larger SYNTHETIC problem instead, run:"
+Write-Host "    python scripts/make_synthetic.py --n 64 --g 8"

@@ -1,52 +1,50 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU ensemble-annealing interface
 // ---------------------------------------------------------------------------
-// Project 2.18 -- NMR Structure Refinement   (template skeleton)
+// Project 2.18 : NMR Structure Refinement
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (the "ensemble of independent annealers" pattern)
+//   An NMR structure is determined by running HUNDREDS of independent simulated-
+//   annealing trajectories from different random seeds and keeping the lowest-
+//   energy ones. Every trajectory is independent, so we give each replica its OWN
+//   GPU thread: the thread runs the full Monte-Carlo annealing loop (in per-thread
+//   local memory) and writes one ReplicaResult. There is no inter-thread
+//   communication -- pure embarrassing parallelism over replicas. This is the
+//   same shape as the 9.02 SEIR and 13.02 PBPK ensembles (PATTERNS.md section 1),
+//   but the per-thread loop is a Metropolis annealer (nmr_refine.h) rather than an
+//   RK4 integrator.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The annealer (anneal_one) is shared with the CPU via nmr_refine.h, so a given
+//   replica produces IDENTICAL numbers on host and device. kernels.cu defines the
+//   kernel and the host launch wrapper.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Included only by .cu translation units (it contains a __global__ declaration,
+//   so the plain C++ host compiler must never see it -- that is why the loader and
+//   CPU reference live in the separate pure-C++ reference_cpu.h).
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: nmr_refine.h, reference_cpu.h, util/cuda_check.cuh, util/timer.cuh.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
+#include "reference_cpu.h"   // RefineConfig, ReplicaResult (pure C++, safe in .cu)
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// anneal_kernel: thread r anneals replica r and writes its ReplicaResult.
+//   Declared here, defined in kernels.cu.
+//   RefineConfig is passed BY VALUE so the whole job -- including the restraint
+//   list -- travels in the kernel's parameter space (read by every thread with no
+//   extra cudaMalloc). ReplicaResult* out has one slot per replica.
+__global__ void anneal_kernel(RefineConfig c, ReplicaResult* __restrict__ out);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// anneal_ensemble_gpu: launch one thread per replica, copy results back, and
+//   report the measured KERNEL time (CUDA events) through *kernel_ms. This is the
+//   GPU twin of anneal_ensemble_cpu(); main.cu runs both and compares them.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   c          : the refinement job (chain, restraints, schedule)
+//   results    : host output, resized to c.n_replicas (output parameter)
+//   kernel_ms  : out-param, milliseconds spent in the kernel itself (not copies)
+void anneal_ensemble_gpu(const RefineConfig& c,
+                         std::vector<ReplicaResult>& results, float* kernel_ms);

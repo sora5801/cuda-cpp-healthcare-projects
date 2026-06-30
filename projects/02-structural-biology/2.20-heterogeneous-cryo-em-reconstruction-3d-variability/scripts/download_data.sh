@@ -2,11 +2,13 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.20 -- Heterogeneous Cryo-EM Reconstruction (3D Variability)   (template skeleton)
+# Project 2.20 -- Heterogeneous Cryo-EM Reconstruction (3D Variability)
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# size, and NEVER bypasses credentials/registration. This REDUCED-SCOPE teaching
+# project runs on a committed SYNTHETIC sample, so this script only prints
+# pointers to the real datasets and defers to scripts/make_synthetic.py for a
+# larger offline stand-in. It downloads nothing.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,17 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 2.20 -- Heterogeneous Cryo-EM Reconstruction (3D Variability)"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    EMPIAR-10180 (spliceosome), EMPIAR-10076 (80S ribosome), EMPIAR-10028 (TRPV1) (all at https://www.ebi.ac.uk/empiar/); cryoDRGN benchmark datasets (https://github.com/ml-struct-bio/cryodrgn); simulated heterogeneous datasets from IgG/spike protein."
+echo "This teaching project ships a SYNTHETIC sample (data/sample/volumes.txt);"
+echo "no download is required to run the demo. The real heterogeneous cryo-EM"
+echo "datasets the catalog points at are large and need preprocessing:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  EMPIAR-10180 (spliceosome), EMPIAR-10076 (80S ribosome),"
+echo "  EMPIAR-10028 (TRPV1)              -> https://www.ebi.ac.uk/empiar/"
+echo "  cryoDRGN benchmark sets + tooling -> https://github.com/ml-struct-bio/cryodrgn"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "  EMPIAR entries are openly downloadable but tens-to-hundreds of GB; turning"
+echo "  a particle stack into per-particle volumes (CTF, poses, back-projection)"
+echo "  is upstream of this project. Respect each dataset's license."
+echo
+echo "  For a larger SYNTHETIC problem instead, run:"
+echo "    python scripts/make_synthetic.py --n 64 --g 8"

@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 2.21 -- Protein-Nucleic Acid Docking & Co-Folding   (template skeleton)
+# Project 2.21 : Protein-Nucleic Acid Docking & Co-Folding (reduced-scope).
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md sec 8): idempotent, documented, prints the source URL,
+# and NEVER bypasses credentials/registration. This project's demo runs on a
+# committed SYNTHETIC sample (data/sample/complex_sample.txt), so there is no
+# mandatory download -- this script explains how to obtain REAL complexes from
+# the PDB and how the offline sample is (re)generated.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,23 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.21 -- Protein-Nucleic Acid Docking & Co-Folding"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    PDB protein-nucleic acid complexes (https://www.rcsb.org); RNA structure benchmarks from RNA-Puzzles (https://github.com/RNA-Puzzles); PDB-NA complex benchmark sets (verify URL); Rfam RNA family database (https://rfam.org)."
+Write-Host "This project needs NO download to run: data/sample/complex_sample.txt"
+Write-Host "is a committed SYNTHETIC complex with a known native pose."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "To regenerate (or resize) the synthetic sample:"
+Write-Host "    python scripts/make_synthetic.py --spacing 3500"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "To work with REAL protein-nucleic-acid complexes:"
+Write-Host "  * Protein Data Bank (PDB): https://www.rcsb.org"
+Write-Host "      Download a structure, e.g. 1FNT, as mmCIF/PDB:"
+Write-Host "      https://files.rcsb.org/download/1FNT.cif"
+Write-Host "  * RNA-Puzzles benchmarks:  https://github.com/RNA-Puzzles"
+Write-Host "  * Rfam RNA families:       https://rfam.org"
+Write-Host ""
+Write-Host "  You must convert a downloaded structure into this loader's integer"
+Write-Host "  format (extract atoms, assign charge signs in {-1,0,+1}, scale"
+Write-Host "  coordinates to milli-Angstrom). See data/README.md for the format."
+Write-Host "  No registration or credentials are required for the public PDB; if a"
+Write-Host "  benchmark needs an account, follow its site's instructions -- this"
+Write-Host "  script will not bypass them."

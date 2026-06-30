@@ -2,7 +2,7 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.23 -- Protein-Ligand Interaction Energy Decomposition   (template skeleton)
+# Project 2.23 : Protein-Ligand Interaction Energy Decomposition
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
 # size + checksum, and NEVER bypasses credentials/registration. Defers to
@@ -18,16 +18,24 @@ echo "[download_data] Project 2.23 -- Protein-Ligand Interaction Energy Decompos
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
 
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    PDB-bind (http://www.pdbbind.org.cn); resistance mutation datasets (ClinVar, https://www.ncbi.nlm.nih.gov/clinvar/); KLIFS kinase binding data (https://klifs.net); ChEMBL activity data for target families (https://www.ebi.ac.uk/chembl/)."
+# This teaching project runs entirely on the committed SYNTHETIC sample (no real
+# structure/force-field parser is shipped). Real per-residue MM-GBSA needs a full
+# MD+parameter stack (AMBER prmtop or GROMACS top + a trajectory), so this script
+# prints where to obtain real complexes and how to feed them through the proper
+# tools, rather than pretending to download a ready-to-run file.
+echo "This project ships a SYNTHETIC sample only (data/sample/complex_sample.txt)."
+echo "The committed tiny sample is enough to run the demo offline."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "For a larger SYNTHETIC system, regenerate with more residues/frames:"
+echo "    python scripts/make_synthetic.py --residues 200 --frames 500"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "To work with REAL protein-ligand complexes, obtain structures from:"
+echo "    PDBbind : http://www.pdbbind.org.cn   (curated complexes + affinities)"
+echo "    KLIFS   : https://klifs.net           (kinase-ligand structures)"
+echo "    ChEMBL  : https://www.ebi.ac.uk/chembl/ (activity data for target families)"
+echo "    ClinVar : https://www.ncbi.nlm.nih.gov/clinvar/ (resistance mutations)"
+echo
+echo "Then produce per-residue MM-GBSA inputs with a proper toolchain (study these):"
+echo "    AMBER MMPBSA.py decomp : https://ambermd.org/AmberTools.php"
+echo "    gmx_MMPBSA            : https://github.com/Valdes-Tresanco-MS/gmx_MMPBSA"
+echo "Respect each source's license; do not redistribute restricted structures."

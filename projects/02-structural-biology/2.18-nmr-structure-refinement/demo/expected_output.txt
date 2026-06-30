@@ -1,5 +1,12 @@
 2.18 -- NMR Structure Refinement
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+ensemble SA: 512 replicas x 4000 steps; chain=12 beads, 19 NOE restraints
+schedule: T 5.00 -> 0.02 (geometric), trial sigma=1.20 A, bond=3.80 A
+best replica: #1  energy=0.0328  restraints satisfied=19/19
+sample replicas (idx -> energy satisfied):
+  r0   :    0.1392  19/19
+  r128 :    0.4354  18/19
+  r256 :    0.2986  19/19
+  r384 :    0.3911  17/19
+  r511 :    0.3584  19/19
+ensemble: 298/512 replicas satisfy all restraints; mean best energy=0.2954; max=1.0230
+RESULT: PASS (GPU ensemble matches CPU: counts exact, energy within 1.0e-04)

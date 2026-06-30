@@ -1,121 +1,149 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: forward-model SAXS, verify, fit, report
 // ---------------------------------------------------------------------------
-// Project 2.24 -- SAXS / SANS Data-Driven Structure Modeling   (template skeleton)
+// Project 2.24 : SAXS / SANS Data-Driven Structure Modeling
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the shape every project in this repo follows):
+//   1. Load the atomic model + experimental curve (data/sample, or a built-in
+//      synthetic fallback so the program always runs).
+//   2. CPU reference: forward-model I(q) via the Debye formula (reference_cpu).
+//   3. GPU result: the same Debye profile, one thread per q (kernels.cu).
+//   4. VERIFY: GPU intensities match the CPU within a documented tolerance.
+//   5. REPORT (deterministic -> STDOUT): the normalized profile at a few q's,
+//      the recovered Guinier Rg vs the synthetic true Rg, and the reduced
+//      chi-square of the model-vs-experiment fit. Timing -> STDERR.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Run-varying numbers (timings) go to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then saxs_core.h -> kernels.cuh -> kernels.cu, then
+//   reference_cpu.cpp. See ../THEORY.md for the science and GPU mapping.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // debye_gpu, SaxsModel
+#include "reference_cpu.h"    // load_model, debye_profile_cpu, best_scale, ...
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "2.24";
 static const char* PROJECT_NAME = "SAXS / SANS Data-Driven Structure Modeling";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Verification tolerance: GPU vs CPU MAX RELATIVE error on I(q).
+//   The GPU kernel and the CPU reference call the IDENTICAL per-q routine
+//   (saxs_core.h), so they execute the same operations in the same order -> the
+//   only possible difference is whether the host compiler and nvcc contract a
+//   multiply-add into an FMA differently. That is bounded by a few ULP per term,
+//   and over an O(N^2) double-precision sum stays far below 1e-9 relative. We set
+//   a generous-but-honest 1e-9 (PATTERNS.md §4: ~machine precision for short
+//   double-precision computations). Relative, because I(q) spans many decades.
+static constexpr double TOLERANCE = 1.0e-9;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
+// Number of low-q points used for the Guinier Rg linear fit (q*Rg < ~1.3 region).
+static constexpr int GUINIER_POINTS = 6;
+
+// max relative error between two equal-length double arrays (|a-b|/max(|a|,eps)).
+static double max_rel_err(const std::vector<double>& a, const std::vector<double>& b) {
+    if (a.size() != b.size()) return 1.0e300;   // shape mismatch -> "infinitely wrong"
+    double worst = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const double denom = std::fabs(a[i]) > 1.0e-300 ? std::fabs(a[i]) : 1.0e-300;
+        const double rel = std::fabs(a[i] - b[i]) / denom;
+        if (rel > worst) worst = rel;
     }
+    return worst;
 }
 
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// Build a built-in synthetic model when no sample file is supplied: a tiny
+// "dumbbell" of two point clusters so the program runs with zero arguments.
+// NOTE: this fallback exists only so the binary never hard-fails; the committed
+// data/sample (a small synthetic globular blob) is the intended demo input and
+// is what demo/expected_output.txt was captured from. We keep this fallback
+// deliberately DIFFERENT and tiny so nobody mistakes it for the demo data.
+static SaxsModel make_synthetic_fallback() {
+    SaxsModel m;
+    m.n_atoms = 2;
+    m.x = {0.0, 20.0}; m.y = {0.0, 0.0}; m.z = {0.0, 0.0}; m.f = {8.0, 8.0};
+    m.true_rg = 10.0;                          // two unit masses ±10 Å -> Rg=10 Å
+    m.n_q = 4;
+    m.q = {0.01, 0.05, 0.10, 0.20};
+    // Placeholder "experiment" = exact model (chi^2 ~ 0); sigmas are 1% of I(0).
+    m.I_exp.assign(m.n_q, 0.0); m.sigma.assign(m.n_q, 1.0);
+    return m;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/saxs_sample.txt";
+    SaxsModel m;
+    const char* source = path.c_str();
+    try {
+        m = load_model(path);
+    } catch (const std::exception& e) {
+        // Fall back to the built-in tiny model so the program still demonstrates
+        // the pipeline (the real demo always passes the sample path).
+        std::fprintf(stderr, "[warn] could not load '%s' (%s); using built-in fallback.\n",
+                     path.c_str(), e.what());
+        m = make_synthetic_fallback();
+        source = "synthetic (built-in fallback)";
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference profile (timed) ---------------------------------
+    std::vector<double> I_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    debye_profile_cpu(m, I_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU profile (kernel timed inside the wrapper) -----------------
+    std::vector<double> I_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    debye_gpu(m, I_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify GPU vs CPU ---------------------------------------------
+    const double err = max_rel_err(I_cpu, I_gpu);
+    const bool pass = err <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- analysis (uses the GPU profile; CPU is identical within tol) ------
+    const double I0 = I_gpu.empty() ? 1.0 : I_gpu[0];              // I(q[0]) ~ I(0)
+    const double c   = best_scale(I_gpu, m.I_exp, m.sigma);        // model->exp scale
+    const double chi2 = reduced_chi_square(I_gpu, c, m.I_exp, m.sigma);
+    const double rg  = guinier_rg(m.q, I_gpu, GUINIER_POINTS);     // recovered size
+
+    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) ----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("Debye forward model: %d atoms, %d q-points (1 GPU thread per q)\n",
+                m.n_atoms, m.n_q);
+    std::printf("normalized profile I(q)/I(0):\n");
+    // Print the curve at a handful of representative q's (first, some middle,
+    // last) at fixed precision so stdout is identical every run.
+    const int idx[5] = {
+        0,
+        m.n_q > 1 ? m.n_q / 4 : 0,
+        m.n_q > 1 ? m.n_q / 2 : 0,
+        m.n_q > 1 ? (3 * m.n_q) / 4 : 0,
+        m.n_q - 1
+    };
+    for (int t = 0; t < 5; ++t) {
+        const int k = idx[t];
+        std::printf("  q=%.4f 1/A   I/I0=%.6f\n", m.q[k], I_gpu[k] / I0);
+    }
+    std::printf("Guinier Rg (from %d low-q pts) = %.3f A", GUINIER_POINTS, rg);
+    if (m.true_rg > 0.0) std::printf("   (synthetic true Rg = %.3f A)", m.true_rg);
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("model-vs-experiment fit: scale=%.6f  reduced chi^2=%.6f\n", c, chi2);
+    std::printf("RESULT: %s (GPU matches CPU within rel tol=1.0e-09)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
+    std::fprintf(stderr, "[data]   source: %s  (%d atoms, %d q-points)\n",
+                 source, m.n_atoms, m.n_q);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernel: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact only -- the GPU's edge over the CPU grows "
+                         "with n_atoms^2 * n_q; this sample is tiny.\n");
+    std::fprintf(stderr, "[verify] max_rel_err = %.3e  (tolerance %.1e)\n", err, TOLERANCE);
 
     // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;

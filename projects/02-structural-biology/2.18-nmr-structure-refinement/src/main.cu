@@ -1,122 +1,129 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: anneal an NMR ensemble, verify, report
 // ---------------------------------------------------------------------------
-// Project 2.18 -- NMR Structure Refinement   (template skeleton)
+// Project 2.18 : NMR Structure Refinement
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the same skeleton every project in this repo follows):
+//   1. Load the refinement job (chain + NOE restraints + annealing schedule).
+//   2. CPU reference: anneal every replica serially (reference_cpu.cpp).
+//   3. GPU: one thread per replica, full SA loop each (kernels.cu).
+//   4. VERIFY: per-replica results match (same shared annealer -> same numbers).
+//   5. REPORT: deterministic best-replica structure + ensemble summary to stdout;
+//      timing + run-varying detail to stderr (so stdout is byte-stable for the demo).
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
-//
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then nmr_refine.h (RNG + energy + the SA loop), then
+// kernels.cu (the one-thread-per-replica launch) and reference_cpu.cpp (the serial
+// twin). README "Code tour" walks the same path.
 // ===========================================================================
-#include <cstdio>
+#include <cmath>      // std::fabs, std::fmax
+#include <cstdio>     // std::printf, std::fprintf
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // anneal_ensemble_gpu, RefineConfig, ReplicaResult
+#include "reference_cpu.h"    // load_config, anneal_ensemble_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "2.18";
 static const char* PROJECT_NAME = "NMR Structure Refinement";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Verification tolerance on the per-replica BEST ENERGY. The CPU and GPU run the
+// identical shared annealer (nmr_refine.h), so in exact arithmetic every replica
+// would match to the bit. In practice the host compiler and nvcc can contract
+// multiply-adds differently, nudging an energy by ~1e-9; over a long Metropolis
+// trajectory that is a genuine, teachable effect (PATTERNS.md section 4). We
+// therefore verify the continuous energy to a small physical tolerance and the
+// DISCRETE restraint-satisfaction count EXACTLY (an integer cannot drift). The
+// energy unit is arbitrary "restraint energy"; 1e-4 is far below any structural
+// significance here. THEORY.md section 6 expands on this.
+static constexpr double ENERGY_TOL = 1.0e-4;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/restraints.txt";
+    RefineConfig c;
+    try {
+        c = load_config(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const int M = c.n_replicas;
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<ReplicaResult> res_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    anneal_ensemble_cpu(c, res_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU ensemble (kernel timed) -----------------------------------
+    std::vector<ReplicaResult> res_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    anneal_ensemble_gpu(c, res_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify ---------------------------------------------------------
+    // Energy: max |dE| over replicas (continuous, tolerance ENERGY_TOL).
+    // Satisfaction count + accepted moves: must match EXACTLY (integers).
+    double worst_energy = 0.0;
+    bool   discrete_ok  = true;
+    for (int r = 0; r < M; ++r) {
+        worst_energy = std::fmax(worst_energy,
+                                 std::fabs(res_cpu[r].final_energy - res_gpu[r].final_energy));
+        if (res_cpu[r].n_satisfied != res_gpu[r].n_satisfied) discrete_ok = false;
+        if (res_cpu[r].accepted    != res_gpu[r].accepted)    discrete_ok = false;
+    }
+    const bool pass = discrete_ok && (worst_energy <= ENERGY_TOL);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    // The published "structure" is the LOWEST-ENERGY replica of the ensemble.
+    // Find it from the GPU results (identical to CPU within tolerance). We pick
+    // the best by (energy, then index) so ties resolve deterministically.
+    int best = 0;
+    for (int r = 1; r < M; ++r) {
+        if (res_gpu[r].final_energy < res_gpu[best].final_energy) best = r;
+    }
+
+    // Ensemble-wide summary: how many replicas converged to a "good" structure
+    // (all NOE restraints satisfied), and the spread of best energies.
+    int all_sat = 0;
+    double sum_e = 0.0, max_e = 0.0;
+    for (int r = 0; r < M; ++r) {
+        if (res_gpu[r].n_satisfied == c.n_restraints) ++all_sat;
+        sum_e += res_gpu[r].final_energy;
+        max_e = std::fmax(max_e, res_gpu[r].final_energy);
+    }
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("ensemble SA: %d replicas x %d steps; chain=%d beads, %d NOE restraints\n",
+                M, c.n_steps, c.n_beads, c.n_restraints);
+    std::printf("schedule: T %.2f -> %.2f (geometric), trial sigma=%.2f A, bond=%.2f A\n",
+                c.T_hot, c.T_cold, c.step_sigma, c.bond_len);
+    std::printf("best replica: #%d  energy=%.4f  restraints satisfied=%d/%d\n",
+                best, res_gpu[best].final_energy, res_gpu[best].n_satisfied, c.n_restraints);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // A few deterministic sample replicas across the ensemble (index, energy,
+    // satisfied count). %.4f keeps the print stable to within ENERGY_TOL.
+    std::printf("sample replicas (idx -> energy satisfied):\n");
+    const int picks[5] = {0, M / 4, M / 2, (3 * M) / 4, M - 1};
+    for (int s = 0; s < 5; ++s) {
+        const int r = picks[s];
+        std::printf("  r%-4d: %9.4f  %d/%d\n",
+                    r, res_gpu[r].final_energy, res_gpu[r].n_satisfied, c.n_restraints);
+    }
+    std::printf("ensemble: %d/%d replicas satisfy all restraints; mean best energy=%.4f; max=%.4f\n",
+                all_sat, M, sum_e / M, max_e);
+    std::printf("RESULT: %s (GPU ensemble matches CPU: counts exact, energy within %.1e)\n",
+                pass ? "PASS" : "FAIL", ENERGY_TOL);
 
-    // Exit code feeds the demo's pass/fail gate.
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d replicas)\n", path.c_str(), M);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernel: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact only -- real NMR ensembles run 100s-1000s of "
+                         "replicas with full force fields; the GPU edge grows with replica count.\n");
+    std::fprintf(stderr, "[verify] worst per-replica energy diff = %.3e (tol %.1e); "
+                         "discrete counts match = %s\n",
+                 worst_energy, ENERGY_TOL, discrete_ok ? "yes" : "no");
+
     return pass ? 0 : 1;
 }

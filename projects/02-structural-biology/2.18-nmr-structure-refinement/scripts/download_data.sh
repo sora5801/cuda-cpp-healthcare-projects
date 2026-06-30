@@ -2,11 +2,12 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.18 -- NMR Structure Refinement   (template skeleton)
+# Project 2.18 : NMR Structure Refinement
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints source URLs, and
+# NEVER bypasses credentials/registration. NMR restraint data is assembled
+# per-protein-entry (no single archive), so this script prints the canonical
+# sources and defers to scripts/make_synthetic.py for the offline demo input.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,21 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 2.18 -- NMR Structure Refinement"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    BMRB — Biological Magnetic Resonance Bank (https://bmrb.io); PDB NMR-derived structures (https://www.rcsb.org); RECOORD — recalculated NMR structures (verify URL); CASD-NMR automated structure determination benchmarks (verify URL)."
+echo "This project ships a SYNTHETIC committed sample (data/sample/restraints.txt),"
+echo "which is all the demo needs. There is no single 'full dataset' to download:"
+echo "real NMR restraints are assembled per protein entry from these sources:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  * BMRB  (https://bmrb.io)        - assigned shifts + restraint lists"
+echo "  * PDB   (https://www.rcsb.org)   - deposited NMR model ensembles + restraints"
+echo "  * RECOORD                        - uniformly recalculated NMR structures"
+echo "  * CASD-NMR                       - blind structure-determination benchmarks"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
+echo "  None of the above is fetched automatically; visit the site for the entry"
+echo "  you want and respect its terms of use. To experiment at larger scale with"
+echo "  no download, regenerate a bigger SYNTHETIC problem:"
+echo "    python scripts/make_synthetic.py --n-beads 24 --replicas 4096"
+echo
+echo "  If you later wire a real fetch, follow the idempotent pattern:"
 echo "    1) skip download if the file already exists with the right checksum"
 echo "    2) print source URL + expected size + SHA256"
 echo "    3) for credentialed sets, print registration instructions ONLY"

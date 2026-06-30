@@ -1,5 +1,7 @@
 2.20 -- Heterogeneous Cryo-EM Reconstruction (3D Variability)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+3DVA (PCA on volumes): N=24 particles, G=6, D=216 voxels/volume
+top-3 mode variances (eigenvalues, descending): 1.35169 0.14476 0.00472
+PC1 variance explained: 0.8994
+latent z along PC1 (8 sampled particles): +1.7639 +1.4561 +1.0194 +0.4876 -0.2887 -0.8507 -1.3289 -1.7556
+PC1 vs ground-truth conformation |corr|: 0.9974
+RESULT: PASS (GPU 3DVA matches CPU reference within tol)

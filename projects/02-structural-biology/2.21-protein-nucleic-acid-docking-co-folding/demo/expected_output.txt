@@ -1,5 +1,10 @@
 2.21 -- Protein-Nucleic Acid Docking & Co-Folding
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+rigid-body docking: protein (25 atoms) vs nucleic-acid ligand (9 atoms)
+pose space: 24 orientations x 3x3x3 translations = 648 poses
+top-5 poses by interface score:
+  #1  pose 312  score = 340  rot = 0  t = (0.000, 0.000, 3.500) A
+  #2  pose 316  score = 240  rot = 4  t = (0.000, 0.000, 3.500) A
+  #3  pose 240  score = 190  rot = 0  t = (0.000, -3.500, 3.500) A
+  #4  pose 244  score = 190  rot = 4  t = (0.000, -3.500, 3.500) A
+  #5  pose 302  score = 190  rot = 14  t = (-3.500, 0.000, 3.500) A
+RESULT: PASS (GPU matches CPU exactly: 648/648 poses agree)

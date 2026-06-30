@@ -1,5 +1,13 @@
 2.25 -- Coevolutionary Contact Prediction & MSA Transformer
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+MSA: 400 sequences x 24 columns (alphabet Q=21: 20 aa + gap)
+Method: pairwise Mutual Information + Average Product Correction (APC)
+Top 8 predicted contacts (1-based columns, by APC score):
+  #1  ( 4,  5)  APC=1.391032  rawMI=1.535621
+  #2  ( 9, 16)  APC=1.377826  rawMI=1.532141
+  #3  ( 3, 22)  APC=1.370339  rawMI=1.514990
+  #4  ( 6, 19)  APC=1.327577  rawMI=1.455841
+  #5  (17, 23)  APC=0.132486  rawMI=0.574875
+  #6  ( 2, 24)  APC=0.128479  rawMI=0.571221
+  #7  ( 2, 11)  APC=0.124321  rawMI=0.569834
+  #8  ( 2, 12)  APC=0.123910  rawMI=0.573596
+RESULT: PASS (GPU MI matrix matches CPU within tol=1.0e-09 nats)

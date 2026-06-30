@@ -1,121 +1,158 @@
 // ===========================================================================
 // src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 2.21 -- Protein-Nucleic Acid Docking & Co-Folding   (template skeleton)
+// Project 2.21 : Protein-Nucleic Acid Docking & Co-Folding (reduced-scope).
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load the docking problem (protein + nucleic-acid ligand + pose grid +
+//      scoring params) from data/sample (or the path given on argv[1]).
+//   2. Compute the CPU reference (reference_cpu.cpp: dock_cpu)  -> trusted scores.
+//   3. Compute the GPU result    (kernels.cu: dock_gpu)         -> the thing taught.
+//   4. VERIFY: assert GPU == CPU EXACTLY (integer scores, tolerance 0).
+//   5. REPORT: the best pose + a ranked shortlist to stdout; timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Anything that varies run-to-run (timings) goes to
+//   STDERR, which the demo shows but does not diff (PATTERNS.md sec 3).
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// READ THIS FIRST in the code tour, then docking_core.h (the physics),
+// reference_cpu.* (the baseline), kernels.* (the GPU twin). The "why" is in
+// ../THEORY.md; the data format is in ../data/README.md.
 // ===========================================================================
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
+#include <numeric>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // dock_gpu (GPU path), DockingProblem, decode_pose
+#include "reference_cpu.h"    // load_problem, dock_cpu (CPU baseline)
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
+// These two tokens identify the program. They MUST stay in sync with
+// demo/expected_output.txt (which is captured from a real run).
 static const char* PROJECT_ID   = "2.21";
 static const char* PROJECT_NAME = "Protein-Nucleic Acid Docking & Co-Folding";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// How many top poses to list in the deterministic shortlist.
+static constexpr int TOP_K = 5;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
+// ---------------------------------------------------------------------------
+// count_mismatch: the number of poses whose GPU score differs from the CPU
+//   score. Because both backends run the SAME integer score_pose(), this MUST
+//   be 0 -- it is our exact correctness gate (PATTERNS.md sec 4, "exact"). We
+//   report the count (not a float error) so a single wrong pose is visible.
+//   Returns the count and, via out-params, the first differing pose for a
+//   helpful diagnostic.
+// ---------------------------------------------------------------------------
+static long long count_mismatch(const std::vector<int64_t>& a,
+                                const std::vector<int64_t>& b,
+                                long long& first_bad) {
+    first_bad = -1;
+    if (a.size() != b.size()) return (long long)a.size() + (long long)b.size();
+    long long bad = 0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (a[i] != b[i]) {
+            if (first_bad < 0) first_bad = (long long)i;
+            ++bad;
+        }
     }
+    return bad;
 }
 
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// ---------------------------------------------------------------------------
+// top_k: indices of the TOP_K highest scores, ties broken by LOWER pose index
+//   so the ranking is fully deterministic (PATTERNS.md sec 3). partial_sort on
+//   an index vector -> O(n log k).
+// ---------------------------------------------------------------------------
+static std::vector<long long> top_k(const std::vector<int64_t>& score, int k) {
+    std::vector<long long> idx(score.size());
+    std::iota(idx.begin(), idx.end(), 0LL);                 // 0,1,2,...,n-1
+    const int kk = std::min<int>(k, (int)idx.size());
+    std::partial_sort(idx.begin(), idx.begin() + kk, idx.end(),
+        [&](long long i, long long j) {
+            if (score[(std::size_t)i] != score[(std::size_t)j])
+                return score[(std::size_t)i] > score[(std::size_t)j];  // higher first
+            return i < j;                                              // tie -> lower idx
+        });
+    idx.resize(kk);
+    return idx;
 }
 
 int main(int argc, char** argv) {
     // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    const std::string path = (argc > 1) ? argv[1]
+                                        : "data/sample/complex_sample.txt";
+    DockingProblem prob;
+    try {
+        prob = load_problem(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const long long N = prob.n_poses();
 
     // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    std::vector<int64_t> score_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    dock_cpu(prob, score_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
     // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    std::vector<int64_t> score_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    dock_gpu(prob, score_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (EXACT integer equality) --------------------------------
+    long long first_bad = -1;
+    const long long bad = count_mismatch(score_cpu, score_gpu, first_bad);
+    const bool pass = (bad == 0);
 
     // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // Rank by the GPU scores (identical to CPU when pass). Decode the winner so
+    // the learner sees the actual rigid transform, not just a number.
+    const std::vector<long long> best = top_k(score_gpu, TOP_K);
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("rigid-body docking: protein (%d atoms) vs nucleic-acid ligand (%d atoms)\n",
+                prob.Np(), prob.Nl());
+    std::printf("pose space: %d orientations x %dx%dx%d translations = %lld poses\n",
+                prob.n_rot(), prob.grid.nx, prob.grid.ny, prob.grid.nz, N);
+    std::printf("top-%d poses by interface score:\n", (int)best.size());
+    for (std::size_t r = 0; r < best.size(); ++r) {
+        const long long p = best[r];
+        int32_t tx, ty, tz;
+        const int rot = decode_pose(p, prob.grid, prob.n_rot(), tx, ty, tz);
+        // Print translations in Angstrom (divide the fixed-point units out) as
+        // exact decimals -- the values are exact multiples of the grid step.
+        std::printf("  #%zu  pose %lld  score = %lld  rot = %d  "
+                    "t = (%.3f, %.3f, %.3f) A\n",
+                    r + 1, p, (long long)score_gpu[(std::size_t)p], rot,
+                    (double)tx / COORD_SCALE, (double)ty / COORD_SCALE,
+                    (double)tz / COORD_SCALE);
+    }
+    std::printf("RESULT: %s (GPU matches CPU exactly: %lld/%lld poses agree)\n",
+                pass ? "PASS" : "FAIL", N - bad, N);
 
     // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
+    std::fprintf(stderr, "[data]   source: %s  (Np=%d, Nl=%d, poses=%lld)\n",
+                 path.c_str(), prob.Np(), prob.Nl(), N);
     std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- this tiny sample is "
+                         "dominated by launch/copy overhead; the GPU's edge grows "
+                         "with the pose space and atom counts.\n");
+    if (!pass) {
+        std::fprintf(stderr, "[verify] FIRST mismatch at pose %lld: cpu=%lld gpu=%lld\n",
+                     first_bad,
+                     (long long)score_cpu[(std::size_t)first_bad],
+                     (long long)score_gpu[(std::size_t)first_bad]);
+    } else {
+        std::fprintf(stderr, "[verify] all %lld pose scores identical "
+                             "(integer arithmetic -> exact, tolerance 0)\n", N);
+    }
 
     // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;

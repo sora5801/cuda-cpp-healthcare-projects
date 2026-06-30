@@ -1,12 +1,12 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 2.18 -- NMR Structure Refinement   (template skeleton)
+# Project 2.18 : NMR Structure Refinement
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints source URLs, and
+# NEVER bypasses credentials/registration. NMR restraint data is assembled
+# per-protein-entry (no single archive), so this script prints the canonical
+# sources and defers to scripts/make_synthetic.py for the offline demo input.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,22 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.18 -- NMR Structure Refinement"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    BMRB — Biological Magnetic Resonance Bank (https://bmrb.io); PDB NMR-derived structures (https://www.rcsb.org); RECOORD — recalculated NMR structures (verify URL); CASD-NMR automated structure determination benchmarks (verify URL)."
+Write-Host "This project ships a SYNTHETIC committed sample (data/sample/restraints.txt),"
+Write-Host "which is all the demo needs. There is no single 'full dataset' to download:"
+Write-Host "real NMR restraints are assembled per protein entry from these sources:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  * BMRB  (https://bmrb.io)        - assigned shifts + restraint lists"
+Write-Host "  * PDB   (https://www.rcsb.org)   - deposited NMR model ensembles + restraints"
+Write-Host "  * RECOORD                        - uniformly recalculated NMR structures"
+Write-Host "  * CASD-NMR                       - blind structure-determination benchmarks"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
+Write-Host "  None of the above is fetched automatically; visit the site for the entry"
+Write-Host "  you want and respect its terms of use. To experiment at larger scale with"
+Write-Host "  no download, regenerate a bigger SYNTHETIC problem:"
+Write-Host "    python scripts/make_synthetic.py --n-beads 24 --replicas 4096"
+Write-Host ""
+Write-Host "  If you later wire a real fetch, follow the idempotent pattern:"
 Write-Host "    1) skip download if the file already exists with the right checksum"
 Write-Host "    2) print source URL + expected size + SHA256"
 Write-Host "    3) for credentialed sets, print registration instructions ONLY"

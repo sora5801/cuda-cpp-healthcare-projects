@@ -1,12 +1,12 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 2.24 -- SAXS / SANS Data-Driven Structure Modeling   (template skeleton)
+# Project 2.24 : SAXS / SANS Data-Driven Structure Modeling
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. Real SAXS curves and PDB models are
+# downloaded by the user from the public banks below; this script only prints
+# guidance and defers to scripts/make_synthetic.py for an offline stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,25 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.24 -- SAXS / SANS Data-Driven Structure Modeling"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    SASBDB — small-angle scattering biological data bank (https://www.sasbdb.org); PDB-SAXS depositions (https://www.rcsb.org); BIOISIS benchmark (verify URL); simulated SAXS from MD trajectories."
+Write-Host "The committed tiny SYNTHETIC sample (data/sample/saxs_sample.txt) already"
+Write-Host "lets the demo run offline. No real data is required to study this project."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "To work with REAL small-angle scattering data, fetch it yourself from:"
+Write-Host "  * SASBDB  -- curated SAXS/SANS curves + models : https://www.sasbdb.org"
+Write-Host "             (download a .dat file: columns are 'q  I  sigma', the same"
+Write-Host "              layout as our sample's curve section)"
+Write-Host "  * RCSB PDB -- atomic models to forward-model     : https://www.rcsb.org"
+Write-Host "  * BIOISIS  -- SAXS benchmark database (verify the current URL)"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
+Write-Host "Converting a real .pdb to our text format means: read ATOM records, map"
+Write-Host "each element to an electron count (or a proper q-dependent form factor; see"
+Write-Host "THEORY.md), then append a .dat curve from SASBDB as the 'q I_exp sigma' block."
+Write-Host ""
+Write-Host "For a larger SYNTHETIC problem instead, run:"
+Write-Host "    python scripts/make_synthetic.py --atoms 500 --nq 60 --out data/sample/big.txt"
+Write-Host ""
+Write-Host "Idempotent real-fetch pattern (when you wire one up):"
+Write-Host "    1) skip the download if the file already exists with the right checksum"
 Write-Host "    2) print source URL + expected size + SHA256"
 Write-Host "    3) for credentialed sets, print registration instructions ONLY"

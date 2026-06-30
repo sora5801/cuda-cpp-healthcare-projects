@@ -1,12 +1,13 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real coevolution-MSA pointers (Windows)
 # ---------------------------------------------------------------------------
-# Project 2.25 -- Coevolutionary Contact Prediction & MSA Transformer   (template skeleton)
+# Project 2.25 : Coevolutionary Contact Prediction & MSA Transformer
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. Real coevolution needs a DEEP MSA of a real
+# protein family; building or downloading one is a multi-GB, tool-heavy step, so
+# this script only prints the pointers and defers to the committed synthetic
+# sample (or scripts/make_synthetic.py) for an offline, runnable demo.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,19 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.25 -- Coevolutionary Contact Prediction & MSA Transformer"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    UniRef50/UniRef90 for MSA construction (https://www.uniprot.org); Pfam MSA database (https://pfam.xfam.org); EVcouplings benchmark contact sets (https://github.com/debbiemarkslab/EVcouplings); CASP14 contact prediction benchmarks (https://predictioncenter.org)."
+Write-Host "Nothing is auto-downloaded. The program reads an aligned-FASTA MSA"
+Write-Host "(one record per sequence, all the same length). To use a REAL family:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  Pfam family MSAs   : http://pfam.xfam.org           (Stockholm -> aligned FASTA)"
+Write-Host "  UniRef50/UniRef90  : https://www.uniprot.org/help/uniref  (build an MSA via jackhmmer/HHblits)"
+Write-Host "  EVcouplings        : https://github.com/debbiemarkslab/EVcouplings  (benchmark families + PDB contacts)"
+Write-Host "  CASP14 contacts    : https://predictioncenter.org   (community contact benchmark)"
+Write-Host "  ESM-MSA-1b         : https://github.com/facebookresearch/esm  (MSA Transformer, the deep-learning route)"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Build an MSA, save it as aligned FASTA, then run:"
+Write-Host "  build\x64\Release\coevolutionary-contact-prediction-msa-transformer.exe path\to\family.fasta"
+Write-Host ""
+Write-Host "No download needed for the demo -- the committed synthetic sample suffices."
+Write-Host "Bigger synthetic MSA (deeper, sharper signal):"
+Write-Host "  python scripts/make_synthetic.py --n 4000 --seed 7"

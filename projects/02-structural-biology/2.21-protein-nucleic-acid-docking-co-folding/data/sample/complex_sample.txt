@@ -1,0 +1,43 @@
+# Project 2.21 synthetic protein-nucleic-acid complex (SYNTHETIC).
+# All coordinates are fixed-point milli-Angstrom integers (1000 = 1 Angstrom).
+# Format: 'Np Nl' / pose-grid / scoring-params / Np protein atoms / Nl ligand atoms.
+# Planted native pose: rotation 0 (identity), translation (0, 0, +spacing).
+25 9
+-3500 -3500 0 3500 3 3 3
+3062500 18375000 1000 10 50
+# --- protein atoms: x y z charge ---
+-7000 -7000 0 0
+-3500 -7000 0 0
+0 -7000 0 0
+3500 -7000 0 0
+7000 -7000 0 0
+-7000 -3500 0 0
+-3500 -3500 0 1
+0 -3500 0 0
+3500 -3500 0 0
+7000 -3500 0 0
+-7000 0 0 0
+-3500 0 0 1
+0 0 0 0
+3500 0 0 0
+7000 0 0 0
+-7000 3500 0 0
+-3500 3500 0 1
+0 3500 0 -1
+3500 3500 0 -1
+7000 3500 0 0
+-7000 7000 0 0
+-3500 7000 0 0
+0 7000 0 0
+3500 7000 0 0
+7000 7000 0 0
+# --- ligand atoms: x y z charge ---
+-3500 -3500 0 -1
+0 -3500 0 0
+3500 -3500 0 0
+-3500 0 0 -1
+0 0 0 0
+3500 0 0 0
+-3500 3500 0 -1
+0 3500 0 1
+3500 3500 0 1

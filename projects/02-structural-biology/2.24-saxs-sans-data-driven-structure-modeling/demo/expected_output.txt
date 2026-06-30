@@ -1,5 +1,11 @@
 2.24 -- SAXS / SANS Data-Driven Structure Modeling
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Debye forward model: 40 atoms, 24 q-points (1 GPU thread per q)
+normalized profile I(q)/I(0):
+  q=0.0125 1/A   I/I0=1.000000
+  q=0.0875 1/A   I/I0=0.618212
+  q=0.1625 1/A   I/I0=0.166185
+  q=0.2375 1/A   I/I0=0.032051
+  q=0.3000 1/A   I/I0=0.033227
+Guinier Rg (from 6 low-q pts) = 13.815 A   (synthetic true Rg = 13.671 A)
+model-vs-experiment fit: scale=0.999496  reduced chi^2=0.804612
+RESULT: PASS (GPU matches CPU within rel tol=1.0e-09)

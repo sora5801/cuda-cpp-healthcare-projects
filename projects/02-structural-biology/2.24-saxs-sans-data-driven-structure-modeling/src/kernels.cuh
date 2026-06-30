@@ -1,52 +1,47 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU Debye-scattering interface (declarations + the idea)
 // ---------------------------------------------------------------------------
-// Project 2.24 -- SAXS / SANS Data-Driven Structure Modeling   (template skeleton)
+// Project 2.24 : SAXS / SANS Data-Driven Structure Modeling
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (pattern: INDEPENDENT JOBS + per-thread O(N^2) reduction)
+//   The forward SAXS curve is I(q) for many q values, and each q is computed by
+//   an independent double sum over all atom pairs (the Debye formula in
+//   saxs_core.h). So we map ONE GPU THREAD PER q VALUE: thread k computes
+//   I(q[k]) by looping over all n_atoms^2 pairs in its registers, then writes a
+//   single output. There is no cross-thread communication and no atomics -- the
+//   whole reduction for a given q lives inside one thread -- which makes the
+//   result deterministic and trivially correct to verify against the CPU.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The atom arrays (x,y,z,f) are read by EVERY thread but never modified during
+//   the launch. They are large (one per atom) so they live in global memory; we
+//   stage them into shared memory in tiles so the inner loop reads fast on-chip
+//   memory instead of hammering global memory n_q times (see kernels.cu). The
+//   query-in-constant-memory trick used by 1.12/12.01 does not fit here because
+//   the atom set is the *shared* operand, not a small per-thread query.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   This is the GPU twin of debye_profile_cpu(): same math (shared saxs_core.h),
+//   same outputs, just every q in parallel.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: saxs_core.h, util/cuda_check.cuh, util/timer.cuh,
+//   reference_cpu.h.  Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // SaxsModel (pure C++, safe to include from a .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
-
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// ---------------------------------------------------------------------------
+// debye_gpu: host wrapper that runs the whole forward-model on the GPU.
+//   Allocates device buffers for the atom arrays and the q grid, copies them up,
+//   launches the kernel (one thread per q), copies the n_q intensities back, and
+//   reports the measured KERNEL time (CUDA events) via *kernel_ms.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//     m         : the loaded model (atoms + q grid); only its arrays are read
+//     I_model   : output, resized to m.n_q -- the forward-modeled intensities
+//     kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
+//
+//   main.cu calls exactly this; all CUDA bookkeeping is hidden inside kernels.cu.
+//   The result must match debye_profile_cpu(m, ...) within the documented
+//   tolerance (main.cu).
+// ---------------------------------------------------------------------------
+void debye_gpu(const SaxsModel& m, std::vector<double>& I_model, float* kernel_ms);
