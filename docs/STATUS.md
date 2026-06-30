@@ -2,13 +2,13 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 78/301 projects done (25.9%) | todo 223 | in-progress 0 | missing 0
+**Progress:** 82/301 projects done (27.2%) | todo 219 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 32 | 0 | 35 |
 | 🟡 Intermediate | 206 | 44 | 0 | 162 |
-| 🔴 Advanced | 28 | 2 | 0 | 26 |
+| 🔴 Advanced | 28 | 6 | 0 | 22 |
 
 ## 1. Drug Discovery & Molecular Design  (35/35 done)
 
@@ -50,7 +50,7 @@
 | 1.34 | Amyloid / Aggregation Propensity Prediction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.35 | QMMM/ML Potential Hybrid MD | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 
-## 2. Structural Biology & Protein Science  (31/35 done)
+## 2. Structural Biology & Protein Science  (35/35 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -83,12 +83,12 @@
 | 2.27 | Polarizable Water Model GPU Dynamics | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 2.28 | Replica Exchange Solute Tempering (REST2) on GPU | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 2.29 | Ion Channel Gating & Permeation Simulation | 🟡 Intermediate | Active R&D | [x] done | - | - |
-| 2.30 | Protein Solubility & Phase Separation Simulation | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
+| 2.30 | Protein Solubility & Phase Separation Simulation | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 | 2.31 | Cryo-EM Tilt-Series Alignment & Tomogram Reconstruction | 🟡 Intermediate | Active R&D | [x] done | - | - |
-| 2.32 | Protein Folding Pathway Extraction (Transition Path Sampling) | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
+| 2.32 | Protein Folding Pathway Extraction (Transition Path Sampling) | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 | 2.33 | Structure-Based Pharmacophore Modeling from MD Ensembles | 🟡 Intermediate | Active R&D | [x] done | - | - |
-| 2.34 | Biophysical Simulation of Biomolecular Condensates (Active Learning Loop) | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
-| 2.35 | Electron Paramagnetic Resonance (EPR/DEER) Constrained Modeling | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
+| 2.34 | Biophysical Simulation of Biomolecular Condensates (Active Learning Loop) | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
+| 2.35 | Electron Paramagnetic Resonance (EPR/DEER) Constrained Modeling | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 
 ## 3. Genomics, Sequencing & Bioinformatics  (1/30 done)
 

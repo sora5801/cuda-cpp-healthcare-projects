@@ -1,12 +1,15 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Fetch real condensate references (Windows)
 # ---------------------------------------------------------------------------
-# Project 2.34 -- Biophysical Simulation of Biomolecular Condensates (Active Learning Loop)   (template skeleton)
+# Project 2.34 : Biophysical Simulation of Biomolecular Condensates
+#                (Active Learning Loop)  --  reduced-scope teaching version
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints the source URLs,
+# and NEVER bypasses credentials/registration. This project's DEMO needs no
+# download at all -- its input is a synthetic configuration file written by
+# scripts/make_synthetic.py. This script instead points at the public datasets a
+# learner would use to go from this teaching toy toward a real active-learning
+# loop, and explains why none of them is auto-fetched here.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -14,20 +17,23 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $DataDir = Join-Path $ProjectRoot "data"
 
-Write-Host "[download_data] Project 2.34 -- Biophysical Simulation of Biomolecular Condensates (Active Learning Loop)"
+Write-Host "[download_data] Project 2.34 : Biomolecular Condensates (Active Learning Loop)"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    PhaSePro (https://phasepro.elte.hu); DisProt (https://disprot.org); experimental LLPS partition coefficient datasets (verify URL); published condensate MD trajectory datasets (FUS, TDP-43, hnRNPA1)."
+Write-Host "This demo needs NO download: the input is a synthetic ensemble config"
+Write-Host "(data/sample/condensate_ensemble.txt), regenerated any time with:"
+Write-Host "    python scripts/make_synthetic.py"
+Write-Host "    python scripts/make_synthetic.py --n-members 200   # a larger sweep"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Public references for a REAL condensate active-learning loop (study these;"
+Write-Host "they are not auto-downloaded -- formats vary and some require agreement to"
+Write-Host "terms of use, which this script will not bypass):"
+Write-Host "  * PhaSePro  -- curated LLPS proteins/regions : https://phasepro.elte.hu"
+Write-Host "  * DisProt   -- intrinsically disordered regions : https://disprot.org"
+Write-Host "  * RCSB PDB  -- structures of FUS/TDP-43/hnRNPA1 LC domains : https://www.rcsb.org"
+Write-Host "  * CALVADOS  -- residue-level IDP CG model + params : https://github.com/KULL-Centre/CALVADOS"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Idempotent pattern to follow when wiring any real fetch:"
+Write-Host "  1) skip the download if the file already exists with the right SHA256"
+Write-Host "  2) print source URL + expected size + checksum before downloading"
+Write-Host "  3) for credentialed/registered sources, print instructions ONLY"

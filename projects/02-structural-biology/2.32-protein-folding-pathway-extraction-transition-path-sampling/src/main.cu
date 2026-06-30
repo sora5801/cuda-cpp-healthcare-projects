@@ -1,122 +1,143 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: run TPS on CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 2.32 -- Protein Folding Pathway Extraction (Transition Path Sampling)   (template skeleton)
+// Project 2.32 : Protein Folding Pathway Extraction (Transition Path Sampling)
+//                -- a REDUCED-SCOPE teaching version (CLAUDE.md §13). The full
+//                research method runs all-atom MD; we run 1-D Brownian dynamics
+//                on a double-well free-energy surface. See ../THEORY.md.
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the shape EVERY project in this repo follows):
+//   1. Load the simulation parameters (data/sample, or a built-in fallback).
+//   2. CPU reference TPS (reference_cpu.cpp).
+//   3. GPU TPS (kernels.cu) -- IDENTICAL shooting moves (shared run_shot).
+//   4. VERIFY: the integer tallies match EXACTLY (atomics commute on ints).
+//   5. REPORT: deterministic transition stats + committor curve to stdout;
+//      timing to stderr (so demo/run_demo can diff stdout byte-for-byte).
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
-//
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then tps_physics.h (RNG + BD + shooting move),
+// kernels.cuh -> kernels.cu, reference_cpu.cpp. The science/GPU-mapping is in
+// ../THEORY.md.
 // ===========================================================================
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // tps_gpu, TpsProblem, TpsTally
+#include "reference_cpu.h"    // load_tps_problem, tps_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
+// These tokens identify the program; they stay in sync with expected_output.txt.
 static const char* PROJECT_ID   = "2.32";
-static const char* PROJECT_NAME = "Protein Folding Pathway Extraction (Transition Path Sampling)";
+static const char* PROJECT_NAME = "Protein Folding Pathway Extraction (TPS, 1-D teaching model)";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// Build the built-in synthetic problem used when no data file is supplied. These
+// MUST match data/sample/tps_params.txt so the demo's expected_output is stable
+// whether or not the sample file is passed.
+//   barrier=5kT, centred double well, basins at x0 +/- w, 4096 shooters, 20 bins.
+static TpsProblem make_synthetic() {
+    TpsProblem p;
+    SimParams& s = p.sp;
+    s.barrier    = 5.0;       // 5 kT barrier -- a real, rarely-crossed folding barrier
+    s.x0         = 0.5;       // landscape centre (transition-state position)
+    s.w          = 0.4;       // basin half-separation: A at 0.1, B at 0.9
+    s.D          = 1.0;       // reduced diffusion constant
+    s.dt         = 0.0005;    // BD timestep (reduced units)
+    s.basin_tol  = 0.05;      // within 0.05 of a minimum counts as "arrived"
+    s.max_steps  = 20000;     // per-leg step budget (rare-event safety net)
+    s.n_shooters = 4096;      // independent shooting moves
+    s.n_bins     = 20;        // committor-histogram resolution along x
+    s.seed       = 20240517ULL;
+    return p;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
+    // ---- 1. Load -----------------------------------------------------------
+    TpsProblem prob;
     const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
+    if (argc > 1) {
+        try {
+            prob = load_tps_problem(argv[1]);
+            source = argv[1];
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[error] %s\n", e.what());
+            return 2;
+        }
     } else {
-        make_synthetic(n, a, x, y);
+        prob = make_synthetic();
     }
+    const SimParams& P = prob.sp;
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    TpsTally tally_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    tps_cpu(prob, tally_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU TPS (kernel timed) ----------------------------------------
+    TpsTally tally_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    tps_gpu(prob, tally_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (exact integer match) ----------------------------------
+    // Every counter is integer and both sides ran the identical shooting moves,
+    // so the GPU tally must equal the CPU tally bit-for-bit. Any mismatch is a
+    // real bug (RNG divergence, an atomics error), not floating-point noise.
+    int mismatches = 0;
+    if (tally_cpu.n_transitions != tally_gpu.n_transitions) ++mismatches;
+    if (tally_cpu.n_fwd_to_B    != tally_gpu.n_fwd_to_B)    ++mismatches;
+    for (int b = 0; b < P.n_bins; ++b) {
+        if (tally_cpu.shots_per_bin[b]     != tally_gpu.shots_per_bin[b])     ++mismatches;
+        if (tally_cpu.committed_per_bin[b] != tally_gpu.committed_per_bin[b]) ++mismatches;
+    }
+    const bool pass = (mismatches == 0);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // Find the TRANSITION-STATE bin: the first bin whose committor p_B crosses
+    // 1/2 (p_B = 0.5 is the rigorous transition-state definition; THEORY §committor).
+    // We report it as an integer bin index so stdout stays deterministic.
+    int ts_bin = -1;
+    for (int b = 0; b < P.n_bins; ++b) {
+        long long n = tally_gpu.shots_per_bin[b];
+        if (n > 0 && 2 * tally_gpu.committed_per_bin[b] >= n) { ts_bin = b; break; }
+    }
+
+    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) ----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("double well: barrier=%.1f kT, x0=%.2f, w=%.2f (basin A @ %.2f, basin B @ %.2f)\n",
+                P.barrier, P.x0, P.w, P.x0 - P.w, P.x0 + P.w);
+    std::printf("shooters=%d, max_steps/leg=%d, dt=%.4f, bins=%d, seed=%llu\n",
+                P.n_shooters, P.max_steps, P.dt, P.n_bins,
+                static_cast<unsigned long long>(P.seed));
+    std::printf("transition paths accepted = %lld of %d shots (%.1f%%)\n",
+                tally_gpu.n_transitions, P.n_shooters,
+                100.0 * tally_gpu.n_transitions / P.n_shooters);
+    std::printf("forward legs committing to folded basin B = %lld\n", tally_gpu.n_fwd_to_B);
+    std::printf("transition-state bin (committor p_B first >= 0.5) = %d\n", ts_bin);
+
+    // Committor curve p_B(bin) as a fixed-point percentage so stdout is
+    // deterministic (we never print a raw double here). Empty bins print "  -".
+    std::printf("committor p_B per bin (%% to folded basin B):\n");
+    for (int b = 0; b < P.n_bins; ++b) {
+        long long n = tally_gpu.shots_per_bin[b];
+        if (n > 0) {
+            // Integer-rounded percentage: (100*committed + n/2) / n. Pure integer
+            // math => identical on every machine and run.
+            long long pct = (100 * tally_gpu.committed_per_bin[b] + n / 2) / n;
+            std::printf(" %3lld", pct);
+        } else {
+            std::printf("   -");
+        }
+    }
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("RESULT: %s (GPU TPS tally matches CPU exactly)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
     std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] CPU TPS: %.3f ms   GPU TPS: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- the GPU edge grows with shooter count; "
+                         "real TPS runs thousands of all-atom MD shots.\n");
+    std::fprintf(stderr, "[verify] tally mismatches = %d (integer tally => atomics commute)\n",
+                 mismatches);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

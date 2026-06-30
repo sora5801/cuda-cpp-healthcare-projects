@@ -1,5 +1,11 @@
 2.30 -- Protein Solubility & Phase Separation Simulation
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+HPS coarse-grained LLPS model (synthetic, reduced units)
+beads=36  chains=6  chain_len=6  box=7.000  steps=120
+final potential energy = -11.058823
+final kinetic   energy = 1.284242
+position checksum      = 346.802401
+phase order parameters:
+  max  local density (neighbours within r_cut) = 15
+  mean local density                           = 10.8333
+  condensed beads (>=4 neighbours)             = 36 of 36
+RESULT: PASS (GPU matches CPU within tolerance)

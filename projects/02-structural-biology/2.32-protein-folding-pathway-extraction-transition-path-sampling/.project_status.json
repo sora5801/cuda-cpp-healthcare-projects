@@ -2,7 +2,7 @@
   "id": "2.32",
   "id_padded": "2.32",
   "project": "Protein Folding Pathway Extraction (Transition Path Sampling)",
-  "status": "todo",
+  "status": "done",
   "owner": "",
   "branch": "",
   "skeleton": true

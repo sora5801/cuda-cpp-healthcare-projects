@@ -1,52 +1,54 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU ensemble-integration interface (the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 2.34 -- Biophysical Simulation of Biomolecular Condensates (Active Learning Loop)   (template skeleton)
+// Project 2.34 : Biophysical Simulation of Biomolecular Condensates
+//                (Active Learning Loop)  --  reduced-scope teaching version
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (ensemble pattern: ONE THREAD INTEGRATES ONE TRAJECTORY)
+//   The active-learning loop needs the SAME coarse-grained MD run for MANY
+//   candidate sequences (here: many stickiness values lambda). Each trajectory
+//   is sequential IN TIME (step t+1 needs step t) but completely INDEPENDENT of
+//   the other trajectories, so the natural GPU mapping is one thread per replica:
+//   thread m runs the full Brownian-dynamics loop for candidate m in its own
+//   registers/local memory and writes a single ReplicaResult (its D and Rg).
+//   No shared memory, no atomics, no inter-thread communication -- embarrassing
+//   parallelism over the ensemble. This is the flagship 9.02 / 13.02 pattern
+//   (PATTERNS.md section 1, "the same ODE for many parameter sets").
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The integrator itself is the shared __host__ __device__ integrate_replica()
+//   in condensate.h, so the GPU result matches the CPU reference to a small,
+//   documented float tolerance (the trajectories are hundreds of FMA-bearing
+//   steps, so we verify to a physical tolerance, not bit-equality -- PATTERNS s4).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Included ONLY by .cu translation units (it declares a __global__). The pure-
+//   C++ CPU reference + the active-learning step live in reference_cpu.h.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, condensate.h,
+//                  reference_cpu.h.  Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
+#include "reference_cpu.h"   // EnsembleConfig, ReplicaResult (pure C++, safe in .cu)
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ensemble_kernel: thread idx integrates ensemble member idx (one candidate
+// sequence's whole CG-MD trajectory) and writes its ReplicaResult.
+//   c   : the experiment config, passed BY VALUE so every thread has its own
+//         copy in registers/constant-arg space (it is small and read-only)
+//   out : device pointer to n_members ReplicaResult slots (one written per thread)
+// The launch configuration and thread-to-data mapping are documented in
+// kernels.cu where the kernel is defined.
+__global__ void ensemble_kernel(EnsembleConfig c, ReplicaResult* __restrict__ out);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
+// integrate_gpu: "do the whole GPU ensemble" from the host. Allocates the
+// device result buffer, launches one thread per member, copies the results back,
+// and reports the measured KERNEL time (CUDA events) via *kernel_ms. main.cu
+// calls exactly this; all CUDA bookkeeping is hidden here.
+//   c         : the ensemble config (host-side; copied into the kernel by value)
+//   results   : host output, resized to n_members (output parameter)
 //   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+void integrate_gpu(const EnsembleConfig& c, std::vector<ReplicaResult>& results,
+                   float* kernel_ms);

@@ -153,6 +153,10 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- The shared __host__ __device__ HPS force/energy core, #included by BOTH
+         the host reference (reference_cpu.cpp) and the device kernels
+         (kernels.cu) so CPU and GPU run byte-identical physics. -->
+    <ClInclude Include="..\src\hps_model.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

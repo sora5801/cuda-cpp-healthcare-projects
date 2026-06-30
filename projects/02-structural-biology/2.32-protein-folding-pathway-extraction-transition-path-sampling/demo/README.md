@@ -2,32 +2,39 @@
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+`run_demo.ps1` (Windows) / `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on `data/sample/tps_params.txt` — 4096 independent TPS shooting
+   moves on a 5 kT double-well folding landscape (basins at x = 0.1 "unfolded"
+   and x = 0.9 "folded", barrier at x = 0.5).
+3. **Verify** that the GPU and CPU produce the **exact same** integer tallies
+   (transition-path count, committor histogram) — because both run the identical
+   shooting moves (shared RNG + Brownian dynamics) and integer atomic adds
+   commute.
+4. **Report** the fraction of reactive transition paths, the committor curve
+   p_B(x), and the recovered transition-state bin; plus timing.
 
-The program splits its output deliberately:
+stdout (the deterministic stats + committor curve) is diffed against
+[`expected_output.txt`](expected_output.txt); the timing line is on stderr only.
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+## Canonical output
 
-## Expected result
+See [`expected_output.txt`](expected_output.txt). What to look for:
 
-```
-2.32 -- Protein Folding Pathway Extraction (Transition Path Sampling)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
+- **`RESULT: PASS`** means the GPU tally equals the CPU tally **exactly** (`0
+  mismatches`) — the correctness guarantee.
+- **The committor curve rises monotonically** from `0` (% reaching the folded
+  basin) near the unfolded basin to `100` near the folded basin. That S-shaped
+  rise is the signature of a committor along a good reaction coordinate.
+- **The transition-state bin is `10`**, which sits at x ≈ 0.5 = the barrier top —
+  exactly where the committor p_B crosses 1/2. Recovering the barrier-top as the
+  p_B = 0.5 isosurface is the scientific point of committor analysis, and it is a
+  *known-answer* check beyond mere CPU==GPU agreement (PATTERNS.md §4).
+- About **13.5 %** of shots are accepted as transition paths (they connect the
+  two basins) — the rest fall back into the basin they came from.
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+> This is a **simplified, synthetic** teaching model: a **1-D** reaction
+> coordinate on an analytic double-well surface with **overdamped Langevin
+> dynamics** and a simplified shooting move — **not** an all-atom MD engine and
+> not a source of real folding kinetics.

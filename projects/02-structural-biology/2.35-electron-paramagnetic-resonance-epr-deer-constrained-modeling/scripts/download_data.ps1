@@ -1,12 +1,13 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real EPR/DEER data pointers (Windows).
 # ---------------------------------------------------------------------------
-# Project 2.35 -- Electron Paramagnetic Resonance (EPR/DEER) Constrained Modeling   (template skeleton)
+# Project 2.35 : Electron Paramagnetic Resonance (EPR/DEER) Constrained Modeling
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): this script NEVER bypasses any registration. There is
+# no single "DEER dataset" to fetch -- a real run combines a protein structure, a
+# spin-label rotamer library, and an experimental P(r). So this script PRINTS the
+# resources and defers to scripts/make_synthetic.py for the offline stand-in that
+# the demo actually uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,25 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.35 -- Electron Paramagnetic Resonance (EPR/DEER) Constrained Modeling"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    SASBDB EPR-constrained structures (verify URL); published DEER datasets for membrane transporters; EPR.cxls community datasets (verify URL); PDB structures refined with EPR data."
+Write-Host "The committed sample (data/sample/deer_sample.txt) is SYNTHETIC and is all"
+Write-Host "the demo needs. To assemble a REAL DEER-restrained ensemble you need three"
+Write-Host "ingredients, none of which this script downloads for you:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  1) A protein structure / MD ensemble (the conformations to reweight):"
+Write-Host "       PDB        https://www.rcsb.org/"
+Write-Host "       SASBDB     https://www.sasbdb.org/   (EPR/SAXS-constrained models)"
+Write-Host "  2) A spin-label rotamer library (e.g. MTSSL) + a DEER back-calculator:"
+Write-Host "       MMM        https://www.epr.ethz.ch/software/mmm.html"
+Write-Host "       DEER-PREdict (verify URL; Lindorff-Larsen lab)"
+Write-Host "  3) An experimental P(r) distance distribution from a DEER/PELDOR trace:"
+Write-Host "       published membrane-transporter DEER datasets; EPR.cxls community sets"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Reweighting reference implementation:"
+Write-Host "       BioEn      https://github.com/bio-phys/BioEN"
+Write-Host ""
+Write-Host "Export your two label sites' rotamer clouds + your P(r) into the format in"
+Write-Host "data/README.md (header must match src/deer_params.h), then run the exe on it."
+Write-Host ""
+Write-Host "For a larger SYNTHETIC problem (no download):"
+Write-Host "    python scripts/make_synthetic.py --frames 400"

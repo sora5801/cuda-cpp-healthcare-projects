@@ -1,12 +1,14 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Fetch / point at the real datasets (Windows)
 # ---------------------------------------------------------------------------
-# Project 2.30 -- Protein Solubility & Phase Separation Simulation   (template skeleton)
+# Project 2.30 : Protein Solubility & Phase Separation Simulation
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The LLPS resources below are sequence/
+# annotation DATABASES, not ready-to-run particle configurations -- so there is
+# no single binary to download for this simulation. This script prints where the
+# real data lives (for the curious) and defers to make_synthetic.py for the
+# offline, runnable coarse-grained system the demo uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +18,20 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.30 -- Protein Solubility & Phase Separation Simulation"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    FuzDB — fuzzy protein complex database (https://fuzdb.org); PhaSePro — proteins undergoing LLPS (https://phasepro.elte.hu); DisProt — intrinsically disordered proteins (https://disprot.org); human proteome LLPS predictor datasets (catGRANULE, PScore)."
+Write-Host "  Real-world LLPS / IDP resources (databases, not simulation inputs):"
+Write-Host "    * PhaSePro   -- proteins undergoing LLPS    https://phasepro.elte.hu"
+Write-Host "    * PhaSepDB   -- phase-separation database    http://db.phasep.pro"
+Write-Host "    * DisProt    -- intrinsically disordered     https://disprot.org"
+Write-Host "    * FuzDB      -- fuzzy protein complexes       https://fuzdb.org"
+Write-Host "    * CALVADOS   -- residue-level IDP force field https://github.com/KULL-Centre/CALVADOS"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  These give SEQUENCES and per-residue stickiness scales (Kapcha-Rossky,"
+Write-Host "  HPS, CALVADOS). To build a runnable system from a sequence you map each"
+Write-Host "  residue to its lambda, place beads on a chain, and feed the loader format"
+Write-Host "  in data/README.md -- exactly what make_synthetic.py does with synthetic"
+Write-Host "  stickiness values."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  The committed tiny sample in data/sample/system.txt runs the demo offline."
+Write-Host "  For a larger SYNTHETIC system, run:"
+Write-Host "    python scripts/make_synthetic.py --chains 16 --len 12 --box 12.0"

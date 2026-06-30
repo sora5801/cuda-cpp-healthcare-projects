@@ -1,52 +1,75 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU HPS coarse-grained MD interface
 // ---------------------------------------------------------------------------
-// Project 2.30 -- Protein Solubility & Phase Separation Simulation   (template skeleton)
+// Project 2.30 : Protein Solubility & Phase Separation Simulation
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   In a residue-level MD step, the force on every bead is INDEPENDENT once the
+//   current positions are fixed -- so we give each bead its own GPU thread. Each
+//   velocity-Verlet iteration is two kernel launches:
+//     1. force_kernel     : thread i GATHERS the force on bead i by looping over
+//        all other beads j (the all-pairs O(N^2) HPS force from hps_model.h).
+//        Pure reads of x/y/z + a private write of f[i] => NO atomics, NO races.
+//     2. integrate_kernel : thread i half-kicks + drifts bead i with its force.
+//   Both reuse the SHARED bead_force() in hps_model.h, so the GPU runs the
+//   byte-identical physics the CPU reference does, in the identical fixed pair
+//   order -- which is what makes the GPU-vs-CPU summaries match (THEORY.md
+//   "verify correctness").
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   We launch the kernels n_steps times from the host. For a tiny teaching
+//   system this is "launch-bound" and may be slower than the CPU -- exactly the
+//   honest-timing lesson in docs/PATTERNS.md §7; the GPU's advantage appears as
+//   N grows (the O(N^2) force dominates and the per-step launch cost amortizes).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Only .cu translation units may include this header (it declares __global__
+//   kernels). The CPU reference uses the pure-C++ reference_cpu.h instead.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, hps_model.h, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // System, SimSummary (pure C++, safe to include in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ---- Device kernels (defined in kernels.cu) ------------------------------
+
+// force_kernel: thread i computes the total force (fx,fy,fz)[i] on bead i and
+//   the half-pair energy it owns, by calling the shared bead_force(). Reads all
+//   positions; writes only its own force/energy slot -> embarrassingly parallel.
+__global__ void force_kernel(int N,
+                             const double* __restrict__ x,
+                             const double* __restrict__ y,
+                             const double* __restrict__ z,
+                             const double* __restrict__ lam,
+                             const int* __restrict__ chain,
+                             SimParams p,
+                             double* __restrict__ fx,
+                             double* __restrict__ fy,
+                             double* __restrict__ fz,
+                             double* __restrict__ u_half);
+
+// integrate_kernel: thread i advances bead i by ONE velocity-Verlet sub-update.
+//   `phase` selects which half of the step (see kernels.cu): phase 0 does the
+//   first half-kick + drift (+ periodic wrap); phase 1 does the second half-kick.
+__global__ void integrate_kernel(int N, double dt, double mass, double box,
+                                 int phase,
+                                 double* __restrict__ x,
+                                 double* __restrict__ y,
+                                 double* __restrict__ z,
+                                 double* __restrict__ vx,
+                                 double* __restrict__ vy,
+                                 double* __restrict__ vz,
+                                 const double* __restrict__ fx,
+                                 const double* __restrict__ fy,
+                                 const double* __restrict__ fz);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// run_gpu: run the whole simulation on the device and fill `out`.
+//   Copies the initial System to the GPU, runs n_steps velocity-Verlet steps as
+//   pairs of kernel launches, copies the final positions/velocities back, and
+//   computes the SAME SimSummary the CPU does (the order parameters via the host
+//   order_params() on the returned positions). main.cu calls exactly this.
+//     sys       : the initial system (by value; the device gets its own copy)
+//     out       : receives the final-state summary
+//     kernel_ms : out-param, total GPU kernel time over all steps (ms)
+void run_gpu(System sys, SimSummary& out, float* kernel_ms);

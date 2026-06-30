@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 2.35 -- Electron Paramagnetic Resonance (EPR/DEER) Constrained Modeling   (template skeleton)
+# Project 2.35 : Electron Paramagnetic Resonance (EPR/DEER) Constrained Modeling
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/electron-paramagnetic-resonance-epr-deer-constrained-modeling.sln (CLAUDE.md §5). Both

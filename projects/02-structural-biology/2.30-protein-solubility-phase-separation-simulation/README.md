@@ -4,31 +4,50 @@
 
 > **🔴 Advanced · Frontier/Theoretical** — Domain 2: Structural Biology & Protein Science · Catalog ID `2.30`
 >
-> _Educational only — not for clinical use (see CLAUDE.md §8)._
-
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
+> _Educational only — not for clinical use (see CLAUDE.md §8). All data here is synthetic._
 
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+This project simulates, on the GPU, the physics behind **biomolecular
+condensates** — the membraneless liquid droplets that intrinsically disordered
+proteins (IDPs) like FUS and TDP-43 form by **liquid-liquid phase separation
+(LLPS)**. We use a residue-level **coarse-grained** model (one bead per amino
+acid) with the **HPS / Ashbaugh-Hatch** "stickiness" potential, integrate the
+beads' motion with velocity-Verlet, and watch several short chains coalesce from a
+dispersed start into a single dense droplet. A plain-C++ reference runs the same
+physics serially; the demo asserts the GPU and CPU trajectories agree to machine
+precision. It is a deliberately small, deterministic teaching version of a
+research-grade problem.
 
 ## What this computes & why the GPU helps
 
-Liquid-liquid phase separation (LLPS) of intrinsically disordered proteins (IDPs) and RNA-binding proteins underlies formation of biomolecular condensates (stress granules, P-bodies, nucleolus). Simulating LLPS requires system sizes of millions of CG atoms over millisecond timescales — only accessible with GPU CG-MD. FUS, TDP-43, and hnRNPA1 condensate-forming domains have been simulated with MARTINI or HPS (hydrophobicity scale) CG models on GPU. Phase diagrams are computed by running multiple concentration conditions simultaneously. Applications include predicting condensate-forming mutations and designing condensate-disrupting drugs.
+Liquid-liquid phase separation (LLPS) of intrinsically disordered proteins (IDPs)
+and RNA-binding proteins underlies the formation of biomolecular condensates
+(stress granules, P-bodies, the nucleolus). Simulating LLPS needs systems large
+enough to hold both a dense and a dilute phase and long enough for them to
+separate — only reachable with GPU coarse-grained MD. FUS, TDP-43, and hnRNPA1
+condensate-forming domains have been simulated with HPS or MARTINI models on GPUs.
+Applications include predicting condensate-forming mutations and designing
+condensate-disrupting drugs.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** the cost is the **non-bonded force evaluation** — for
+`N` beads it is an all-pairs `O(N²)` sum, redone every one of thousands of time
+steps. It is also **embarrassingly parallel**: once positions are fixed, the force
+on each bead is independent, so we assign **one GPU thread per bead** and each
+thread *gathers* its force from all others. No atomics, no races — the cleanest
+parallel pattern. (See [THEORY.md](THEORY.md) §4.)
 
 ## The algorithm in brief
 
-Coarse-grained HPS/Kim-Hummer IDP model, MARTINI IDR parameters, Gibbs ensemble MC for phase coexistence, density functional theory for phase diagram, metadynamics order parameter for condensate formation, finite-size scaling for phase boundary.
+- **HPS / Ashbaugh-Hatch non-bonded potential** — a Lennard-Jones core whose
+  attractive well is scaled by a per-residue stickiness `λ ∈ [0,1]` (the model's
+  one knob for hydrophobicity).
+- **Harmonic backbone bonds** between consecutive residues of a chain.
+- **Velocity-Verlet** integration (NVE) with **periodic boundaries** and the
+  minimum-image convention.
+- **Order-parameter clustering for phase detection**: each bead's *local density*
+  (neighbours within `r_cut`) distinguishes the dense droplet from the dilute
+  background.
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
 derivation.
@@ -49,60 +68,114 @@ Command-line alternative (Developer PowerShell):
 msbuild build\protein-solubility-phase-separation-simulation.sln /p:Configuration=Release /p:Platform=x64
 ```
 
+Both `Debug|x64` and `Release|x64` build with zero warnings. An optional
+`CMakeLists.txt` is provided for Linux/macOS learners (the VS solution is the
+required deliverable).
+
 ## Run the demo
 
 ```powershell
 ./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.sh           # Linux/macOS (uses the CMake build)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+The demo builds if needed, runs on `data/sample/system.txt`, prints the result,
+shows the GPU-vs-CPU agreement check, and prints a timing line.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: FuzDB — fuzzy protein complex database (https://fuzdb.org); PhaSePro — proteins undergoing LLPS (https://phasepro.elte.hu); DisProt — intrinsically disordered proteins (https://disprot.org); human proteome LLPS predictor datasets (catGRANULE, PScore).
+- **Sample (committed):** `data/sample/system.txt` — a tiny **synthetic** system
+  (6 chains × 6 sticky beads = 36 beads) so the demo runs offline with zero
+  downloads.
+- **Real-world pointers:** `scripts/download_data.ps1` / `.sh` (LLPS/IDP databases;
+  they are sequence/annotation sets, not particle inputs).
+- **Synthetic generator:** `scripts/make_synthetic.py` (deterministic, seeded).
+- **Provenance, format & license:** see [data/README.md](data/README.md).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt):
+
+```
+final potential energy = -11.058823
+...
+  condensed beads (>=4 neighbours)             = 36 of 36
+RESULT: PASS (GPU matches CPU within tolerance)
+```
+
+The program runs the simulation on both the **GPU** (`src/kernels.cu`) and a
+**CPU reference** (`src/reference_cpu.cpp`) and asserts their final-state
+summaries agree within a documented tolerance (energies/checksum `≤ 1e-6`, integer
+order parameters exact). The negative potential energy and all-beads-condensed
+result mean the chains actually phase-separated into one droplet — the science we
+set out to see. That agreement, between two independent implementations, is the
 correctness guarantee.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — loads the system, runs CPU + GPU, verifies, reports.
+2. [`src/hps_model.h`](src/hps_model.h) — the **shared** `__host__ __device__` HPS
+   force/energy core (the one place the physics lives; CPU and GPU both call it).
+3. [`src/reference_cpu.h`](src/reference_cpu.h) / [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the System type, the loader, and the trusted serial velocity-Verlet.
+4. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the one-thread-per-bead idea.
+5. [`src/kernels.cu`](src/kernels.cu) — the `force_kernel`/`integrate_kernel` and the host wrapper.
+6. [`src/util/`](src/util/) — shared `CUDA_CHECK`, CUDA-event timer, I/O helpers.
 
 ## Prior art & further reading
 
-LAMMPS + HPS model (https://github.com/lammps/lammps) — GPU IDP LLPS simulation; OpenMM HPS (https://github.com/openmm/openmm) — Python IDP CG MD; CALVADOS 2 (https://github.com/KULL-Centre/CALVADOS) — residue-level IDP model for LLPS; GROMACS MARTINI IDR (https://github.com/gromacs/gromacs) — GPU CG LLPS.
+- **LAMMPS + HPS** (https://github.com/lammps/lammps) — large-scale GPU LLPS with
+  neighbour lists; the reference for slab-geometry simulations at scale.
+- **OpenMM** (https://github.com/openmm/openmm) — GPU MD with a Python API; read
+  its custom-force classes to see HPS expressed in practice.
+- **CALVADOS 2** (https://github.com/KULL-Centre/CALVADOS) — an improved residue-
+  level IDP model; study its λ table and Debye-Hückel electrostatics.
+- **GROMACS + MARTINI IDR** (https://github.com/gromacs/gromacs) — GPU CG MD with
+  the MARTINI force field.
 
 Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
+this project reimplements the essentials didactically and credits the sources
+(CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-GPU CG-MD for multi-million-bead IDP system; CUDA kernel for simplified HPS non-bonded interactions; GPU-parallel concentration ensemble (multiple boxes); GPU-accelerated order parameter clustering for phase detection. --
+**Independent per-bead "gather" (all-pairs N-body), no atomics.** One thread per
+bead reads all other beads to sum its force, writes only its own slot; a second
+kernel does the velocity-Verlet update. The per-pair physics lives in a shared
+`__host__ __device__` header so the CPU reference and the GPU kernel run byte-
+identical math (PATTERNS.md §2). Order parameters (local density) are computed
+deterministically for phase detection. This is the same pattern production HPS
+codes use, minus the neighbour list, electrostatics, thermostat, and multi-box
+ensemble (see THEORY.md §7).
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Dissolve the droplet.** Regenerate with weak stickiness
+   (`python scripts/make_synthetic.py --lam 0.2`) and rerun. Watch the local
+   density collapse — the *soluble* side of the phase boundary. (Update
+   `expected_output.txt` for the new input.)
+2. **Shared-memory tiling.** Rewrite `force_kernel` so each block cooperatively
+   loads a tile of `j`-positions into `__shared__` memory and reuses it across the
+   block. Confirm the result is unchanged and measure the speed-up (THEORY §4).
+3. **Add a Langevin thermostat.** Give each bead a friction + cuRAND random force
+   to sample NVT at fixed temperature. Note that this breaks bit-exact CPU==GPU
+   verification — switch to a *statistical* check (matching energy distributions).
+4. **Scale it.** Run `--chains 64 --len 12 --box 16` and plot CPU vs GPU time vs
+   `N`; find the crossover where the GPU's `O(N²)` parallelism wins.
+5. **A real sequence.** Map the FUS low-complexity domain to HPS λ values and
+   build a `system.txt` from it; compare its condensation to a polar mutant.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Synthetic data.** The committed system is generated, with a uniform synthetic
+  λ = 0.9 — **not** real protein sequence, structure, or measured hydrophobicity.
+- **Reduced-scope teaching model.** All-pairs `O(N²)` forces (no neighbour list),
+  **NVE** dynamics (no thermostat), **no electrostatics**, a single small box, and
+  reduced LJ units. A real LLPS study uses neighbour lists, Langevin/Debye-Hückel,
+  hundreds of chains in slab geometry, and a multi-concentration ensemble to draw
+  a phase diagram (THEORY §7).
+- **Not a predictor.** This demonstrates the *mechanism* and the *GPU pattern*; it
+  makes no claim about whether any specific protein phase-separates in a cell.
+- **Timing is a teaching artifact**, never a benchmark claim — on this tiny `N`,
+  many small kernel launches are launch-bound and the GPU is slower than the CPU.
