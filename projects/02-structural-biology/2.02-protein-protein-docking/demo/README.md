@@ -1,33 +1,45 @@
-# Demo — 2.2 Protein-Protein Docking
+# Demo — 2.2 Protein-Protein Docking (FFT rigid-body search via cuFFT)
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+`run_demo.ps1` (Windows) / `run_demo.sh` (Linux/CMake) will:
 
-1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+1. **Build** the project (links **cuFFT**) if the executable is missing.
+2. **Run** it on `data/sample/dock_sample.txt` (a synthetic receptor + a
+   displaced copy of it as the ligand, on a 32³ grid).
+3. **Verify** that cuFFT's `O(Ng log Ng)` correlation produces the same score
+   grid as a brute-force `O(Ng²)` CPU correlation (within a documented
+   round-off tolerance) **and** that the single best-scoring translation (the
+   predicted dock) is identical.
+4. **Report** the recovered docking translation, its shape-complementarity
+   score, and whether it matches the known answer the sample was built with.
 
-The program splits its output deliberately:
+stdout (the recovered pose + score) is deterministic and diffed against
+[`expected_output.txt`](expected_output.txt); the timing lines are on stderr
+only (shown, not diffed).
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+## Canonical output
 
-## Expected result
+See [`expected_output.txt`](expected_output.txt):
 
 ```
 2.2 -- Protein-Protein Docking
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+FFT rigid-body docking (Katchalski-Katzir shape correlation via cuFFT)
+grid: 32x32x32 voxels @ 1.50 A/voxel   receptor atoms: 1954   ligand atoms: 1954
+best translation (voxels): t = (-3, -2, 1)
+best shape-complementarity score: 77294.0000
+known-answer translation:  t = (-3, -2, 1)  -> RECOVERED
+RESULT: PASS (cuFFT score grid matches CPU within 5e-01; best pose identical)
 ```
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+The ligand was displaced by `D = (3, 2, −1)` voxels, so the search correctly
+recovers the translation `t = −D = (−3, −2, 1)` that slides it back onto the
+receptor. `RESULT: PASS` means cuFFT's score grid matched the brute-force CPU
+grid and the argmax pose is identical. On the RTX 2080 SUPER the cuFFT route
+runs in ~0.5 ms versus ~1.3 s for the brute-force CPU correlation — the
+`O(Ng²) → O(Ng log Ng)` win that makes FFT docking practical (a *teaching
+artifact*, not a benchmark claim; see THEORY §7).
+
+> The input is **synthetic** (a geometric test object with a known answer), a
+> demonstration of the FFT rigid-body docking pattern — not a real complex
+> prediction. See `data/README.md` and `THEORY.md` for the honest scope.

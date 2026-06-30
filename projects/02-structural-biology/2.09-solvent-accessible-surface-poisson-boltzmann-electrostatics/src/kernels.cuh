@@ -1,52 +1,38 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU Poisson-Boltzmann solver interface
 // ---------------------------------------------------------------------------
-// Project 2.9 -- Solvent-Accessible Surface & Poisson-Boltzmann Electrostatics   (template skeleton)
+// Project 2.9 : Solvent-Accessible Surface & Poisson-Boltzmann Electrostatics
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE PATTERN (a red-black STENCIL relaxation, cf. lattice-Boltzmann 6.04 and
+//              reaction-diffusion 14.02)
+//   The linearized Poisson-Boltzmann equation discretizes to a 7-point stencil
+//   on a 3-D grid; we solve it with GAUSS-SEIDEL relaxation. Plain Gauss-Seidel
+//   is inherently sequential (each cell uses already-updated neighbours), which
+//   a GPU cannot parallelize. The fix is RED-BLACK COLOURING: colour cell
+//   (x,y,z) by the parity of (x+y+z). Every red cell's six neighbours are black
+//   and vice-versa, so:
+//       * update ALL red cells in parallel (they read only black values),
+//       * then update ALL black cells in parallel (they read the fresh reds).
+//   That is two kernel launches per sweep, one thread per interior cell. No
+//   races, and the arithmetic is identical to the serial red-black loop in
+//   reference_cpu.cpp -- so the GPU field matches the CPU field (THEORY "verify").
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Unlike reaction-diffusion (14.02) this needs NO ping-pong buffer: Gauss-
+//   Seidel updates phi IN PLACE, and the colouring is exactly what makes the
+//   in-place update safe in parallel.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, pbe.h, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // PbeProblem, GridParams (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
-
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Host wrapper: solve the PBE on the GPU.
+//   prob       : the built problem (eps/kappa2/rho grids + GridParams), input.
+//   phi        : comes in zero-initialized (size n^3); updated in place to the
+//                converged potential after prob.P.iters red-black sweeps.
+//   kernel_ms  : out -- total GPU time across all sweeps (CUDA-event measured).
+// After this returns, phi holds the GPU solution; main.cu compares it to the
+// CPU reference. The two kernels (red, black) live in kernels.cu.
+void solve_gpu(const PbeProblem& prob, std::vector<double>& phi, float* kernel_ms);

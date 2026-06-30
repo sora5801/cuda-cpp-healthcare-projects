@@ -2,11 +2,13 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.8 -- GPU Molecular Visualization & Ray Tracing   (template skeleton)
+# Project 2.8 -- GPU Molecular Visualization & Ray Tracing
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. This project renders the committed SYNTHETIC
+# sample by default; real structures (PDB/EMDB) are large and carry their own
+# per-entry terms, and are NOT required for the demo. So this script only prints
+# pointers and defers to scripts/make_synthetic.py for offline data.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,19 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 2.8 -- GPU Molecular Visualization & Ray Tracing"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    EMDB cryo-EM maps (https://www.ebi.ac.uk/emdb/); RCSB PDB molecular structures (https://www.rcsb.org); GPCRmd MD trajectories (https://gpcrmd.org); CHARMM-GUI example systems (https://charmm-gui.org)."
+echo "The demo runs entirely on the committed SYNTHETIC sample:"
+echo "    data/sample/molecule_sample.scene   (no download needed)"
+echo "Regenerate or resize it with:"
+echo "    python scripts/make_synthetic.py --turns 6 --width 320 --height 320"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "To render a REAL structure, fetch one from these sources (check each"
+echo "entry's license) and convert it to the .scene format (see data/README.md):"
+echo "  - RCSB PDB (atoms):         https://www.rcsb.org"
+echo "  - EMDB (cryo-EM volumes):   https://www.ebi.ac.uk/emdb/"
+echo "  - GPCRmd (MD trajectories): https://gpcrmd.org"
+echo "  - CHARMM-GUI (systems):     https://charmm-gui.org"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Example (PDB, public): download a structure by id, e.g."
+echo "    curl -L -o data/1ubq.pdb https://files.rcsb.org/download/1UBQ.pdb"
+echo "then write a small converter (Exercise in README.md) PDB -> .scene."
+echo "This script downloads nothing automatically by design."

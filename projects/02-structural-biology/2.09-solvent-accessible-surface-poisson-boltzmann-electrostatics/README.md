@@ -2,107 +2,153 @@
 
 ![difficulty](https://img.shields.io/badge/difficulty-Beginner-blue) ![maturity](https://img.shields.io/badge/maturity-Established-informational) ![domain](https://img.shields.io/badge/domain-Structural%20Biology%20%26%20Protein%20Science-lightgrey)
 
-> **🟢 Beginner · Established** — Domain 2: Structural Biology & Protein Science · Catalog ID `2.9`
->
-> _Educational only — not for clinical use (see CLAUDE.md §8)._
-
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
+> **Educational only — not for clinical use.** Continuum electrostatics in
+> reduced (illustrative) units on a *synthetic* molecule. Teaches the CUDA
+> red-black stencil pattern; it is not a calibrated pKa/binding calculator.
 
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+This project computes the **electrostatic potential of a molecule in salty
+water** by solving the **linearized Poisson–Boltzmann equation (LPBE)** on a 3-D
+grid, and reports the molecule's **solvent-accessible surface area (SASA)**. The
+potential is found by **red-black Gauss–Seidel relaxation** of a 7-point finite-
+difference stencil — the canonical way GPU PB solvers (APBS, DelPhi-GPU)
+parallelize the solve. A serial CPU reference solves the same problem and the two
+fields are checked for agreement.
 
 ## What this computes & why the GPU helps
 
-Continuum electrostatics models (Poisson-Boltzmann equation, PBE) compute the electrostatic potential of a protein in ionic solvent by solving a partial differential equation on a 3D grid. This enables calculation of protein pKa values, electrostatic binding contributions, and zeta potentials for colloidal drug carriers. GPU-accelerated PBE solvers (APBS, DelPhi-GPU) discretize the molecule onto a Eulerian grid and solve via Gauss-Seidel iteration or multigrid methods on GPU. The bottleneck is the 3D finite-difference PBE solve — parallelized via coloring (red-black ordering) on GPU threads.
+A protein's charges live in a low-dielectric interior (ε≈2) surrounded by
+high-dielectric, ion-screened water (ε≈80). The LPBE,
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+```
+  ∇·(ε∇φ) − ε_w κ² φ = −ρ/ε0 ,
+```
+
+gives the mean-field potential φ from which pKa shifts, binding electrostatics,
+and surface (zeta) potentials follow. Discretized on an `n³` grid it becomes a
+huge sparse linear system solved by **iterative relaxation** — the **bottleneck**
+is the 3-D finite-difference sweep, repeated hundreds of times. Each sweep
+updates every grid cell from its six neighbours; with **red-black colouring**,
+all cells of one colour are independent and update **in parallel**, one GPU
+thread per cell. On the sample the GPU runs the 600-sweep solve about **9×**
+faster than the serial CPU sweep (a teaching artifact — the edge grows with grid
+size). See [THEORY.md](THEORY.md).
 
 ## The algorithm in brief
 
-Linearized Poisson-Boltzmann equation (LPBE), non-linear PBE, finite difference discretization (3D grid), red-black Gauss-Seidel iteration, multigrid preconditioning, generalized Born (GB) analytic approximation, SASA computation.
-
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+- **Build the grids** from the atoms: a sharp dielectric map (low inside any
+  atom's radius, high in solvent), a screening map κ²(r) (0 inside the protein),
+  and a charge source ρ(r) (each atom's charge on its nearest grid cell).
+- **7-point finite-difference stencil** for `∇·(ε∇φ) − ε_w κ² φ`.
+- **Red-black Gauss–Seidel**: colour cells by `(x+y+z) mod 2`; update all red
+  cells, then all black — each colour is race-free and parallel.
+- **SASA** by deterministic Shrake–Rupley sphere sampling (the geometric surface).
+- Full derivation, complexity, and GPU mapping in [THEORY.md](THEORY.md).
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3** (the
+repo's ratified standard — see [`docs/BUILD_GUIDE.md`](../../../docs/BUILD_GUIDE.md)).
 
-1. Open `build/solvent-accessible-surface-poisson-boltzmann-electrostatics.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/solvent-accessible-surface-poisson-boltzmann-electrostatics.exe`.
+1. Open `build/solvent-accessible-surface-poisson-boltzmann-electrostatics.sln`.
+2. Select **`Release|x64`**.
+3. **Build → Build Solution** (`Ctrl+Shift+B`).
 
-Command-line alternative (Developer PowerShell):
-
-```powershell
-msbuild build\solvent-accessible-surface-poisson-boltzmann-electrostatics.sln /p:Configuration=Release /p:Platform=x64
-```
+No path edits are needed: the project uses the CUDA `.props/.targets` integration
+and `$(CUDA_PATH)`. A `Debug|x64` configuration (with `-G` device debug) is also
+provided. Linux/CI users can build with the optional `CMakeLists.txt`.
 
 ## Run the demo
 
+From this project folder:
+
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.ps1            # Windows: builds if needed, runs, verifies
+```
+```bash
+./demo/run_demo.sh             # Linux/macOS via CMake
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+It runs the solver on the committed sample, prints the electrostatics summary +
+SASA (stdout), shows timing (stderr), and diffs stdout against
+[`demo/expected_output.txt`](demo/expected_output.txt). See
+[`demo/README.md`](demo/README.md).
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: pKDBD — database of protein pKa values (verify URL); BindingMOAD — protein-ligand electrostatic data (https://bindingmoad.org); RCSB PDB structural data (https://www.rcsb.org); APBS validation benchmark (https://github.com/Electrostatics/apbs).
+The committed sample [`data/sample/molecule.pqr`](data/sample/molecule.pqr) is a
+**tiny synthetic "molecule"** — 11 atoms forming a deliberate **dipole** (net +1 e
+on one lobe, −1 e on the other) plus a neutral scaffold — followed by the grid
+and physics parameters. It is a `.pqr`-style format (atoms with partial **q** and
+**radius**), the same information PDB2PQR produces from a real PDB. Regenerate or
+resize it with `scripts/make_synthetic.py`; provenance, the file format, and the
+real-data path (RCSB → PDB2PQR) are in [`data/README.md`](data/README.md) and
+`scripts/download_data.*`. The data is **synthetic** and labelled as such.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+```
+2.9 -- Solvent-Accessible Surface & Poisson-Boltzmann Electrostatics
+grid: 48x48x48 cells, h=0.60 A, eps_in=2.0 eps_out=80.0 kappa^2=0.1000, sweeps=600
+atoms: 11  | SASA (probe=1.4 A) = 408.84 A^2
+potential (kT/e): min=-0.367998  max=0.367998  center=-0.005102  sum|phi|=163.6273
+phi along center x-line (8 samples): 0.0000 0.0035 0.0340 0.0486 -0.0295 -0.0516 -0.0047 0.0000
+RESULT: PASS (GPU field matches CPU within tol=1.0e-09)
+```
+
+`RESULT: PASS` means the GPU field matches the CPU reference (worst cell
+difference ≈ **5.6e-17**, machine precision — both run the identical red-black
+arithmetic). The field is **antisymmetric** (`min = −max`) and ≈ 0 at the centre,
+exactly as a symmetric dipole demands — a physical sanity check, not just
+CPU==GPU. Timing is printed on **stderr** so stdout stays byte-identical for the
+diff.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/pbe.h`](src/pbe.h) — the shared `__host__ __device__` per-cell
+   relaxation (`pbe_relax_cell`); the one place the PDE is discretized.
+2. [`src/main.cu`](src/main.cu) — load → build grids → CPU solve → GPU solve →
+   verify → report.
+3. [`src/kernels.cu`](src/kernels.cu) — `relax_color_kernel` (one thread/cell) and
+   the host sweep loop (two launches per sweep).
+4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — loader, grid builder, serial
+   red-black reference, and SASA.
 
 ## Prior art & further reading
 
-APBS (https://github.com/Electrostatics/apbs) — Poisson-Boltzmann solver with GPU acceleration; DelPhi (http://compbio.clemson.edu/delphi) — PB electrostatics with GPU solver; OpenMM GB force (https://github.com/openmm/openmm) — GPU Generalized Born; PDB2PQR (https://github.com/Electrostatics/pdb2pqr) — structure preparation for PBE.
-
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
-
-## CUDA pattern used here
-
-CUDA thread blocks for 3D finite-difference red-black iteration; shared memory for stencil computation; cuSPARSE for sparse Laplacian matrix; GPU texture memory for dielectric boundary representation. --
+- **APBS** (<https://github.com/Electrostatics/apbs>) — the reference open-source
+  PB solver; learn its multigrid backends and validation suite.
+- **DelPhi** (<http://compbio.clemson.edu/delphi>) — classic finite-difference PB;
+  its GPU branch parallelizes exactly this relaxation.
+- **OpenMM GB force** (<https://github.com/openmm/openmm>) — the *analytic*
+  Generalized-Born alternative (no grid) — a useful contrast.
+- **PDB2PQR** (<https://github.com/Electrostatics/pdb2pqr>) — prepares the
+  charged/radii input that PB solvers consume.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Shared-memory tiling.** Stage each block's cells + a halo into shared memory
+   so neighbour reads hit on-chip memory; measure the speed-up (see THEORY §4).
+2. **Debye–Hückel boundary.** Replace the grounded `φ=0` shell with the analytic
+   screened-Coulomb sum of the charges; check it on a tighter grid.
+3. **Ionic strength sweep.** Run `make_synthetic.py --kappa2 0` (no salt) vs the
+   default; observe how screening shortens the potential's range.
+4. **Nonlinear PBE.** Add the `sinh` term with an outer Newton loop and compare to
+   the linearized result for large charges.
+5. **Harmonic-mean dielectric.** Use face-averaged ε between neighbouring cells
+   instead of the centre cell's ε; note the change at the dielectric boundary.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced-scope teaching version.** Linearized PBE, sharp van-der-Waals
+  dielectric boundary, grounded-box boundary, nearest-grid-point charges, flat
+  Gauss–Seidel (not multigrid), and **illustrative units** (not calibrated
+  kT/e). THEORY §7 tabulates every simplification vs. production APBS/DelPhi.
+- **Synthetic data.** The molecule is an abstract dipole, not a real protein; the
+  numbers demonstrate the method, **not** any pKa, binding free energy, or zeta
+  potential. No clinical or quantitative claim is made.
+- **Timing is a teaching artifact**, never a benchmark — tiny grids are
+  launch-bound; the GPU's edge grows with size (CLAUDE.md §12).

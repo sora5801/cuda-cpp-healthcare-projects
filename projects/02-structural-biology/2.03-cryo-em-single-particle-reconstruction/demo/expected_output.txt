@@ -1,5 +1,9 @@
 2.3 -- Cryo-EM Single-Particle Reconstruction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+2D single-particle reconstruction (synthetic phantom)
+geometry: image 64x64, 60 reference angles, 120 particles
+E-step (projection matching, O(N*M)=7200 comparisons):
+  orientation recovery accuracy = 70.8% (85/120 exact-angle hits)
+M-step (back-projection into 64x64 density):
+  reconstruction-vs-truth NCC = 0.8764
+  density digest: centre=12.7030  q1=7.9486  q2=3.4080  q3=4.2988  q4=5.5459
+RESULT: PASS (GPU matches CPU: 120/120 assignments exact, density within tol=1.0e-04)

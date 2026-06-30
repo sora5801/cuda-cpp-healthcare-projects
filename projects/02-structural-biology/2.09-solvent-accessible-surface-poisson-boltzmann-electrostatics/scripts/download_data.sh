@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real-structure PBE input pointers (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 2.9 -- Solvent-Accessible Surface & Poisson-Boltzmann Electrostatics   (template skeleton)
+# Project 2.9 : Solvent-Accessible Surface & Poisson-Boltzmann Electrostatics
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md sec.8): idempotent, documented, prints sources, and NEVER
+# bypasses credentials. There is NOTHING to download for the demo: the committed
+# data/sample/molecule.pqr (synthetic) is enough. This script tells you how to
+# get a REAL protein into the same .pqr-style input format.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -14,20 +15,25 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="$PROJECT_ROOT/data"
 
-echo "[download_data] Project 2.9 -- Solvent-Accessible Surface & Poisson-Boltzmann Electrostatics"
+echo "[download_data] Project 2.9 -- Poisson-Boltzmann Electrostatics"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    pKDBD — database of protein pKa values (verify URL); BindingMOAD — protein-ligand electrostatic data (https://bindingmoad.org); RCSB PDB structural data (https://www.rcsb.org); APBS validation benchmark (https://github.com/Electrostatics/apbs)."
+echo "Nothing to download: the demo runs on the committed SYNTHETIC sample"
+echo "  data/sample/molecule.pqr  (a tiny dipolar 'molecule')."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "To run on a REAL protein, produce a .pqr (atoms with partial charge +"
+echo "radius) and convert it to this project's 1-line-header format:"
+echo "  1) Fetch a structure from the RCSB PDB:    https://www.rcsb.org"
+echo "  2) Add charges + radii with PDB2PQR:       https://github.com/Electrostatics/pdb2pqr"
+echo "       pdb2pqr30 --ff=AMBER 1abc.pdb 1abc.pqr"
+echo "  3) Reformat the ATOM lines (columns x y z q radius) into our file:"
+echo "       header: 'natoms n h eps_in eps_out kappa2 iters' then one"
+echo "       'x y z q radius' line per atom  (see data/README.md)."
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Reference solvers / benchmarks for comparison:"
+echo "  APBS    : https://github.com/Electrostatics/apbs   (PB solver + tests)"
+echo "  DelPhi  : http://compbio.clemson.edu/delphi"
+echo "  OpenMM  : https://github.com/openmm/openmm         (GPU Generalized Born)"
+echo
+echo "Bigger synthetic problem (no download):"
+echo "  python scripts/make_synthetic.py --n 64 --iters 800"

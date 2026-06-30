@@ -1,12 +1,13 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Pointers to the FULL datasets (Windows)
 # ---------------------------------------------------------------------------
-# Project 2.3 -- Cryo-EM Single-Particle Reconstruction   (template skeleton)
+# Project 2.3 : Cryo-EM Single-Particle Reconstruction
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and
+# NEVER bypasses credentials / data-use agreements. Real cryo-EM particle stacks
+# (EMPIAR) are large and some require acknowledging a license; this script only
+# prints instructions + links and defers to scripts/make_synthetic.py for an
+# offline stand-in. The committed sample already runs the demo with no download.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,18 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.3 -- Cryo-EM Single-Particle Reconstruction"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    EMDB — 50,000+ cryo-EM density maps (https://www.ebi.ac.uk/emdb/); EMPIAR — raw cryo-EM particle images (https://www.ebi.ac.uk/empiar/); RCSB PDB structures with cryo-EM validation (https://www.rcsb.org); CryoDRGN benchmark datasets (https://github.com/ml-struct-bio/cryodrgn)."
+Write-Host "This teaching project runs on a SYNTHETIC 2-D sample (data/sample/);"
+Write-Host "no download is required. To explore REAL cryo-EM data:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  EMDB    3-D density maps (MRC/.map)   https://www.ebi.ac.uk/emdb/"
+Write-Host "  EMPIAR  raw particle image stacks      https://www.ebi.ac.uk/empiar/"
+Write-Host "  RCSB    atomic models fit into maps    https://www.rcsb.org"
+Write-Host "  cryoDRGN benchmark datasets            https://github.com/ml-struct-bio/cryodrgn"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "NOTE: EMPIAR entries are tens of GB and some require accepting a"
+Write-Host "      data-use agreement. This script does NOT bypass that -- follow"
+Write-Host "      the entry's instructions on the EMPIAR website to download."
+Write-Host ""
+Write-Host "For a larger SYNTHETIC problem (any size, fully offline), run:"
+Write-Host "    python scripts/make_synthetic.py --n 100000"

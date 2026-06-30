@@ -2,11 +2,11 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 48/301 projects done (15.9%) | todo 253 | in-progress 0 | missing 0
+**Progress:** 54/301 projects done (17.9%) | todo 247 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
-| 🟢 Beginner | 67 | 23 | 0 | 44 |
+| 🟢 Beginner | 67 | 29 | 0 | 38 |
 | 🟡 Intermediate | 206 | 23 | 0 | 183 |
 | 🔴 Advanced | 28 | 2 | 0 | 26 |
 
@@ -50,19 +50,19 @@
 | 1.34 | Amyloid / Aggregation Propensity Prediction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 1.35 | QMMM/ML Potential Hybrid MD | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 
-## 2. Structural Biology & Protein Science  (1/35 done)
+## 2. Structural Biology & Protein Science  (7/35 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
-| 2.01 | Protein Structure Prediction Inference (AlphaFold-class) | 🟢 Beginner | Established | [ ] todo | - | - |
-| 2.02 | Protein-Protein Docking | 🟢 Beginner | Established | [ ] todo | - | - |
-| 2.03 | Cryo-EM Single-Particle Reconstruction | 🟢 Beginner | Established | [ ] todo | - | - |
+| 2.01 | Protein Structure Prediction Inference (AlphaFold-class) | 🟢 Beginner | Established | [x] done | - | - |
+| 2.02 | Protein-Protein Docking | 🟢 Beginner | Established | [x] done | - | - |
+| 2.03 | Cryo-EM Single-Particle Reconstruction | 🟢 Beginner | Established | [x] done | - | - |
 | 2.04 | Cryo-ET Subtomogram Averaging | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 2.05 | Coarse-Grained / MARTINI Simulation | 🟢 Beginner | Established | [ ] todo | - | - |
+| 2.05 | Coarse-Grained / MARTINI Simulation | 🟢 Beginner | Established | [x] done | - | - |
 | 2.06 | Normal Mode Analysis / Elastic Network Models | 🟢 Beginner | Established | [x] done | lead | main |
 | 2.07 | Monte Carlo Protein Structure Sampling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 2.08 | GPU Molecular Visualization & Ray Tracing | 🟢 Beginner | Established | [ ] todo | - | - |
-| 2.09 | Solvent-Accessible Surface & Poisson-Boltzmann Electrostatics | 🟢 Beginner | Established | [ ] todo | - | - |
+| 2.08 | GPU Molecular Visualization & Ray Tracing | 🟢 Beginner | Established | [x] done | - | - |
+| 2.09 | Solvent-Accessible Surface & Poisson-Boltzmann Electrostatics | 🟢 Beginner | Established | [x] done | - | - |
 | 2.10 | Protein Design / Inverse Folding Inference | 🟢 Beginner | Established | [ ] todo | - | - |
 | 2.11 | Cryo-EM CTF Estimation & Particle Picking | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 2.12 | Flexible Fitting / MDFF | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

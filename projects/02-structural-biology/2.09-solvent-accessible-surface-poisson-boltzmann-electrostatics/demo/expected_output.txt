@@ -1,5 +1,6 @@
 2.9 -- Solvent-Accessible Surface & Poisson-Boltzmann Electrostatics
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+grid: 48x48x48 cells, h=0.60 A, eps_in=2.0 eps_out=80.0 kappa^2=0.1000, sweeps=600
+atoms: 11  | SASA (probe=1.4 A) = 408.84 A^2
+potential (kT/e): min=-0.367998  max=0.367998  center=-0.005102  sum|phi|=163.6273
+phi along center x-line (8 samples): 0.0000 0.0035 0.0340 0.0486 -0.0295 -0.0516 -0.0047 0.0000
+RESULT: PASS (GPU field matches CPU within tol=1.0e-09)

@@ -1,33 +1,29 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Realistic MARTINI-system pointers (Windows)
 # ---------------------------------------------------------------------------
-# Project 2.5 -- Coarse-Grained / MARTINI Simulation   (template skeleton)
+# Project 2.5 : Coarse-Grained / MARTINI Simulation. Nothing to download.
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
-#
-# Usage:  ./scripts/download_data.ps1
+# CONTRACT (CLAUDE.md §8): the committed sample is synthetic, so there is no file
+# to fetch. This script only prints where REAL MARTINI systems come from and
+# never bypasses any registration. For a bigger run, use make_synthetic.py.
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.5 -- Coarse-Grained / MARTINI Simulation"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    CHARMM-GUI MARTINI membrane builder outputs (https://charmm-gui.org); lipid parameter database (https://cgmartini.nl); membrane-active peptide aggregation benchmarks; EMDB viral capsid reference maps for validation."
+Write-Host "There is no file to download: data/sample/cg_system.txt is synthetic"
+Write-Host "and self-contained (scripts/make_synthetic.py)."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "For REAL MARTINI systems and production CG-MD:"
+Write-Host "  CHARMM-GUI Martini Maker : https://charmm-gui.org   (membrane builder; registration)"
+Write-Host "  MARTINI force field      : https://cgmartini.nl     (official bead types + eps matrix)"
+Write-Host "  insane.py                : https://github.com/Tsjerk/Insane   (bilayer assembly)"
+Write-Host "  TS2CG                    : https://github.com/weria-pezeshkian/TS2CG"
+Write-Host "  GROMACS                  : https://github.com/gromacs/gromacs (GPU CG-MD engine)"
+Write-Host "  EMDB (validation maps)   : https://www.ebi.ac.uk/emdb/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Bigger SYNTHETIC system (no download):"
+Write-Host "  python scripts/make_synthetic.py --per-side 4 --steps 600"
+Write-Host ""
+Write-Host "Target data dir: $ProjectRoot\data"

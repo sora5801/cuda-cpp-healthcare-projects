@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 2.1 -- Protein Structure Prediction Inference (AlphaFold-class)   (template skeleton)
+# Project 2.1 -- Protein Structure Prediction Inference (AlphaFold-class)   (reduced-scope: one self-attention head)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/protein-structure-prediction-inference-alphafold-class.sln (CLAUDE.md §5). Both

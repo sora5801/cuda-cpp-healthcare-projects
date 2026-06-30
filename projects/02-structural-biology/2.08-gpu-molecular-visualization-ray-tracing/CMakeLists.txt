@@ -31,3 +31,13 @@ add_executable(gpu-molecular-visualization-ray-tracing
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(gpu-molecular-visualization-ray-tracing PRIVATE src)
+
+# --fmad=false : disable fused-multiply-add CONTRACTION on the device so the GPU
+# computes a*b+c as a separate multiply then add, like the host C++ compiler.
+# This MINIMIZES CPU-vs-GPU divergence in the render (it does not make them
+# bit-identical -- the host/device cosf/sinf/sqrtf still differ in the last bit,
+# flipping a few silhouette-edge pixels). Keep this in lockstep with the <FMAD>
+# setting in build/gpu-molecular-visualization-ray-tracing.vcxproj. See THEORY.md
+# "How we verify correctness" and docs/PATTERNS.md §4.
+target_compile_options(gpu-molecular-visualization-ray-tracing PRIVATE
+  $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)

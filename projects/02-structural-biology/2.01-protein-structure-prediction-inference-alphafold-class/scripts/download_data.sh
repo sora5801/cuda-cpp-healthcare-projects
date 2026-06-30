@@ -2,11 +2,14 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.1 -- Protein Structure Prediction Inference (AlphaFold-class)   (template skeleton)
+# Project 2.1 : Protein Structure Prediction Inference (AlphaFold-class)
+#               REDUCED-SCOPE TEACHING VERSION.
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and
+# NEVER bypasses credentials/registration. This teaching project runs on a tiny
+# SYNTHETIC sample (data/sample/attention_sample.txt); no real dataset is needed
+# to build or demo it. This script only prints where the real data lives and
+# defers to make_synthetic.py for a bigger offline problem.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +20,20 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 2.1 -- Protein Structure Prediction Inference (AlphaFold-class)"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    AlphaFold Database — 200M+ predicted structures (https://alphafold.ebi.ac.uk/); RCSB PDB — 227k+ experimental structures (https://www.rcsb.org); UniProt/UniRef90 MSA databases (https://www.uniprot.org); CAMEO/CASP15 structure prediction benchmarks (https://www.cameo3d.org)."
+echo "This project needs NO download: the committed synthetic sample in"
+echo "  data/sample/attention_sample.txt"
+echo "is sufficient to build, run, and verify the demo offline."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Where the real-world data lives (for further study, NOT required here):"
+echo "  * AlphaFold Protein Structure DB (200M+ predicted structures):"
+echo "      https://alphafold.ebi.ac.uk/"
+echo "  * RCSB PDB (227k+ experimental structures):  https://www.rcsb.org"
+echo "  * UniProt / UniRef90 (MSA sequence databases): https://www.uniprot.org"
+echo "  * CAMEO / CASP15 prediction benchmarks:        https://www.cameo3d.org"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Note: a real AlphaFold/ESMFold run also needs multi-gigabyte trained model"
+echo "WEIGHTS and (for AF2) MSA databases -- see those projects' repos. This"
+echo "teaching version uses random synthetic Q/K/V instead (no weights)."
+echo
+echo "For a larger SYNTHETIC attention problem (more residues), run:"
+echo "    python scripts/make_synthetic.py --L 64"

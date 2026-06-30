@@ -1,33 +1,34 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real protein-complex sources (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 2.2 -- Protein-Protein Docking   (template skeleton)
+# Project 2.2 : Protein-Protein Docking. Downloads nothing automatically.
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints source URLs,
+# and NEVER bypasses credentials/registration. The committed synthetic sample is
+# enough to run the demo offline; this script points to the real benchmarks.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
 echo "[download_data] Project 2.2 -- Protein-Protein Docking"
-echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    Docking Benchmark 5.5 — 230 non-redundant protein complexes (https://zlab.umassmed.edu/benchmark/); SAbDab — structural antibody database (https://opig.stats.ox.ac.uk/webapps/newsabdab/sabdab/); PPI4DOCK benchmark (verify URL); PDB protein complexes (https://www.rcsb.org)."
+echo "Real rigid-body docking benchmarks (free for research; please cite):"
+echo "  Docking Benchmark 5.5 : https://zlab.umassmed.edu/benchmark/"
+echo "                          230 non-redundant complexes (bound + unbound)."
+echo "  SAbDab (antibodies)   : https://opig.stats.ox.ac.uk/webapps/newsabdab/sabdab/"
+echo "  PDB (any complex)     : https://www.rcsb.org   (split chains -> receptor/ligand)"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "To dock a real complex with this code:"
+echo "  1) download a PDB/mmCIF complex and split it into two chains."
+echo "  2) write each chain's atoms as 'x y z' lines (Angstrom)."
+echo "  3) prepend a header 'n_recv n_lig N spacing' (OMIT the known-answer"
+echo "     fields -- a real complex has no pre-known rigid translation)."
+echo "  See data/README.md for the exact file format."
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "No-download synthetic option (works offline):"
+echo "  python scripts/make_synthetic.py --N 48 --spacing 1.5"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

@@ -1,33 +1,33 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real protein-complex sources (Windows)
 # ---------------------------------------------------------------------------
-# Project 2.2 -- Protein-Protein Docking   (template skeleton)
+# Project 2.2 : Protein-Protein Docking. Downloads nothing automatically.
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints source URLs,
+# and NEVER bypasses credentials/registration. The committed synthetic sample is
+# enough to run the demo offline; this script points to the real benchmarks.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.2 -- Protein-Protein Docking"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Docking Benchmark 5.5 — 230 non-redundant protein complexes (https://zlab.umassmed.edu/benchmark/); SAbDab — structural antibody database (https://opig.stats.ox.ac.uk/webapps/newsabdab/sabdab/); PPI4DOCK benchmark (verify URL); PDB protein complexes (https://www.rcsb.org)."
+Write-Host "Real rigid-body docking benchmarks (free for research; please cite):"
+Write-Host "  Docking Benchmark 5.5 : https://zlab.umassmed.edu/benchmark/"
+Write-Host "                          230 non-redundant complexes (bound + unbound)."
+Write-Host "  SAbDab (antibodies)   : https://opig.stats.ox.ac.uk/webapps/newsabdab/sabdab/"
+Write-Host "  PDB (any complex)     : https://www.rcsb.org   (split chains -> receptor/ligand)"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "To dock a real complex with this code:"
+Write-Host "  1) download a PDB/mmCIF complex and split it into two chains."
+Write-Host "  2) write each chain's atoms as 'x y z' lines (Angstrom)."
+Write-Host "  3) prepend a header 'n_recv n_lig N spacing' (OMIT the known-answer"
+Write-Host "     fields -- a real complex has no pre-known rigid translation)."
+Write-Host "  See data/README.md for the exact file format."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "No-download synthetic option (works offline):"
+Write-Host "  python scripts/make_synthetic.py --N 48 --spacing 1.5"
+Write-Host ""
+Write-Host "Target data dir: $ProjectRoot\data"

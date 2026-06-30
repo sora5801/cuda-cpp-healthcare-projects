@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 2.2 -- Protein-Protein Docking   (template skeleton)
+# Project 2.2 -- Protein-Protein Docking  (FFT rigid-body docking via cuFFT)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/protein-protein-docking.sln (CLAUDE.md §5). Both
@@ -31,3 +31,7 @@ add_executable(protein-protein-docking
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(protein-protein-docking PRIVATE src)
+
+# This project links the cuFFT library (3D R2C/C2R transforms; see kernels.cu).
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(protein-protein-docking PRIVATE CUDA::cufft)

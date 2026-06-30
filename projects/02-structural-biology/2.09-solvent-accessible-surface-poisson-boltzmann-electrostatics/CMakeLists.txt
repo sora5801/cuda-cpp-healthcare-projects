@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 2.9 -- Solvent-Accessible Surface & Poisson-Boltzmann Electrostatics   (template skeleton)
+# Project 2.9 : Solvent-Accessible Surface & Poisson-Boltzmann Electrostatics
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/solvent-accessible-surface-poisson-boltzmann-electrostatics.sln (CLAUDE.md §5). Both

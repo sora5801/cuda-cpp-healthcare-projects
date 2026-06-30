@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 2.8 -- GPU Molecular Visualization & Ray Tracing   (template skeleton)
+# Project 2.8 -- GPU Molecular Visualization & Ray Tracing
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL, and
+# NEVER bypasses credentials/registration. This project renders the committed
+# SYNTHETIC sample by default; real structures (PDB/EMDB) are large, carry their
+# own per-entry terms, and are NOT required for the demo. So this script only
+# prints pointers and defers to scripts/make_synthetic.py for offline data.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,20 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.8 -- GPU Molecular Visualization & Ray Tracing"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    EMDB cryo-EM maps (https://www.ebi.ac.uk/emdb/); RCSB PDB molecular structures (https://www.rcsb.org); GPCRmd MD trajectories (https://gpcrmd.org); CHARMM-GUI example systems (https://charmm-gui.org)."
+Write-Host "The demo runs entirely on the committed SYNTHETIC sample:"
+Write-Host "    data/sample/molecule_sample.scene   (no download needed)"
+Write-Host "Regenerate or resize it with:"
+Write-Host "    python scripts/make_synthetic.py --turns 6 --width 320 --height 320"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "To render a REAL structure, fetch one from these sources (check each"
+Write-Host "entry's license) and convert it to the .scene format (see data/README.md):"
+Write-Host "  - RCSB PDB (atoms):        https://www.rcsb.org"
+Write-Host "  - EMDB (cryo-EM volumes):  https://www.ebi.ac.uk/emdb/"
+Write-Host "  - GPCRmd (MD trajectories):https://gpcrmd.org"
+Write-Host "  - CHARMM-GUI (systems):    https://charmm-gui.org"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Example (PDB, public): download a structure by id with curl, e.g."
+Write-Host "    curl -L -o data/1ubq.pdb https://files.rcsb.org/download/1UBQ.pdb"
+Write-Host "then write a small converter (Exercise in README.md) PDB -> .scene."
+Write-Host "This script downloads nothing automatically by design."

@@ -15,6 +15,10 @@ x64/
 *.tlog
 *.log
 
+# --- Rendered output image written by the demo at runtime (not source) -------
+render.pgm
+*.pgm
+
 # --- Downloaded / large data: keep ONLY the tiny committed sample + README ---
 /data/*
 !/data/README.md

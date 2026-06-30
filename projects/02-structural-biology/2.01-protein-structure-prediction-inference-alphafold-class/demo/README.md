@@ -1,13 +1,17 @@
 # Demo — 2.1 Protein Structure Prediction Inference (AlphaFold-class)
 
+> **Reduced-scope teaching version:** the demo runs **one scaled dot-product
+> self-attention head** over a tiny synthetic protein, the core building block of
+> the Evoformer/ESMFold transformer stacks (see [THEORY.md](../THEORY.md)).
+
 ## What this demonstrates
 
 Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
+2. **Run** it on the committed `data/sample/attention_sample.txt` input.
+3. **Verify** the GPU attention result against the CPU reference
+   (`reference_cpu.cpp`) and print a clear `PASS`/`FAIL`.
 4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
    not a benchmark claim.
 
@@ -22,12 +26,31 @@ The program splits its output deliberately:
 
 ```
 2.1 -- Protein Structure Prediction Inference (AlphaFold-class)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
+[reduced-scope: one scaled dot-product self-attention head]
+L = 6 residues, d = 32 feature channels
+per-residue attention (GPU result):
+  residue 0 -> attends most to residue 0 (w=0.487150)  |out|=2.552645
+  residue 1 -> attends most to residue 1 (w=0.502807)  |out|=2.895202
+  residue 2 -> attends most to residue 2 (w=0.495691)  |out|=3.312552
+  residue 3 -> attends most to residue 3 (w=0.490794)  |out|=3.695886
+  residue 4 -> attends most to residue 4 (w=0.504296)  |out|=4.108133
+  residue 5 -> attends most to residue 5 (w=0.499159)  |out|=4.493561
 RESULT: PASS (GPU matches CPU within tol=1.0e-05)
 ```
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+## How to read it
+
+- Each line reports, for one query residue, **which residue it attends to most**
+  and that softmax weight `w`, plus the **L2 norm** of its context-mixed output
+  vector. Because the synthetic data gives every residue a unique "identity"
+  channel, each residue attends most to **itself** — the embedded known answer
+  (see [`data/README.md`](../data/README.md)). The dominant weight is ~0.5 (not
+  ~1.0) because the small ramp features make the other residues weakly similar
+  too — exactly what softmax should do.
+- `RESULT: PASS` means the GPU kernel's full output matrix matched the CPU
+  reference within `1e-5` (the stderr line shows the actual `max_abs_err`,
+  ~`4.8e-7` here).
+
+> The numbers above were **captured from a real run** on the build machine
+> (RTX 2080, sm_75). They are deterministic, so your `stdout` should match
+> byte-for-byte; only the stderr timing differs.

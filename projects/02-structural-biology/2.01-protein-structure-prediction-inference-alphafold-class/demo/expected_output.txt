@@ -1,5 +1,11 @@
 2.1 -- Protein Structure Prediction Inference (AlphaFold-class)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
+[reduced-scope: one scaled dot-product self-attention head]
+L = 6 residues, d = 32 feature channels
+per-residue attention (GPU result):
+  residue 0 -> attends most to residue 0 (w=0.487150)  |out|=2.552645
+  residue 1 -> attends most to residue 1 (w=0.502807)  |out|=2.895202
+  residue 2 -> attends most to residue 2 (w=0.495691)  |out|=3.312552
+  residue 3 -> attends most to residue 3 (w=0.490794)  |out|=3.695886
+  residue 4 -> attends most to residue 4 (w=0.504296)  |out|=4.108133
+  residue 5 -> attends most to residue 5 (w=0.499159)  |out|=4.493561
 RESULT: PASS (GPU matches CPU within tol=1.0e-05)

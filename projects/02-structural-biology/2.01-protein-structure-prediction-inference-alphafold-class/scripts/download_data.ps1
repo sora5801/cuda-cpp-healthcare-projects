@@ -1,12 +1,15 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 2.1 -- Protein Structure Prediction Inference (AlphaFold-class)   (template skeleton)
+# Project 2.1 : Protein Structure Prediction Inference (AlphaFold-class)
+#               REDUCED-SCOPE TEACHING VERSION.
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. This teaching project runs on a tiny
+# SYNTHETIC sample (data/sample/attention_sample.txt); no real dataset is needed
+# to build or demo it. This script therefore only prints where the real data
+# lives so a curious learner can go further, and defers to make_synthetic.py for
+# a bigger offline problem.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +19,21 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 2.1 -- Protein Structure Prediction Inference (AlphaFold-class)"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    AlphaFold Database — 200M+ predicted structures (https://alphafold.ebi.ac.uk/); RCSB PDB — 227k+ experimental structures (https://www.rcsb.org); UniProt/UniRef90 MSA databases (https://www.uniprot.org); CAMEO/CASP15 structure prediction benchmarks (https://www.cameo3d.org)."
+Write-Host "This project needs NO download: the committed synthetic sample in"
+Write-Host "  data/sample/attention_sample.txt"
+Write-Host "is sufficient to build, run, and verify the demo offline."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Where the real-world data lives (for further study, NOT required here):"
+Write-Host "  * AlphaFold Protein Structure DB (200M+ predicted structures):"
+Write-Host "      https://alphafold.ebi.ac.uk/"
+Write-Host "  * RCSB PDB (227k+ experimental structures):  https://www.rcsb.org"
+Write-Host "  * UniProt / UniRef90 (MSA sequence databases): https://www.uniprot.org"
+Write-Host "  * CAMEO / CASP15 prediction benchmarks:        https://www.cameo3d.org"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Note: a real AlphaFold/ESMFold run also needs multi-gigabyte trained"
+Write-Host "model WEIGHTS and (for AF2) MSA databases -- see those projects' repos."
+Write-Host "This teaching version uses random synthetic Q/K/V instead (no weights)."
+Write-Host ""
+Write-Host "For a larger SYNTHETIC attention problem (more residues), run:"
+Write-Host "    python scripts/make_synthetic.py --L 64"

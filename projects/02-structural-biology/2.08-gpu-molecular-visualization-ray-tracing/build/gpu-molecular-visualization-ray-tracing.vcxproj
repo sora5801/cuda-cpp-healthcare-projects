@@ -112,6 +112,17 @@
       <!-- fast math is OFF by default; enable per-project only where the
            numerics tolerate it, and document it (CLAUDE.md section 5). -->
       <FastMath>false</FastMath>
+      <!-- FMAD=false : turn OFF fused multiply add CONTRACTION on the device, so
+           the GPU computes a*b+c as a separate multiply then add, like the host
+           C++ compiler does across our Vec3 helper statements. This removes one
+           source of CPU vs GPU divergence (~1e-6 per FMA) and so MINIMIZES the
+           pixel differences between the two renders. It does NOT make them bit
+           identical: the host and device cosf/sinf/sqrtf still differ in the
+           last bit, which flips a few silhouette edge pixels (see THEORY.md
+           "How we verify correctness"). The tiny precision cost is irrelevant
+           for a teaching renderer; the reproducibility gain is the teaching
+           point. -->
+      <FMAD>false</FMAD>
     </CudaCompile>
   </ItemDefinitionGroup>
 
@@ -142,6 +153,11 @@
       <!-- -lineinfo: source mapping for Nsight profiling without the -G slowdown. -->
       <GenerateLineInfo>true</GenerateLineInfo>
       <FastMath>false</FastMath>
+      <!-- FMAD=false : same reason as the Debug config above. Turn off FMA
+           contraction to minimize CPU vs GPU divergence in the render (it does
+           not make them bit identical; the math libraries still differ in the
+           last bit at silhouette edges). See THEORY.md "How we verify". -->
+      <FMAD>false</FMAD>
     </CudaCompile>
   </ItemDefinitionGroup>
 
@@ -153,6 +169,7 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <ClInclude Include="..\src\render_core.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

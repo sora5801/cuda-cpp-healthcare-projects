@@ -1,33 +1,30 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Realistic MARTINI-system pointers (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 2.5 -- Coarse-Grained / MARTINI Simulation   (template skeleton)
+# Project 2.5 : Coarse-Grained / MARTINI Simulation. Nothing to download.
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# CONTRACT (CLAUDE.md §8): the committed sample is synthetic, so there is no file
+# to fetch. This script only prints where REAL MARTINI systems come from and
+# never bypasses any registration. For a bigger run, use make_synthetic.py.
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
 echo "[download_data] Project 2.5 -- Coarse-Grained / MARTINI Simulation"
-echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    CHARMM-GUI MARTINI membrane builder outputs (https://charmm-gui.org); lipid parameter database (https://cgmartini.nl); membrane-active peptide aggregation benchmarks; EMDB viral capsid reference maps for validation."
+echo "There is no file to download: data/sample/cg_system.txt is synthetic"
+echo "and self-contained (scripts/make_synthetic.py)."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "For REAL MARTINI systems and production CG-MD:"
+echo "  CHARMM-GUI Martini Maker : https://charmm-gui.org   (membrane builder; registration)"
+echo "  MARTINI force field      : https://cgmartini.nl     (official bead types + eps matrix)"
+echo "  insane.py                : https://github.com/Tsjerk/Insane   (bilayer assembly)"
+echo "  TS2CG                    : https://github.com/weria-pezeshkian/TS2CG"
+echo "  GROMACS                  : https://github.com/gromacs/gromacs (GPU CG-MD engine)"
+echo "  EMDB (validation maps)   : https://www.ebi.ac.uk/emdb/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Bigger SYNTHETIC system (no download):"
+echo "  python scripts/make_synthetic.py --per-side 4 --steps 600"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"
