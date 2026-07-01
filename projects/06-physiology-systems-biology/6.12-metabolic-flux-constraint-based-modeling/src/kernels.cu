@@ -1,94 +1,83 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  GPU knockout screen (one LP per thread) + host wrapper
 // ---------------------------------------------------------------------------
-// Project 6.12 -- Metabolic Flux / Constraint-Based Modeling   (template skeleton)
+// Project 6.12 : Metabolic Flux / Constraint-Based Modeling
 //
 // WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
+//   Implements the device kernel (screen_kernel) that solves one FBA linear
+//   program per thread, and the host glue (screen_gpu) that allocates the result
+//   buffer, launches the kernel, times it, and copies the answers back. It is the
+//   GPU twin of screen_cpu() in reference_cpu.cpp; main.cu runs both and asserts
+//   they agree bit-for-bit.
 //
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
+//   The heavy lifting -- the bounded-variable simplex -- is NOT here: it lives in
+//   fba.h as __host__ __device__ code so both paths call the exact same solver.
+//   This file only supplies the CUDA thread-mapping and memory plumbing.
 //
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// READ THIS AFTER: kernels.cuh (the ensemble-of-LPs idea) and fba.h (the solver).
 // ===========================================================================
 #include "kernels.cuh"
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// Threads per block. 64 is a deliberate, modest choice here: each thread holds a
+// large private simplex tableau in local memory (see fba.h), so packing 256
+// threads/block would spill hard and hurt more than it helps. 64 keeps enough
+// warps resident to hide latency while leaving register/local headroom. This is a
+// case where the RIGHT block size is dictated by per-thread state, not by a
+// one-size-fits-all default -- a genuine occupancy lesson (THEORY.md GPU mapping).
+static constexpr int THREADS_PER_BLOCK = 64;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
+// screen_kernel: one thread solves one FBA LP.
+//   Launch config (set in screen_gpu):
+//     grid  = ceil(njobs / THREADS_PER_BLOCK) blocks
 //     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+//   Thread-to-job map: k = blockIdx.x * blockDim.x + threadIdx.x, where
+//     k in [0, nrxn)  -> solve with reaction k deleted (a knockout), and
+//     k == nrxn       -> solve the wild type (njobs = nrxn + 1 total jobs).
+//   Memory: `model` is a by-value copy in this thread's local memory; the solver
+//   allocates its tableau in local memory too. No shared memory, no atomics, no
+//   cross-thread communication -- pure independent parallelism over knockouts.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void screen_kernel(FbaModel model, FbaResult* __restrict__ out, int njobs) {
+    const int k = blockIdx.x * blockDim.x + threadIdx.x;   // this thread's job
+    if (k >= njobs) return;                                // guard the ragged last block
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+    // k in [0,nrxn) deletes reaction k; k == nrxn (== model.nrxn) => wild type.
+    // solve_knockout treats any out-of-range ko as "no deletion", so passing
+    // model.nrxn cleanly yields the wild-type solve.
+    const int ko = (k < model.nrxn) ? k : -1;
+    out[k] = solve_knockout(model, ko);   // the shared simplex from fba.h
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// screen_gpu: host wrapper. The canonical CUDA steps, minus input H2D (there is
+//   no big input array -- the model rides along in the kernel's by-value arg):
+//   (1) allocate the device result buffer  (2) launch  (3) copy results D2H
+//   (4) free. We time ONLY the launch with CUDA events so the figure is kernel
+//   cost, not allocation/copy cost (discussed in THEORY.md).
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void screen_gpu(const FbaModel& model, std::vector<FbaResult>& results, float* kernel_ms) {
+    const int njobs = model.nrxn + 1;                     // knockouts + wild type
+    results.assign(static_cast<std::size_t>(njobs), FbaResult{});
+    const std::size_t bytes = static_cast<std::size_t>(njobs) * sizeof(FbaResult);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // (1) Device buffer for the results (one FbaResult per job). d_ = device ptr.
+    FbaResult* d_out = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_out, bytes));                // can fail: out of memory
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
-
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // (2) Launch: enough blocks to cover all njobs jobs (ceiling division).
+    const int blocks = (njobs + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    screen_kernel<<<blocks, THREADS_PER_BLOCK>>>(model, d_out, njobs);
+    *kernel_ms = timer.stop_ms();                         // GPU-measured kernel time
+    CUDA_CHECK_LAST("screen_kernel");                     // catch launch + run errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // (3) Copy the (nrxn+1) results back to the host vector.
+    CUDA_CHECK(cudaMemcpy(results.data(), d_out, bytes, cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
+    // (4) Release the device buffer (no GPU garbage collector).
     CUDA_CHECK(cudaFree(d_out));
 }

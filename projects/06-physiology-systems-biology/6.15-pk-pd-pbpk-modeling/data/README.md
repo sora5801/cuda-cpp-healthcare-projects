@@ -1,37 +1,69 @@
 # Data — 6.15 PK/PD & PBPK Modeling
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/pkpd_params.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
+| Origin | **Synthetic** population configuration (`scripts/make_synthetic.py`) |
 | License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Size | < 1 KB (one line) |
+| Setup | 4096 virtual patients, coupled 1-compartment oral PK + indirect-response PD, 48 h |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+The "data" is the **population setup**, not a table of measurements. Each virtual
+patient's individual PK/PD parameters are sampled deterministically from a seeded
+RNG inside the program (`src/pkpd.h`), so the whole study is reproducible and the
+CPU and GPU produce the identical population.
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+### File format (one whitespace-separated line)
 
-## Full dataset
+```
+dose  ka  CL  Vc  kin  kout  Imax  IC50  cv  dt  steps  n_patients  seed
+```
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+| Field | Meaning (units) |
+|---|---|
+| `dose` | oral dose (mg), placed into the gut depot at t=0 |
+| `ka` | median first-order absorption rate (1/h) |
+| `CL` | median plasma clearance (L/h) |
+| `Vc` | median central (plasma) volume of distribution (L) |
+| `kin` | zero-order biomarker production rate (response-units/h) |
+| `kout` | first-order biomarker loss rate (1/h); baseline `R0 = kin/kout` |
+| `Imax` | maximum fractional inhibition of biomarker loss, in `[0,1]` |
+| `IC50` | plasma concentration giving half-maximal inhibition (mg/L) |
+| `cv` | log-normal between-subject variability applied to sampled PK/PD params |
+| `dt`, `steps` | RK4 step (h) and step count (run = `steps·dt` h) |
+| `n_patients` | virtual population size (one GPU thread each) |
+| `seed` | base RNG seed |
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+Default: `100 1 5 30 10 0.2 0.9 2 0.25 0.05 960 4096 99`. Two sanity checks a
+learner can verify against the program output:
 
-Catalog dataset notes (verbatim):
+- **PK:** with (near-)complete absorption, mean **AUC ≈ dose/CL = 20** mg·h/L.
+- **PD:** biomarker baseline **R0 = kin/kout = 50** units; the drug inhibits its
+  loss, so R rises above 50 and `effect = (Rmax − R0)/R0 > 0`.
 
-> PhysioNet MIMIC clinical PK data (https://physionet.org); FDA Adverse Event Reporting System (FAERS) (https://www.fda.gov/drugs/fda-adverse-event-reporting-system-faers); PBPK model library — OSP Suite (https://github.com/Open-Systems-Pharmacology/OSP-PBPK-Model-Library); DDMoRe model repository (https://ddmore.eu/models-tools).
+## "Full dataset" / realistic PK/PD & PBPK
 
-## Provenance & field meanings
+There is no file to download — the population is generated. For **real** clinical
+PK data and **validated** models (some require registration; the download scripts
+link and instruct, they never scrape):
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+- **PhysioNet / MIMIC** (<https://physionet.org>) — clinical time series;
+  **credentialed** access (register; do not bypass).
+- **FDA FAERS** (<https://www.fda.gov/drugs/fda-adverse-event-reporting-system-faers>)
+  — public adverse-event reports.
+- **OSP PBPK Model Library**
+  (<https://github.com/Open-Systems-Pharmacology/OSP-PBPK-Model-Library>) —
+  whole-body PBPK models (~15 physiological compartments).
+- **DDMoRe model repository** (<https://ddmore.eu/models-tools>) — curated
+  pharmacometric (PK/PD/NLME) models.
+
+Bigger synthetic population: `python scripts/make_synthetic.py --patients 100000`.
+
+## Provenance & honesty
+
+The configuration is **synthetic**, and the coupled 1-compartment-PK +
+indirect-response-PD model is a **teaching reduction** of full PBPK/QSP; the
+parameters are illustrative, **not fitted to any drug**. Outputs are a software
+demonstration, **not** a pharmacokinetic prediction, and **not for any
+clinical/dosing use** (CLAUDE.md §8).

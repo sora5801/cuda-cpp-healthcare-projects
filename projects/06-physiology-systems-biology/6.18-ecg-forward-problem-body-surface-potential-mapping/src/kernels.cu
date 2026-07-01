@@ -1,94 +1,198 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  The GPU side: build the lead field, then cuBLAS DGEMM it
 // ---------------------------------------------------------------------------
-// Project 6.18 -- ECG Forward Problem & Body-Surface Potential Mapping   (template skeleton)
+// Project 6.18 : ECG Forward Problem & Body-Surface Potential Mapping
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
+// WHAT THIS FILE DOES (the GPU twin of reference_cpu.cpp)
+//   * gpu_build_lead_field : a kernel fills the transfer matrix A [L x S], one
+//     GPU thread per (electrode, source) entry, each calling the SHARED
+//     ecg::dipole_potential (ecg_core.h) -- so A_gpu matches A_cpu bit-for-bit.
+//   * gpu_apply_forward : cuBLAS DGEMM computes Phi [L x T] = A [L x S] * X [S x T]
+//     in ONE dense multiply (a batched "DGEMV per time step" = a single DGEMM).
 //
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
+//   Every per-entry formula is the SHARED one in ecg_core.h, so the GPU and CPU
+//   produce (near) identical numbers -- the whole point of main.cu's verify.
 //
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// LIBRARY, NOT BLACK BOX (CLAUDE.md §6.1.6):
+//   cuBLAS DGEMM computes C = alpha*op(A)*op(B) + beta*C for double matrices. We
+//   use it for A*X. cuBLAS is COLUMN-MAJOR (Fortran order); our matrices are
+//   ROW-MAJOR. The standard no-copy trick: a row-major [m x n] buffer is, byte
+//   for byte, the column-major [n x m] buffer (its transpose). We exploit that
+//   and explain the exact argument choice at the call site -- no transpose copies.
+//
+// READ THIS AFTER: kernels.cuh, ecg_core.h, util/cuda_check.cuh, util/timer.cuh.
+// Compare each routine with its serial twin in reference_cpu.cpp.
 // ===========================================================================
 #include "kernels.cuh"
-#include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "ecg_core.h"
+#include "util/cuda_check.cuh"
+#include "util/timer.cuh"
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+#include <cublas_v2.h>     // cublasDgemm, handle/stream management
+#include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
 
+// cuBLAS has its own status enum; guard + explain every call (no black box).
+// A failed BLAS call means Phi is garbage, so we abort loudly rather than
+// silently return wrong science.
+#define CUBLAS_CHECK(call)                                                      \
+    do {                                                                        \
+        cublasStatus_t st__ = (call);                                          \
+        if (st__ != CUBLAS_STATUS_SUCCESS) {                                   \
+            std::fprintf(stderr, "[CUBLAS_CHECK] %s:%d -> status %d\n",        \
+                         __FILE__, __LINE__, static_cast<int>(st__));          \
+            std::exit(EXIT_FAILURE);                                           \
+        }                                                                       \
+    } while (0)
+
+// ===========================================================================
+// KERNEL -- build_lead_field_kernel: one thread per lead-field entry A[e][s]
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
-// ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+// The build is "independent jobs": every entry of A is a self-contained
+// evaluation of the dipole Green's function, reading only electrode e's position
+// and source s's (position, direction). So we map a 2-D grid over the L x S
+// output and let thread (col=s, row=e) own A[e][s].
+//
+//   grid/block : block is 16x16 = 256 threads (a solid occupancy default on
+//                sm_75..sm_89). The grid covers ceil(S/16) x ceil(L/16) blocks.
+//   thread map : s = blockIdx.x*blockDim.x + threadIdx.x  (source, matrix column)
+//                e = blockIdx.y*blockDim.y + threadIdx.y  (electrode, matrix row)
+//                -> writes A[e*S + s]. Ragged edges are guarded.
+//   memory     : reads electrode[e] and src_pos[s]/src_dir[s] from global memory
+//                (each a small Vec3); writes one double. Pure element-wise, so
+//                the kernel is memory/compute-light -- this build is cheap and
+//                the DGEMM that follows is the real work on large inputs.
+// ===========================================================================
+__global__ void build_lead_field_kernel(const ecg::Vec3* __restrict__ electrode, // [L]
+                                         const ecg::Vec3* __restrict__ src_pos,    // [S]
+                                         const ecg::Vec3* __restrict__ src_dir,    // [S]
+                                         int L, int S,
+                                         double* __restrict__ A) {                 // [L*S]
+    int s = blockIdx.x * blockDim.x + threadIdx.x;   // source index  (column)
+    int e = blockIdx.y * blockDim.y + threadIdx.y;   // electrode idx (row)
+    if (e >= L || s >= S) return;                    // guard ragged blocks
+    // The ONE TRUE formula, shared with the CPU reference (ecg_core.h).
+    A[static_cast<std::size_t>(e) * S + s] =
+        ecg::dipole_potential(electrode[e], src_pos[s], src_dir[s]);
 }
 
-// ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
-// ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+// ===========================================================================
+// HOST WRAPPER 1 -- gpu_build_lead_field
+// ===========================================================================
+void gpu_build_lead_field(const std::vector<ecg::Vec3>& electrode,
+                          const std::vector<ecg::Vec3>& src_pos,
+                          const std::vector<ecg::Vec3>& src_dir,
+                          int L, int S,
+                          std::vector<double>& A,
+                          float* kernel_ms) {
+    A.assign(static_cast<std::size_t>(L) * S, 0.0);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // ---- device buffers ---------------------------------------------------
+    ecg::Vec3* d_elec = nullptr;   // [L] electrode positions
+    ecg::Vec3* d_spos = nullptr;   // [S] source positions
+    ecg::Vec3* d_sdir = nullptr;   // [S] source directions
+    double*    d_A    = nullptr;   // [L*S] lead field (output)
+    const std::size_t ls = static_cast<std::size_t>(L) * S;
+    CUDA_CHECK(cudaMalloc(&d_elec, static_cast<std::size_t>(L) * sizeof(ecg::Vec3)));
+    CUDA_CHECK(cudaMalloc(&d_spos, static_cast<std::size_t>(S) * sizeof(ecg::Vec3)));
+    CUDA_CHECK(cudaMalloc(&d_sdir, static_cast<std::size_t>(S) * sizeof(ecg::Vec3)));
+    CUDA_CHECK(cudaMalloc(&d_A,    ls * sizeof(double)));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // Copy geometry H2D. Vec3 is plain-old-data (three doubles), so a flat memcpy
+    // of the vector's backing array is exactly the device layout we index above.
+    CUDA_CHECK(cudaMemcpy(d_elec, electrode.data(),
+                          static_cast<std::size_t>(L) * sizeof(ecg::Vec3),
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_spos, src_pos.data(),
+                          static_cast<std::size_t>(S) * sizeof(ecg::Vec3),
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_sdir, src_dir.data(),
+                          static_cast<std::size_t>(S) * sizeof(ecg::Vec3),
+                          cudaMemcpyHostToDevice));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    GpuTimer timer;
-    timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    // ---- launch the build kernel (timed) ----------------------------------
+    {
+        dim3 block(16, 16);                            // 256 threads/block
+        dim3 grid((S + block.x - 1) / block.x,         // cover S columns
+                  (L + block.y - 1) / block.y);        // cover L rows
+        GpuTimer t;
+        t.start();
+        build_lead_field_kernel<<<grid, block>>>(d_elec, d_spos, d_sdir, L, S, d_A);
+        *kernel_ms = t.stop_ms();
+        CUDA_CHECK_LAST("build_lead_field_kernel");
+    }
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(A.data(), d_A, ls * sizeof(double),
+                          cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    cudaFree(d_elec); cudaFree(d_spos); cudaFree(d_sdir); cudaFree(d_A);
+}
+
+// ===========================================================================
+// HOST WRAPPER 2 -- gpu_apply_forward  (cuBLAS DGEMM: Phi = A * X)
+// ===========================================================================
+void gpu_apply_forward(const std::vector<double>& A,
+                       const std::vector<double>& X,
+                       int L, int S, int T,
+                       std::vector<double>& Phi,
+                       float* gemm_ms) {
+    Phi.assign(static_cast<std::size_t>(L) * T, 0.0);
+
+    // ---- device buffers ---------------------------------------------------
+    double* d_A   = nullptr;   // [L*S] row-major lead field
+    double* d_X   = nullptr;   // [S*T] row-major source strengths
+    double* d_Phi = nullptr;   // [L*T] row-major body-surface potentials (out)
+    const std::size_t ls = static_cast<std::size_t>(L) * S;
+    const std::size_t st = static_cast<std::size_t>(S) * T;
+    const std::size_t lt = static_cast<std::size_t>(L) * T;
+    CUDA_CHECK(cudaMalloc(&d_A,   ls * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_X,   st * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_Phi, lt * sizeof(double)));
+    CUDA_CHECK(cudaMemcpy(d_A, A.data(), ls * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_X, X.data(), st * sizeof(double), cudaMemcpyHostToDevice));
+
+    // ---- Phi = A * X via cuBLAS DGEMM (timed), EXPLAINED (no black box) ----
+    //   Math we want (row-major view): Phi[L x T] = A[L x S] * X[S x T].
+    //   cuBLAS is COLUMN-MAJOR. A row-major [m x n] buffer IS a column-major
+    //   [n x m] buffer (the transpose in memory). So, as cuBLAS sees them:
+    //       our A  (row-major L x S)  ==  column-major S x L  =: Ac
+    //       our X  (row-major S x T)  ==  column-major T x S  =: Xc
+    //       our Phi(row-major L x T)  ==  column-major T x L  =: Phic
+    //   Taking the transpose of the target identity: Phi^T = X^T * A^T, i.e. in
+    //   column-major storage  Phic[T x L] = Xc[T x S] * Ac[S x L]. That is a
+    //   plain DGEMM with op(A)=N, op(B)=N:
+    //       m = T, n = L, k = S,
+    //       first  matrix = Xc, lda = T   (leading dim of the T-row col-major Xc)
+    //       second matrix = Ac, ldb = S   (leading dim of the S-row col-major Ac)
+    //       output        = Phic, ldc = T.
+    //   Because Phic is exactly our row-major Phi in memory, it copies straight
+    //   back with no rearrangement. alpha = 1 (no scaling), beta = 0 (overwrite).
+    //   Hand-rolling this would mean a tiled, register-blocked shared-memory GEMM
+    //   with conflict-free loads; cuBLAS already does all of that, tuned per arch.
+    {
+        cublasHandle_t handle = nullptr;
+        CUBLAS_CHECK(cublasCreate(&handle));
+        const double alpha = 1.0;
+        const double beta  = 0.0;
+        GpuTimer t;
+        t.start();
+        CUBLAS_CHECK(cublasDgemm(handle,
+                                 CUBLAS_OP_N, CUBLAS_OP_N,   // Xc * Ac
+                                 T, L, S,                    // m, n, k
+                                 &alpha,
+                                 d_X, T,                     // A_arg = Xc, lda = T
+                                 d_A, S,                     // B_arg = Ac, ldb = S
+                                 &beta,
+                                 d_Phi, T));                 // C = Phic, ldc = T
+        *gemm_ms = t.stop_ms();
+        CUDA_CHECK(cudaDeviceSynchronize());                // make timing honest
+        cublasDestroy(handle);
+    }
+
+    CUDA_CHECK(cudaMemcpy(Phi.data(), d_Phi, lt * sizeof(double),
+                          cudaMemcpyDeviceToHost));
+
+    cudaFree(d_A); cudaFree(d_X); cudaFree(d_Phi);
 }

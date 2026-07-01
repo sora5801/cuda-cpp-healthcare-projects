@@ -1,94 +1,116 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Monodomain GPU kernels + host ping-pong time loop
 // ---------------------------------------------------------------------------
-// Project 6.1 -- Cardiac Electrophysiology Simulation   (template skeleton)
+// Project 6.1 : Cardiac Electrophysiology Simulation
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of monodomain_cpu(): identical per-cell physics (shared cardiac_cell.h),
+// one thread per grid cell, host-driven operator-split time loop. Two kernels run
+// per step -- react_kernel (pointwise ODE) then diffuse_kernel (5-point stencil,
+// ping-pong buffers). main.cu runs both CPU and GPU and compares the voltage
+// fields. See ../THEORY.md "GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
+#include "cardiac_cell.h"        // react_step, diffuse_cell (host+device physics)
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// 16x16 = 256 threads/block over the 2-D tissue grid. 256 is a multiple of the
+// 32-lane warp and gives the scheduler enough warps to hide global-memory
+// latency; a 2-D block matches the 2-D grid so neighbour reads stay local.
+static constexpr int TILE = 16;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// react_kernel: thread (x,y) owns cell i=(x,y). It advances ONLY that cell's
+//   (V,w) by one reaction sub-step. Cells are independent (each touches only its
+//   own V[i], w[i]) -> no shared memory, no atomics, no races. The math is the
+//   shared react_step() so it matches the CPU exactly.
+//     grid  : ceil(nx/16) x ceil(ny/16) blocks
+//     block : 16 x 16 threads
+//     thread (blockIdx,threadIdx) -> cell (x,y) = block*TILE + thread
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+__global__ void react_kernel(int nx, int ny, MonodomainParams p,
+                             double* __restrict__ V, double* __restrict__ w) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= nx || y >= ny) return;                 // guard ragged edge tiles
+    const std::size_t i = cell_idx(x, y, nx);
+    react_step(&V[i], &w[i], p);                    // in-place local ODE update
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// diffuse_kernel: thread (x,y) computes the diffusion update for its cell,
+//   reading the 4 neighbours from the READ-ONLY V_in buffer and writing the
+//   result to V_out. Because reads and writes use SEPARATE buffers, a thread
+//   never observes a neighbour half-updated -> the stencil is deterministic and
+//   race-free (this is why we ping-pong). The math is the shared diffuse_cell().
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+__global__ void diffuse_kernel(int nx, int ny, MonodomainParams p,
+                               const double* __restrict__ V_in,
+                               double* __restrict__ V_out) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= nx || y >= ny) return;                 // guard ragged edge tiles
+    V_out[cell_idx(x, y, nx)] = diffuse_cell(x, y, V_in, p);
+}
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+// ---------------------------------------------------------------------------
+// monodomain_gpu: host wrapper. Allocates device buffers, uploads the shared
+//   initial state, runs the operator-split loop (react then diffuse each step,
+//   ping-ponging the two V buffers), and brings the final fields back. We time
+//   the WHOLE loop (all kernel launches) with CUDA events -- a teaching artifact,
+//   not a benchmark claim (CLAUDE.md section 12).
+// ---------------------------------------------------------------------------
+void monodomain_gpu(const MonodomainParams& p,
+                    std::vector<double>& V_final, std::vector<double>& w_final,
+                    float* kernel_ms) {
+    const std::size_t cells = static_cast<std::size_t>(p.nx) * p.ny;
+    const std::size_t bytes = cells * sizeof(double);
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // Build the SAME initial condition the CPU uses, on the host, then upload.
+    std::vector<double> V0, w0;
+    init_state(p, V0, w0);
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // Device buffers. d_ prefix = DEVICE pointer (dereferencing on host crashes).
+    //   d_Va / d_Vb : the two voltage buffers we ping-pong for diffusion.
+    //   d_w         : recovery variable (only the reaction kernel touches it).
+    double *d_Va = nullptr, *d_Vb = nullptr, *d_w = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_Va, bytes));           // can fail: out of device mem
+    CUDA_CHECK(cudaMalloc(&d_Vb, bytes));
+    CUDA_CHECK(cudaMalloc(&d_w,  bytes));
+    CUDA_CHECK(cudaMemcpy(d_Va, V0.data(), bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_w,  w0.data(), bytes, cudaMemcpyHostToDevice));
+
+    // 2-D launch grid: one thread per cell, blocks tile the grid; ceil-division
+    // covers a grid whose size is not a multiple of TILE (edge tiles are ragged).
+    dim3 block(TILE, TILE);
+    dim3 grid((p.nx + TILE - 1) / TILE, (p.ny + TILE - 1) / TILE);
+
+    // Operator-split time loop. `src` holds the current voltage field; the
+    // reaction kernel updates it in place, then the diffusion kernel reads src
+    // and writes dst, and we swap. We time the entire loop with CUDA events.
+    double* src = d_Va;
+    double* dst = d_Vb;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    for (int s = 0; s < p.steps; ++s) {
+        // (A) REACTION half-step: pointwise ODE, in place on `src`.
+        react_kernel<<<grid, block>>>(p.nx, p.ny, p, src, d_w);
+        // (B) DIFFUSION half-step: stencil, src -> dst, then swap (ping-pong).
+        diffuse_kernel<<<grid, block>>>(p.nx, p.ny, p, src, dst);
+        double* tmp = src; src = dst; dst = tmp;
+    }
+    *kernel_ms = timer.stop_ms();                   // GPU-measured loop time
+    CUDA_CHECK_LAST("monodomain kernels");          // catch launch/exec errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // `src` holds the latest voltage field (after the final swap). Copy both
+    // fields back so main.cu can verify V (and, for interest, w) against the CPU.
+    V_final.assign(cells, 0.0);
+    w_final.assign(cells, 0.0);
+    CUDA_CHECK(cudaMemcpy(V_final.data(), src, bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(w_final.data(), d_w, bytes, cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    // Always free device memory (there is no GPU garbage collector).
+    CUDA_CHECK(cudaFree(d_Va));
+    CUDA_CHECK(cudaFree(d_Vb));
+    CUDA_CHECK(cudaFree(d_w));
 }

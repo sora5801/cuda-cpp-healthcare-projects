@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 6.24 -- Reaction-Diffusion Morphogenesis (Turing Patterns)   (template skeleton)
+# Project 6.24 : Reaction-Diffusion Morphogenesis (Turing Patterns)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/reaction-diffusion-morphogenesis-turing-patterns.sln (CLAUDE.md §5). Both

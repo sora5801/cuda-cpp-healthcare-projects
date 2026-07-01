@@ -1,31 +1,39 @@
 // ===========================================================================
-// src/reference_cpu.h  --  Prototype of the CPU reference computation
+// src/reference_cpu.h  --  Monodomain parameters + serial CPU reference solver
 // ---------------------------------------------------------------------------
-// Project 6.1 -- Cardiac Electrophysiology Simulation   (template skeleton)
+// Project 6.1 : Cardiac Electrophysiology Simulation
 //
-// WHY A SEPARATE HEADER
-//   The CPU reference (reference_cpu.cpp) is compiled by the plain C++ compiler
-//   and must NOT see any CUDA/__global__ syntax, so its prototype cannot live in
-//   kernels.cuh. Both main.cu and reference_cpu.cpp include THIS pure-C++ header
-//   so they agree on the function signature.
+// Pure C++ (no CUDA). kernels.cu reuses MonodomainParams. The actual per-cell
+// physics (FitzHugh-Nagumo reaction + diffusion stencil) lives in the shared
+// cardiac_cell.h so CPU and GPU compute byte-for-byte identical results.
 //
-// THE CONTRACT (this template's placeholder computation):
-//   SAXPY -- "Single-precision A*X Plus Y":  out[i] = a * x[i] + y[i].
-//   This is the canonical first GPU kernel; here it stands in as a buildable
-//   placeholder. TODO(impl): replace saxpy_cpu with this project's real
-//   reference computation, and update the prototype + callers accordingly.
-//
-//   The CPU reference exists for two reasons (CLAUDE.md section 5):
-//     (a) it is the readable baseline that makes the GPU speed-up legible, and
-//     (b) the demo runs BOTH and asserts they agree within tolerance.
+// READ THIS AFTER: cardiac_cell.h (the physics). READ BEFORE: reference_cpu.cpp.
 // ===========================================================================
 #pragma once
 
+#include <string>
 #include <vector>
 
-// Compute out = a*x + y on the CPU, element by element.
-//   x, y : input vectors of equal length n
-//   a    : the scalar multiplier
-//   out  : resized to n and filled with the result (output parameter)
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out);
+#include "cardiac_cell.h"   // MonodomainParams + shared host/device update
+
+// Load a MonodomainParams from the whitespace-separated sample format
+// (documented in data/README.md), in this exact field order:
+//
+//   nx ny steps dt dx D a eps b  stim_x0 stim_y0 stim_w stim_h stim_v
+//
+// Throws std::runtime_error if the file is missing or malformed, so the demo
+// fails loudly instead of silently simulating garbage.
+MonodomainParams load_monodomain(const std::string& path);
+
+// Initialise the tissue: V = 0 (rest) and w = 0 everywhere, then clamp the S1
+// stimulus patch to stim_v. Fills V and w (each size nx*ny). Shared by BOTH the
+// CPU and GPU paths so they start from an identical state.
+void init_state(const MonodomainParams& p,
+                std::vector<double>& V, std::vector<double>& w);
+
+// CPU reference: run `steps` operator-split timesteps (reaction half-step, then
+// diffusion half-step), starting from init_state(), and return the FINAL
+// voltage field V and recovery field w (each size nx*ny). This is the trusted
+// baseline the GPU result is checked against.
+void monodomain_cpu(const MonodomainParams& p,
+                    std::vector<double>& V_final, std::vector<double>& w_final);

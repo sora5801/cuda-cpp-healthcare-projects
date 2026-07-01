@@ -1,122 +1,128 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load model, run CPU + GPU knockout screen, verify
 // ---------------------------------------------------------------------------
-// Project 6.12 -- Metabolic Flux / Constraint-Based Modeling   (template skeleton)
+// Project 6.12 : Metabolic Flux / Constraint-Based Modeling
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load the metabolic model (data/sample/*.txt, or a required file arg).
+//   2. CPU reference: solve the wild-type FBA LP + every single-reaction
+//      knockout, serially (reference_cpu.cpp)              -> trusted answer.
+//   3. GPU: the same screen, one LP per thread (kernels.cu) -> the thing taught.
+//   4. VERIFY: assert GPU objectives match CPU within tolerance.
+//   5. REPORT: deterministic result (wild-type growth, per-knockout growth,
+//      essential-gene count) to STDOUT; timing/verify detail to STDERR.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic (integer-valued fluxes on this model,
+//   printed at fixed precision) so demo/run_demo can diff it against
+//   demo/expected_output.txt. Timings (which vary run to run) go to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// CODE TOUR: read this first, then fba.h (the LP + solver), reference_cpu.cpp
+// (the CPU screen), kernels.cuh -> kernels.cu (the GPU screen). See ../THEORY.md
+// for the science, math, and GPU-mapping "why".
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // screen_gpu, FbaModel, FbaResult
+#include "reference_cpu.h"    // load_model, screen_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
+// Identity tokens (kept in sync with demo/expected_output.txt).
 static const char* PROJECT_ID   = "6.12";
 static const char* PROJECT_NAME = "Metabolic Flux / Constraint-Based Modeling";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Verification tolerance on the predicted growth (objective) of each solve.
+//   Both the CPU and GPU call the identical double-precision simplex in fba.h, so
+//   in principle the objectives are bit-identical. We nonetheless allow a tiny
+//   1e-9 slack: the GPU may fuse a multiply-add (FMA) that the host compiler
+//   emits as two rounded operations, so a reduced cost could differ in its last
+//   bit. On this well-conditioned integer-stoichiometry model that never changes
+//   a pivot decision, and the observed difference is 0 -- but we document the
+//   honest floor rather than pretend the two float pipelines are identical
+//   (PATTERNS.md section 4). If the model were ill-conditioned, an epsilon-close
+//   reduced cost COULD flip a pivot and produce a genuinely different (still
+//   optimal, but different) vertex; THEORY.md discusses this degeneracy caveat.
+static constexpr double TOLERANCE = 1.0e-9;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// A knockout counts as LETHAL/essential if the mutant's growth is below this
+// fraction of the wild-type growth. 1% is the conventional COBRA cutoff.
+static constexpr double LETHAL_FRACTION = 0.01;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load the model -------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/toy_core_model.txt";
+    FbaModel model;
+    std::vector<std::string> names;
+    try {
+        model = load_model(path, names);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const int nrxn  = model.nrxn;
+    const int njobs = nrxn + 1;                // knockouts + wild type
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference screen (timed) -----------------------------------
+    std::vector<FbaResult> res_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    screen_cpu(model, res_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU screen (kernel timed) --------------------------------------
+    std::vector<FbaResult> res_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    screen_gpu(model, res_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify: every objective agrees CPU vs GPU ----------------------
+    double worst = 0.0;
+    for (int i = 0; i < njobs; ++i)
+        worst = std::fmax(worst, std::fabs(res_cpu[i].objective - res_gpu[i].objective));
+    const bool pass = worst <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // Wild-type growth is the LAST job (index nrxn) in both arrays.
+    const double wt = res_gpu[nrxn].objective;
+
+    // ---- 5a. Deterministic report -> STDOUT --------------------------------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("model: %d metabolites x %d reactions   (SYNTHETIC toy network)\n",
+                model.nmet, nrxn);
+    std::printf("wild-type max biomass flux = %.4f\n", wt);
+    std::printf("single-reaction knockout screen (growth as %% of wild type):\n");
+
+    // Per-knockout line: name, mutant growth, %WT, and a class label. We classify
+    // ESSENTIAL (growth ~ 0), REDUCED (some loss), or NEUTRAL (no change). This is
+    // the biological read-out: essential reactions are candidate drug targets.
+    int n_essential = 0, n_reduced = 0, n_neutral = 0;
+    for (int k = 0; k < nrxn; ++k) {
+        const double g   = res_gpu[k].objective;
+        const double pct = (wt > 0.0) ? 100.0 * g / wt : 0.0;
+        const char*  cls;
+        if (g <= LETHAL_FRACTION * wt)        { cls = "ESSENTIAL"; ++n_essential; }
+        else if (g < wt - 1e-6)               { cls = "reduced";   ++n_reduced;   }
+        else                                  { cls = "neutral";   ++n_neutral;   }
+        std::printf("  KO %-12s biomass=%.4f  (%6.2f%% WT)  %s\n",
+                    names[static_cast<std::size_t>(k)].c_str(), g, pct, cls);
+    }
+    std::printf("summary: %d essential, %d growth-reducing, %d neutral reactions\n",
+                n_essential, n_reduced, n_neutral);
+    std::printf("RESULT: %s (GPU screen matches CPU within tol=1.0e-09)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 5b. Varying detail -> STDERR --------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d LPs solved: %d knockouts + wild type)\n",
+                 path.c_str(), njobs, nrxn);
+    std::fprintf(stderr, "[timing] CPU screen: %.3f ms   GPU screen: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- with a handful of tiny LPs the GPU is "
+                         "launch-bound; the win appears at 10^3-10^5 knockouts/conditions.\n");
+    std::fprintf(stderr, "[verify] worst |CPU-GPU| objective diff = %.3e  (tolerance %.1e)\n",
+                 worst, TOLERANCE);
+    // Report the wild-type solver status/iterations as a numerics diagnostic.
+    std::fprintf(stderr, "[solver] wild-type simplex: status=%d iters=%d\n",
+                 res_gpu[nrxn].status, res_gpu[nrxn].iters);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

@@ -1,12 +1,14 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Pointers to REAL metabolic models (Windows)
 # ---------------------------------------------------------------------------
-# Project 6.12 -- Metabolic Flux / Constraint-Based Modeling   (template skeleton)
+# Project 6.12 : Metabolic Flux / Constraint-Based Modeling
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL, and
+# NEVER bypasses credentials. The committed sample is a tiny SYNTHETIC toy model
+# (data/sample/toy_core_model.txt) that runs the demo offline; the genome-scale
+# models below are public but big and in SBML/JSON, which our simple text loader
+# does not parse -- so this script only prints where to get them and how a real
+# workflow (COBRApy) would consume them.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +18,21 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 6.12 -- Metabolic Flux / Constraint-Based Modeling"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Recon3D — human genome-scale metabolic model (https://github.com/SBRG/Recon3D); HMDB — Human Metabolome Database (https://hmdb.ca); Reactome (https://reactome.org); BiGG Models Database — curated GEMs (http://bigg.ucsd.edu)."
+Write-Host "This project ships a SYNTHETIC toy model (data/sample/toy_core_model.txt)."
+Write-Host "It runs the demo with zero downloads. To regenerate or resize it:"
+Write-Host "    python scripts/make_synthetic.py"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real genome-scale metabolic models (public, but SBML/JSON -- not our"
+Write-Host "text format; use COBRApy to read them):"
+Write-Host "  * BiGG Models (curated GEMs):     http://bigg.ucsd.edu/models"
+Write-Host "      e.g. E. coli core (95 rxns):  http://bigg.ucsd.edu/models/e_coli_core"
+Write-Host "  * Recon3D (human, ~10600 rxns):   https://github.com/SBRG/Recon3D"
+Write-Host "  * Virtual Metabolic Human portal: https://vmh.life"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Typical real workflow (outside this teaching repo):"
+Write-Host "    pip install cobra"
+Write-Host "    python -c \""import cobra; m=cobra.io.load_model('e_coli_core'); print(m.optimize())\"""
+Write-Host ""
+Write-Host "See THEORY.md 'Where this sits in the real world' for how production FBA"
+Write-Host "differs (sparse interior-point / revised simplex over 1000s of reactions)."

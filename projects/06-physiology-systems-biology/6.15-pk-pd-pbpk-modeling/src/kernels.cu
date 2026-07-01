@@ -1,94 +1,70 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  PK/PD population kernel (one thread per patient)
 // ---------------------------------------------------------------------------
-// Project 6.15 -- PK/PD & PBPK Modeling   (template skeleton)
+// Project 6.15 : PK/PD & PBPK Modeling
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of integrate_cpu(): each thread runs the SAME coupled PK/PD RK4 loop
+// (pkpd.h) for one virtual patient and writes one PatientResult. main.cu compares
+// the per-patient results against the CPU reference. See ../THEORY.md §4 for the
+// GPU mapping and why this ensemble is the GPU's sweet spot (compute-bound, no
+// inter-thread traffic).
 // ===========================================================================
 #include "kernels.cuh"
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// Threads per block. 128 is a solid default for a register-heavy per-thread ODE
+// integrator on sm_75..sm_89: a multiple of the 32-lane warp, enough warps to
+// hide latency, and small enough that the per-thread register footprint of the
+// RK4 loop does not throttle occupancy. (Tune per GPU; see THEORY §4.)
+static constexpr int THREADS_PER_BLOCK = 128;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// pkpd_kernel: thread idx owns patient idx.
+//   Steps done entirely in registers (no global memory during integration):
+//     sample this patient's physiology -> integrate the coupled PK/PD ODE with
+//     RK4 -> write the one PatientResult. The heavy lifting is pkpd_integrate()
+//     from pkpd.h, the exact same function the CPU reference calls, which is why
+//     the two populations match to round-off.
+//   No inter-thread communication -> pure ensemble parallelism over the cohort.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+__global__ void pkpd_kernel(PkPdParams P, PatientResult* __restrict__ results) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;   // this thread's patient
+    if (idx >= P.n_patients) return;                          // guard the ragged last block
+    results[idx] = pkpd_integrate(P, idx);                    // the whole patient solve
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// integrate_gpu: host wrapper. The canonical CUDA steps for an OUTPUT-only
+//   ensemble (there is no input array to copy up -- the "input" is the small
+//   PkPdParams struct passed by value into the kernel):
+//     (1) allocate one PatientResult slot per patient on the device
+//     (2) launch one thread per patient (timed with CUDA events)
+//     (3) copy the results device->host
+//     (4) free the device buffer
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void integrate_gpu(const PkPdParams& P, std::vector<PatientResult>& results, float* kernel_ms) {
+    const int M = P.n_patients;
+    results.assign(M, PatientResult{});
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // (1) Device output buffer: M PatientResult structs. d_ prefix = device ptr
+    //     (CLAUDE.md §12); dereferencing it on the host would crash.
+    PatientResult* d_out = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_out, static_cast<std::size_t>(M) * sizeof(PatientResult)));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
-
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // (2) Launch: enough blocks to cover all M patients (ceiling division).
+    const int blocks = (M + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    pkpd_kernel<<<blocks, THREADS_PER_BLOCK>>>(P, d_out);
+    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time (events)
+    CUDA_CHECK_LAST("pkpd_kernel");        // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // (3) Bring the per-patient results back to the host vector.
+    CUDA_CHECK(cudaMemcpy(results.data(), d_out,
+                          static_cast<std::size_t>(M) * sizeof(PatientResult),
+                          cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
+    // (4) Free the device buffer (no GPU garbage collector exists).
     CUDA_CHECK(cudaFree(d_out));
 }

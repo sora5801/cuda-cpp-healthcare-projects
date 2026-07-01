@@ -1,48 +1,57 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Write the SSA ensemble configuration (synthetic)
 # ---------------------------------------------------------------------------
-# Project 6.11 -- Stochastic (Gillespie) Biochemical Simulation   (template skeleton)
+# Project 6.11 : Stochastic (Gillespie) Biochemical Simulation
 #
 # WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+#   The "data" for this project is not a downloaded dataset but a tiny model
+#   SPECIFICATION: the rate constants and run settings of a well-mixed reaction
+#   network. Real BioModels/SBML files (see data/README.md) encode far larger
+#   networks; here we generate a clearly-SYNTHETIC, analytically-checkable
+#   birth-death gene-expression model so the demo runs offline and its answer is
+#   known in closed form. Synthetic data is always LABELED synthetic.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
+# THE MODEL (constitutive gene expression, single species M = mRNA):
+#     R1:  0 -> M   at rate k_prod          (transcription, zeroth order)
+#     R2:  M -> 0   at rate k_deg * x_M     (degradation, first order)
+#   Stationary distribution is Poisson with mean = k_prod / k_deg. The C++ demo
+#   recovers that mean from the ensemble, validating the SSA.
 #
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# OUTPUT (data/README.md format), one line:
+#   k_prod  k_deg  m0  t_end  n_traj  base_seed
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py
+#   python scripts/make_synthetic.py --k-prod 20 --k-deg 1 --n-traj 1024
 # ===========================================================================
 import argparse
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+ROOT = Path(__file__).resolve().parent.parent            # the project folder
+OUT = ROOT / "data" / "sample" / "gene_network.txt"
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
+    ap = argparse.ArgumentParser(description="Write the synthetic SSA ensemble config.")
+    ap.add_argument("--k-prod", type=float, default=10.0, help="transcription rate (molecules/time)")
+    ap.add_argument("--k-deg", type=float, default=0.5, help="degradation rate (1/time)")
+    ap.add_argument("--m0", type=int, default=0, help="initial mRNA count")
+    ap.add_argument("--t-end", type=float, default=50.0, help="simulation horizon (time units)")
+    ap.add_argument("--n-traj", type=int, default=256, help="number of independent trajectories")
+    ap.add_argument("--base-seed", type=int, default=20240611, help="RNG base seed")
     ap.add_argument("--out", default=str(OUT), help="output path")
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
-
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    # One whitespace-separated line the C++ loader (reference_cpu.cpp) parses.
+    line = (f"{args.k_prod:g} {args.k_deg:g} {args.m0} "
+            f"{args.t_end:g} {args.n_traj} {args.base_seed}")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    Path(args.out).write_text(line + "\n", encoding="utf-8")
+
+    mean = args.k_prod / args.k_deg if args.k_deg else float("inf")
+    print(f"[make_synthetic] wrote {args.out}  (SYNTHETIC; "
+          f"{args.n_traj} trajectories, analytic Poisson mean = {mean:g})")
 
 
 if __name__ == "__main__":

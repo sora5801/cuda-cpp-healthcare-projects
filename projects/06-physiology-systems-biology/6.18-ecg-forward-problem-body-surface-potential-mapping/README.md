@@ -6,103 +6,170 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+The **ECG forward problem** predicts the tiny voltages an EKG electrode records on
+the skin, given the heart's electrical activity. We model the heart as a handful of
+**current dipoles** with time-varying strengths and the body as a homogeneous
+volume conductor. The quasi-static Poisson equation then makes the map from source
+strengths to surface potentials **linear** — a **lead-field / transfer matrix `A`**.
+This project builds `A` on the GPU (one thread per matrix entry) and applies it to
+the source time series with a single **cuBLAS DGEMM** (`Φ = A·X`), verifying the GPU
+result against a plain-C++ CPU reference.
 
 ## What this computes & why the GPU helps
 
-The ECG forward problem maps cardiac electrical sources (transmembrane currents from EP simulation) to body-surface potentials via the quasi-static Poisson equation on a torso volume conductor model. The transfer matrix (lead-field matrix) is computed once by solving many FEM boundary value problems (one per electrode), then applied repeatedly as a dense matrix-vector product at each time step of the EP simulation. GPU acceleration is ideal for both the batched FEM assembly and the dense matrix-vector multiply.
+The heart's currents produce a potential field throughout the torso; electrodes
+sample it. Because the governing equation is linear in the sources, the entire
+forward map is a matrix product `Φ = A·X`, where:
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+- `A` (`L×S`) is the **lead-field matrix** — potential at each electrode per unit
+  strength of each source; built **once** from geometry.
+- `X` (`S×T`) is the cardiac **source-strength time series**.
+- `Φ` (`L×T`) is the predicted **body-surface potential** at every electrode and
+  time frame.
+
+**The bottleneck the GPU parallelizes:** applying `A` is `O(L·S·T)` and recurs at
+*every time step* of an electrophysiology simulation. That is a dense matrix
+multiply — exactly what **cuBLAS DGEMM** is tuned for. Building `A` (`O(L·S)`) is
+embarrassingly parallel too: each entry is an independent evaluation of the dipole
+Green's function, so we give each entry its own thread. See
+[`THEORY.md`](THEORY.md) for the full derivation.
 
 ## The algorithm in brief
 
-Quasi-static Poisson equation (torso conductivity model), finite element method on torso mesh, lead-field/transfer matrix computation, multipole source representation, method of fundamental solutions, ECG inverse problem (regularized Tikhonov, total variation), boundary element method (BEM).
+- **Quasi-static Poisson equation** on a torso volume conductor → a linear forward
+  operator.
+- **Equivalent-dipole source model**: the heart as `S` current dipoles (the
+  multipole / equivalent-source representation).
+- **Lead-field (transfer) matrix** `A[e][s]` = dipole Green's function
+  `(1/4πσ)·d̂·(rₑ−r₀)/|rₑ−r₀|³` (method of fundamental solutions in a homogeneous
+  medium; a real torso uses **FEM/BEM** instead).
+- **Forward apply** `Φ = A·X` via **cuBLAS DGEMM** (a batched "DGEMV per time
+  step").
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+Full math, complexity, and GPU mapping: [`THEORY.md`](THEORY.md).
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3** — the ratified
+repo toolchain (see [`docs/BUILD_GUIDE.md`](../../../docs/BUILD_GUIDE.md)).
 
-1. Open `build/ecg-forward-problem-body-surface-potential-mapping.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/ecg-forward-problem-body-surface-potential-mapping.exe`.
+1. Open [`build/ecg-forward-problem-body-surface-potential-mapping.sln`](build/ecg-forward-problem-body-surface-potential-mapping.sln) in Visual Studio 2026.
+2. Select **`Release|x64`** (or `Debug|x64`).
+3. **Build** (Ctrl+Shift+B). The `.exe` lands in `build/x64/Release/`.
 
-Command-line alternative (Developer PowerShell):
-
-```powershell
-msbuild build\ecg-forward-problem-body-surface-potential-mapping.sln /p:Configuration=Release /p:Platform=x64
-```
+The project links **`cublas.lib`** (for the DGEMM forward apply) and
+`cudart_static.lib`; both are found automatically via the CUDA `.props`
+integration (no absolute paths). A cross-platform `CMakeLists.txt` is provided as a
+bonus (`CUDA::cublas`).
 
 ## Run the demo
 
+From the project folder:
+
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+powershell -ExecutionPolicy Bypass -File demo/run_demo.ps1     # Windows
+```
+```bash
+./demo/run_demo.sh                                             # Linux (CMake)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+It builds if needed, runs on the committed synthetic sample, prints the result,
+and checks it against [`demo/expected_output.txt`](demo/expected_output.txt).
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: PhysioNet ECG databases (https://physionet.org); EDGAR body-surface potential database (https://edgar.sci.utah.edu — verify URL); Cardioid ECG module examples (https://github.com/llnl/cardioid); Visible Human torso geometry (https://www.nlm.nih.gov/research/visible/visible_human.html).
+The committed sample [`data/sample/ecg_sample.txt`](data/sample/ecg_sample.txt) is a
+**tiny, fully synthetic** torso model (`L=8` electrodes, `S=3` dipoles, `T=24`
+frames), generated by [`scripts/make_synthetic.py`](scripts/make_synthetic.py) — no
+patient data. Its geometry embeds a known answer: the electrode nearest the
+strongest source records the biggest deflection. Full-dataset pointers (PhysioNet,
+the EDGAR body-surface potential database, Visible Human torso geometry) and the
+non-bypassing fetch scripts are documented in
+[`data/README.md`](data/README.md). Real torso datasets are registration-gated or
+too large to commit, so the demo uses the synthetic stand-in.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+`stdout` is deterministic and diffed against `demo/expected_output.txt`; `stderr`
+carries timing (varies per machine). The result reports each lead's peak-to-peak
+body-surface potential, the largest-swing lead, and whether it **RECOVERED** the
+geometric ground truth:
+
+```
+6.18 -- ECG Forward Problem & Body-Surface Potential Mapping
+torso model: L=8 electrodes, S=3 dipole sources, T=24 frames (synthetic)
+conductivity sigma=0.2000 S/m (homogeneous volume conductor)
+per-lead peak-to-peak body-surface potential (lead: p2p):
+  lead  0: p2p=...
+  ...
+largest-swing lead: 0  (expected from geometry: 0) -> RECOVERED
+signature Phi[lead 0][frame 23] = ...
+RESULT: PASS (GPU lead field and potentials match CPU within tol)
+```
+
+**Correctness check:** `main.cu` compares the GPU-built lead field and
+GPU-computed potentials against the CPU reference. The lead field matches to
+`1e-12` (identical shared formula); the potentials match to `1e-9` (the GEMM sums
+in a different order — floating-point addition is not associative, a real effect
+explained in `THEORY.md`).
 
 ## Code tour
 
-Read in this order:
+Start in [`src/main.cu`](src/main.cu) — it loads the model, runs CPU + GPU,
+verifies, and prints. Then:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/ecg_core.h`](src/ecg_core.h) — the **one true physics**: the
+   `__host__ __device__` dipole Green's function shared by CPU and GPU (so results
+   match exactly).
+2. [`src/kernels.cuh`](src/kernels.cuh) → [`src/kernels.cu`](src/kernels.cu) — the
+   GPU side: `build_lead_field_kernel` (one thread per `A` entry) and
+   `gpu_apply_forward` (the cuBLAS DGEMM, with the row-major↔column-major trick
+   explained in full at the call site).
+3. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the serial baseline: parse
+   the sample, build `A` with a double loop, apply `Φ = A·X` with a triple loop.
+4. [`src/util/`](src/util) — shared error-checking (`cuda_check.cuh`), CUDA-event
+   timing (`timer.cuh`), and host I/O (`io.hpp`).
 
 ## Prior art & further reading
 
-Cardioid/LLNL (https://github.com/llnl/cardioid) — includes ECG forward solver module; openCARP (https://git.opencarp.org/openCARP/openCARP) — ECG lead calculation post-processing; SCIRun (https://github.com/SCIInstitute/SCIRun) — Utah scientific computing platform for ECG forward/inverse; APBS (https://github.com/Electrostatics/apbs) — electrostatics PDE solver adaptable to torso geometry.
-
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
-
-## CUDA pattern used here
-
-cuBLAS DGEMV for transfer-matrix application at each time step; cuSOLVER for FEM system solve during transfer-matrix construction; batched cuSOLVER for simultaneous electrode-source BVPs; pattern: parallel BVP solves (one per electrode) with shared torso mesh. --
+- **[Cardioid (LLNL)](https://github.com/llnl/cardioid)** — HPC cardiac simulator
+  with an ECG forward-solver module; study how a production forward map is
+  structured.
+- **[openCARP](https://git.opencarp.org/openCARP/openCARP)** — open cardiac EP
+  simulator with ECG lead post-processing from full heart models.
+- **[SCIRun (Utah)](https://github.com/SCIInstitute/SCIRun)** — scientific
+  computing platform for ECG forward/inverse; source of the EDGAR database.
+- **[APBS](https://github.com/Electrostatics/apbs)** — an electrostatics PDE solver;
+  useful for seeing how a real Poisson-BVP solve on a mesh is organized.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Bounded torso.** Replace the infinite-medium Green's function with a two-sphere
+   (heart-in-torso) model or add an image-source correction for the insulating
+   boundary; watch how the lead field changes.
+2. **12-lead ECG.** Add standard limb/precordial electrode positions and combine
+   `Φ` rows into the actual 12 leads (I, II, III, aVR, …). Which dipole orientation
+   reproduces a realistic QRS complex?
+3. **Bigger problem, real speed-up.** Run `make_synthetic.py --L 256 --S 64 --T 5000`
+   and compare CPU vs. cuBLAS DGEMM time — where does the GPU start to win, and why?
+4. **The inverse problem.** Given `Φ` and `A`, recover `X` with Tikhonov
+   regularization (`X̂ = (AᵀA + λI)⁻¹AᵀΦ` via cuSOLVER). How does `λ` trade bias for
+   noise amplification?
+5. **Conductivity sensitivity.** Sweep `TORSO_SIGMA` and confirm it rescales all
+   potentials by a constant (so it never changes which lead is largest). Why?
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced-scope teaching version** (CLAUDE.md §13). The torso is modelled as an
+  **infinite, homogeneous** conductor with a closed-form dipole kernel. A real
+  torso is finite and inhomogeneous (blood, lung, muscle), which requires an
+  **FEM/BEM** BVP solve per electrode — the step `THEORY.md` describes and that
+  cuSOLVER would accelerate.
+- The heart is reduced to a few **equivalent dipoles**; production tools drive the
+  forward map from a full bidomain/monodomain EP simulation.
+- All data here is **synthetic** and clearly labelled; timings are a **teaching
+  artifact**, not a benchmark, and on this tiny sample the GPU is launch/copy
+  bound (see `THEORY.md` §GPU mapping and the honest-timing note in PATTERNS.md §7).
+- **Not for any clinical use.**

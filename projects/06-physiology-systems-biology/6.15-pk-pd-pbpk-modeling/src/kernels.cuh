@@ -1,52 +1,43 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU PK/PD population interface (declarations + the idea)
 // ---------------------------------------------------------------------------
-// Project 6.15 -- PK/PD & PBPK Modeling   (template skeleton)
+// Project 6.15 : PK/PD & PBPK Modeling
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE PATTERN (ensemble ODE integration, PATTERNS.md §1; cf. flagships 9.02, 13.02)
+//   Each virtual patient is an INDEPENDENT coupled PK/PD ODE solve, so each GPU
+//   thread integrates one patient's full RK4 time loop in registers and writes
+//   one PatientResult (PK exposure + PD effect). No inter-thread communication,
+//   no shared memory, no atomics -- pure ensemble parallelism over the population.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The shared model + RNG (pkpd.h) make the GPU population match the CPU
+//   reference to round-off (PATTERNS.md §2). kernels.cu defines the kernel and
+//   the host wrapper below.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   This header is included only by .cu units (it declares a __global__), so the
+//   plain C++ compiler that builds reference_cpu.cpp never sees CUDA syntax -- the
+//   pure-C++ config/loader prototypes live in reference_cpu.h instead.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, pkpd.h, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // PkPdParams, PatientResult (pure C++, safe in a .cu)
 
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// pkpd_kernel: thread `idx` integrates virtual patient `idx` -> results[idx].
+//   Launch config (chosen in integrate_gpu):
+//     grid  = ceil(n_patients / THREADS_PER_BLOCK) blocks
+//     block = THREADS_PER_BLOCK threads
+//   Thread-to-data map: idx = blockIdx.x * blockDim.x + threadIdx.x owns patient
+//   idx. `P` is passed BY VALUE (a small POD struct) so every thread reads its
+//   own copy from registers/constant, not global memory.
+__global__ void pkpd_kernel(PkPdParams P, PatientResult* __restrict__ results);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// integrate_gpu: launch one thread per patient, copy the results back, and
+//   report the measured KERNEL time (CUDA events) via *kernel_ms. main.cu calls
+//   exactly this; all device allocation/copy/free bookkeeping is hidden here.
+//   results : resized to P.n_patients (output parameter).
+//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies).
+void integrate_gpu(const PkPdParams& P, std::vector<PatientResult>& results, float* kernel_ms);

@@ -1,0 +1,17 @@
+# SYNTHETIC toy metabolic model for FBA teaching (project 6.12).
+# NOT a real organism -- hand-crafted so the knockout screen is
+# readable by eye. See scripts/make_synthetic.py for the biology.
+# Format: nmet nrxn / S (nmet rows) / lb / ub / c.  Metabolites: A B C D.
+#names: uptake_A A->B_1 A->B_2iso B->C A->C_byp C->D D->biomass A->waste
+4 8
+# --- stoichiometry S (rows = metabolites A,B,C,D) ---
+    1    -1    -1     0    -1     0     0    -1
+    0     1     1    -1     0     0     0     0
+    0     0     0     1     1    -1     0     0
+    0     0     0     0     0     1    -1     0
+# --- lower bounds lb ---
+    0     0     0     0     0     0     0     0
+# --- upper bounds ub (R0 uptake<=10, R4 bypass<=3) ---
+   10  1000  1000  1000     3  1000  1000  1000
+# --- objective c (maximise biomass reaction R6) ---
+    0     0     0     0     0     0     1     0

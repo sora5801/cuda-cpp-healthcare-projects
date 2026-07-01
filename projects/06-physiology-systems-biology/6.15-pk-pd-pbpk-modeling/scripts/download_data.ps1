@@ -1,12 +1,13 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Realistic PK/PD & PBPK pointers (Windows)
 # ---------------------------------------------------------------------------
-# Project 6.15 -- PK/PD & PBPK Modeling   (template skeleton)
+# Project 6.15 : PK/PD & PBPK Modeling
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, and NEVER bypasses
+# credentials/registration. There is NOTHING to download for this project: the
+# virtual population is sampled from the parameters in data/sample/pkpd_params.txt.
+# This script only prints where to get REAL PK/PD data and models (some of which
+# require registration -- we link and instruct, never scrape).
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,19 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 6.15 -- PK/PD & PBPK Modeling"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    PhysioNet MIMIC clinical PK data (https://physionet.org); FDA Adverse Event Reporting System (FAERS) (https://www.fda.gov/drugs/fda-adverse-event-reporting-system-faers); PBPK model library — OSP Suite (https://github.com/Open-Systems-Pharmacology/OSP-PBPK-Model-Library); DDMoRe model repository (https://ddmore.eu/models-tools)."
+Write-Host "There is no file to download: the virtual population is generated from"
+Write-Host "the parameters in data/sample/pkpd_params.txt (see scripts/make_synthetic.py)."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "For REAL clinical PK data and validated PK/PD & PBPK models:"
+Write-Host "  PhysioNet / MIMIC (clinical time series; CREDENTIALED -- register, do not scrape):"
+Write-Host "    https://physionet.org"
+Write-Host "  FDA FAERS (adverse-event reports, public):"
+Write-Host "    https://www.fda.gov/drugs/fda-adverse-event-reporting-system-faers"
+Write-Host "  OSP PBPK Model Library (whole-body PBPK models):"
+Write-Host "    https://github.com/Open-Systems-Pharmacology/OSP-PBPK-Model-Library"
+Write-Host "  DDMoRe model repository (curated pharmacometric models):"
+Write-Host "    https://ddmore.eu/models-tools"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Bigger SYNTHETIC population (no download):"
+Write-Host "  python scripts/make_synthetic.py --patients 100000"

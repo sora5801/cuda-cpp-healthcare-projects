@@ -1,5 +1,8 @@
 6.1 -- Cardiac Electrophysiology Simulation
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+monodomain (FitzHugh-Nagumo reaction + diffusion), operator split
+grid 32x32, 400 steps, dt=0.1000 dx=1.000 D=0.2000 (CFL dt_max=1.2500)
+FHN: a=0.100 eps=0.0020 b=0.500 | S1 patch 3x32 at (0,0) V=1.00
+final V: min=0.000000 max=0.963826 | activated(V>0.5)=384 (37.5%)
+voltage slice V(x, y=16):
+ 0.9008 0.9018 0.9054 0.9155 0.9267 0.9378 0.9485 0.9580 0.9638 0.9550 0.8870 0.6343 0.2601 0.0770 0.0204 0.0052 0.0013 0.0003 0.0001 0.0000 0.0000 0.0000 0.0000 0.0000 0.0000 0.0000 0.0000 0.0000 0.0000 0.0000 0.0000 0.0000
+RESULT: PASS (GPU voltage matches CPU within tol=1.0e-06)

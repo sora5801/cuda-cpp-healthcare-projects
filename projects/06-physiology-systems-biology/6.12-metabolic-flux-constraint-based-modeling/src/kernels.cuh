@@ -1,52 +1,54 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU knockout-screen interface
 // ---------------------------------------------------------------------------
-// Project 6.12 -- Metabolic Flux / Constraint-Based Modeling   (template skeleton)
+// Project 6.12 : Metabolic Flux / Constraint-Based Modeling
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (pattern: an ENSEMBLE OF INDEPENDENT LPs, one per thread)
+//   A gene-essentiality screen asks: "for each reaction, if we delete it, can the
+//   cell still grow?" Answering it means solving one FBA linear program per
+//   deletion. Those LPs are completely INDEPENDENT -- deleting reaction 3 has
+//   nothing to do with deleting reaction 7 -- so we give each knockout its own
+//   GPU thread. Thread k solves the LP for "reaction k removed"; one extra thread
+//   solves the wild type. This is the same embarrassingly-parallel ensemble shape
+//   as flagship 9.02 (one ODE trajectory per thread), but the per-item work here
+//   is a whole simplex solve instead of an RK4 integration.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The simplex solver is shared with the CPU reference (fba.h, __host__
+//   __device__), so the GPU screen and the CPU screen return bit-identical
+//   objectives -- verification is exact. kernels.cu defines the kernel + wrapper.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   MEMORY NOTE: each thread's simplex tableau lives in per-thread LOCAL memory
+//   (fixed-size arrays in fba.h). That keeps threads fully independent -- no
+//   shared memory, no atomics, no synchronisation -- at the cost of a sizeable
+//   per-thread footprint, which caps occupancy. For a teaching screen of a few
+//   dozen reactions that is completely fine; THEORY.md section "GPU mapping"
+//   discusses the shared-memory tableau a production batch solver would use.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: fba.h (the solver), reference_cpu.h (the model + CPU screen),
+// util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
+#include "reference_cpu.h"   // FbaModel, FbaResult (pure C++, safe inside a .cu)
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// screen_kernel: thread `k` solves the FBA LP with reaction k deleted (or the
+//   wild type for k == nrxn) and writes one FbaResult.
+//   grid  : ceil((nrxn+1) / block) blocks
+//   block : THREADS_PER_BLOCK threads (set in the wrapper)
+//   thread (blockIdx.x, threadIdx.x) -> knockout index k = bx*blockDim.x + tx.
+//   model is passed BY VALUE (it is plain-old-data, no pointers), so every thread
+//   gets its own copy to clamp -- no device allocation of the model needed.
+__global__ void screen_kernel(FbaModel model, FbaResult* __restrict__ out, int njobs);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// screen_gpu: run the whole knockout screen on the GPU.
+//   model     : the FBA model (by const ref; copied into the kernel launch).
+//   results   : filled with (nrxn + 1) FbaResults in the SAME layout as
+//               screen_cpu() -- index k = knockout of reaction k, last = wild type.
+//   kernel_ms : out-param, milliseconds spent in the kernel (CUDA-event timed).
+// All CUDA bookkeeping (allocate result buffer, launch, copy back, free) is
+// hidden here; main.cu just calls this and compares with the CPU array.
+void screen_gpu(const FbaModel& model, std::vector<FbaResult>& results, float* kernel_ms);

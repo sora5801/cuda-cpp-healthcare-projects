@@ -1,37 +1,77 @@
 # Data — 6.1 Cardiac Electrophysiology Simulation
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/tissue_params.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
+| File | `sample/tissue_params.txt` |
+| Origin | **Synthetic** simulation parameters (`scripts/make_synthetic.py`) |
 | License | Public domain (CC0) — it is synthetic |
 | Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Setup | 32×32 excitable-tissue sheet, S1 stimulus patch on the left edge |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+This project's "data" is the **simulation setup**, not a measured recording — the
+electrical wave is *generated* by the solver. The tiny parameter file lets
+`demo/run_demo` run **offline, with zero downloads** (a hard requirement,
+CLAUDE.md §8).
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+### File format (one line, 14 whitespace-separated fields)
 
-## Full dataset
+```
+nx  ny  steps  dt  dx  D  a  eps  b  stim_x0  stim_y0  stim_w  stim_h  stim_v
+```
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+| Field | Meaning | Units (dimensionless FHN) |
+|---|---|---|
+| `nx`, `ny` | tissue grid size (columns × rows) | cells |
+| `steps` | number of operator-split timesteps (react + diffuse each) | — |
+| `dt` | time step; must satisfy the CFL bound `dt ≤ dx²/(4·D)` | time |
+| `dx` | grid spacing (same in x and y) | length |
+| `D` | diffusion coefficient (electrotonic coupling) | length²/time |
+| `a` | FitzHugh-Nagumo excitation threshold (`0 < a < 1`) | voltage |
+| `eps` | FHN recovery time-scale (small ⇒ slow recovery, long AP) | 1/time |
+| `b` | FHN recovery coupling (controls the refractory return to rest) | — |
+| `stim_x0`, `stim_y0` | top-left corner of the S1 stimulus patch | cell index |
+| `stim_w`, `stim_h` | width/height of the stimulus patch | cells |
+| `stim_v` | voltage the S1 patch is clamped to at `t = 0` | voltage |
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+Default sample: `32 32 400 0.1 1.0 0.2 0.1 0.002 0.5 0 0 3 32 1.0` → an
+action-potential wave launched from the left edge that has propagated about a
+third of the way across the sheet by step 400 (a depolarised plateau on the left,
+a sharp wavefront near `x≈11`, resting tissue ahead — visible in the reported
+voltage slice). The small `eps=0.002` gives a slow recovery, so a depolarised
+plateau trails the front (the classic action-potential shape).
 
-Catalog dataset notes (verbatim):
+### Units honesty
 
-> PhysioNet MIT-BIH & MIMIC-III Waveform — 40 000+ ICU ECG/hemodynamic waveforms (https://physionet.org); CellML Physiome Repository — curated ionic cell models in CellML/SBML format importable by openCARP (https://models.physiomeproject.org); UK Biobank Cardiac MRI — 100 000+ cine CMR studies, access via application (https://www.ukbiobank.ac.uk); ACDC MICCAI Cardiac Challenge — 100-patient CMR with LV/RV/myocardium ground truth (https://www.creatis.insa-lyon.fr/Challenge/acdc/).
+The FitzHugh-Nagumo model is **nondimensional** — `V`, `w`, `dt`, `dx` are
+caricature units, not millivolts/milliseconds. THEORY.md §"real world" explains
+how a physiological model (ten Tusscher-Panfilov, O'Hara-Rudy) restores physical
+units. Do not read the numbers here as clinical voltages.
 
-## Provenance & field meanings
+## "Full dataset" / realistic models
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+A validated, patient-specific cardiac EP simulation replaces the synthetic sheet
+with (a) a real ionic **cell model** and (b) a real **anatomy**:
+
+- **CellML Physiome Repository** (<https://models.physiomeproject.org>) — curated
+  ionic cell models (ten Tusscher, O'Hara-Rudy) in CellML/SBML, importable by openCARP.
+- **UK Biobank Cardiac MRI** (<https://www.ukbiobank.ac.uk>) — cine CMR to build
+  patient geometries; **access via application** (credentialed).
+- **ACDC MICCAI Cardiac Challenge**
+  (<https://www.creatis.insa-lyon.fr/Challenge/acdc/>) — CMR with LV/RV/myocardium
+  ground truth for segmenting an anatomy.
+- **PhysioNet MIT-BIH & MIMIC-III Waveform** (<https://physionet.org>) — ICU
+  ECG/hemodynamic waveforms to compare a simulated pseudo-ECG against.
+
+`scripts/download_data.*` prints these links and **never bypasses** the
+registration required by UK Biobank / MIMIC. For a bigger synthetic run:
+`python scripts/make_synthetic.py --nx 128 --ny 128 --steps 1200`.
+
+## Provenance & honesty
+
+The setup is **synthetic** and the model is a **simplified 2-D FitzHugh-Nagumo
+monodomain** (not a physiological ionic model, not a real heart geometry). It
+demonstrates the reaction-diffusion / operator-splitting / GPU-stencil pattern;
+it is **not** a validated electrophysiology simulation and is **not for any
+clinical use**.

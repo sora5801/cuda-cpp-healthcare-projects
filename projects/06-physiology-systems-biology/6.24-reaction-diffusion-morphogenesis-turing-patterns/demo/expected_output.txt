@@ -1,5 +1,6 @@
 6.24 -- Reaction-Diffusion Morphogenesis (Turing Patterns)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Gierer-Meinhardt: 64x64 grid, 3000 steps, Da=0.0200 Dh=0.5000 (Dh/Da=25.0) rho=0.050 mu_a=0.100 mu_h=0.140
+pattern: mean a=0.624556, min a=0.003645, max a=7.132460, contrast=7.128815, peak cells (a>mean)=907 of 4096
+linear stability: Turing regime=YES, max growth=0.040278 at k*=1.1436 (predicted wavelength=5.49 cells)
+a along center row (8 samples): 0.3352 0.0146 0.1802 0.0347 1.1905 1.1998 0.1173 0.0649
+RESULT: PASS (GPU field matches CPU within tol=1.0e-06)

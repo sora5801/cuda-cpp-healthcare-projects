@@ -1,37 +1,76 @@
-# Data — 6.18 ECG Forward Problem & Body-Surface Potential Mapping
+# Data — Project 6.18 ECG Forward Problem & Body-Surface Potential Mapping
 
-## Committed sample (`sample/`)
+## What is committed here
 
-| Field | Value |
-|---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
-| License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+A single **tiny, fully synthetic** sample: [`sample/ecg_sample.txt`](sample/ecg_sample.txt).
+It is generated deterministically by [`../scripts/make_synthetic.py`](../scripts/make_synthetic.py)
+— **no patient data, no real recordings**. It exists so the demo builds, runs, and
+verifies offline with zero downloads.
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+> **SYNTHETIC / not clinical.** This is a geometric toy (a cylindrical "torso"
+> with a few current dipoles inside standing in for the heart). It must not be
+> used for any diagnostic or clinical purpose.
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+## File format
 
-## Full dataset
+Whitespace/newline separated. Blank lines and lines starting with `#` are ignored,
+so the file is self-documenting. The layout is:
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+```
+L S T                       # header: #electrodes, #dipole sources, #time frames
+<L lines>  x y z             # electrode positions on the body surface (metres)
+<S lines>  x y z             # dipole (source) anchor positions inside (metres)
+<S lines>  dx dy dz          # dipole unit directions (normalized on load)
+<S lines>  s(0) s(1) ... s(T-1)   # each source's strength time series (T frames)
+```
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+Meaning of each field:
 
-Catalog dataset notes (verbatim):
+| Field | Units | Meaning |
+|-------|-------|---------|
+| `L`   | count | body-surface electrodes → rows of the transfer matrix `A` and of `Phi` |
+| `S`   | count | equivalent current dipoles modelling the heart → columns of `A` |
+| `T`   | count | time frames of the activation sequence → columns of `X` and `Phi` |
+| electrode `x y z` | metres | electrode location on the torso surface |
+| source `x y z`    | metres | fixed dipole anchor inside the torso |
+| direction `dx dy dz` | unitless | dipole orientation (a unit vector after loading) |
+| strength `s(t)`   | arbitrary (∝ A·m) | the dipole's time-varying moment magnitude |
 
-> PhysioNet ECG databases (https://physionet.org); EDGAR body-surface potential database (https://edgar.sci.utah.edu — verify URL); Cardioid ECG module examples (https://github.com/llnl/cardioid); Visible Human torso geometry (https://www.nlm.nih.gov/research/visible/visible_human.html).
+The default committed sample is `L=8, S=3, T=24`.
 
-## Provenance & field meanings
+## How the synthetic sample is built (and its known answer)
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+`make_synthetic.py` places `L` electrodes evenly on a ring of a cylindrical torso
+(radius 15 cm) and `S` dipoles on a small inner ring shifted toward `+x` (the
+"left chest"). Each dipole fires a smooth Gaussian bump at a staggered time (a
+crude depolarization sweep); **source 0 is deliberately the strongest** and sits
+nearest **electrode 0**. Because the lead field falls off as `1/distance³`, the
+electrode nearest the strongest source must record the largest peak-to-peak
+deflection — a definite ground truth the demo recovers (see
+[`../demo/expected_output.txt`](../demo/expected_output.txt)). Everything is
+closed-form (no RNG), so the committed bytes never drift.
+
+Regenerate or scale it:
+
+```bash
+python ../scripts/make_synthetic.py                       # default 8/3/24
+python ../scripts/make_synthetic.py --L 64 --S 8 --T 500  # bigger synthetic case
+```
+
+## Real-world datasets (provenance & licensing)
+
+This project's catalog entry points at these sources. They are **not committed**
+(registration-gated and/or far too large — full 3-D torso meshes), and the
+download helper only prints instructions; it never bypasses credentials.
+
+| Source | URL | Notes / license |
+|--------|-----|-----------------|
+| PhysioNet ECG databases | https://physionet.org | Recorded surface ECGs; some sets are credentialed. |
+| EDGAR body-surface potential DB | https://edgar.sci.utah.edu *(verify URL)* | Multi-lead body-surface potential maps + torso geometries. |
+| Visible Human torso geometry | https://www.nlm.nih.gov/research/visible/visible_human.html | Realistic torso volume-conductor mesh; license/registration. |
+| Cardioid (LLNL) ECG module | https://github.com/llnl/cardioid | Reference ECG forward solver (study, don't copy). |
+| openCARP ECG lead calculation | https://git.opencarp.org/openCARP/openCARP | ECG post-processing from EP simulations. |
+
+Fetch guidance: [`../scripts/download_data.ps1`](../scripts/download_data.ps1) /
+[`../scripts/download_data.sh`](../scripts/download_data.sh). Respect every
+dataset's license; do not redistribute credentialed data.

@@ -1,5 +1,13 @@
 6.11 -- Stochastic (Gillespie) Biochemical Simulation
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Model: birth-death gene expression  (0 -> M @ k_prod, M -> 0 @ k_deg)
+k_prod=10.000  k_deg=0.500  m0=0  t_end=50.0  trajectories=256
+sample trajectories (idx: events finalM timeAvgM):
+  t0    :    976      20    18.9959
+  t64   :    964      18    18.2718
+  t128  :    936      26    17.7395
+  t192  :    982      20    18.3612
+  t255  :    991      25    20.0243
+ensemble mean of time-avg M = 19.2437   (analytic Poisson mean = 20.0000)
+ensemble mean of final   M = 20.0312
+total reaction events = 251072
+RESULT: PASS (GPU ensemble matches CPU exactly, per-trajectory)

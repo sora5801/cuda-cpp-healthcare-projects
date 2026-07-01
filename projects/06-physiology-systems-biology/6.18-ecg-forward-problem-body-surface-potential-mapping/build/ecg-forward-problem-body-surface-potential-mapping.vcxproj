@@ -95,9 +95,13 @@
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Console</SubSystem>
-      <!-- cudart_static.lib = the CUDA runtime; its folder is on the search
-           path thanks to the CUDA .props import above. -->
-      <AdditionalDependencies>cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- cudart_static.lib = the CUDA runtime. cublas.lib is the dense linear
+           algebra library: we link it because gpu_apply_forward computes the
+           body-surface potentials Phi = A * X with cublasDgemm (kernels.cu),
+           applying the lead-field transfer matrix to the source time series.
+           Both libs' folders are on the search path via the CUDA .props import,
+           so no absolute paths are needed (BUILD_GUIDE section 7b). -->
+      <AdditionalDependencies>cublas.lib;cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
@@ -133,7 +137,10 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- cublas.lib for cublasDgemm (the Phi = A*X forward apply);
+           cudart_static.lib for the CUDA runtime. See the Debug Link section
+           above for the full reason. -->
+      <AdditionalDependencies>cublas.lib;cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
@@ -153,6 +160,7 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <ClInclude Include="..\src\ecg_core.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

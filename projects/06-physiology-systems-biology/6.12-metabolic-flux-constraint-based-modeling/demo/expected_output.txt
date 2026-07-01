@@ -1,5 +1,14 @@
 6.12 -- Metabolic Flux / Constraint-Based Modeling
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+model: 4 metabolites x 8 reactions   (SYNTHETIC toy network)
+wild-type max biomass flux = 10.0000
+single-reaction knockout screen (growth as % of wild type):
+  KO uptake_A     biomass=0.0000  (  0.00% WT)  ESSENTIAL
+  KO A->B_1       biomass=10.0000  (100.00% WT)  neutral
+  KO A->B_2iso    biomass=10.0000  (100.00% WT)  neutral
+  KO B->C         biomass=3.0000  ( 30.00% WT)  reduced
+  KO A->C_byp     biomass=10.0000  (100.00% WT)  neutral
+  KO C->D         biomass=0.0000  (  0.00% WT)  ESSENTIAL
+  KO D->biomass   biomass=0.0000  (  0.00% WT)  ESSENTIAL
+  KO A->waste     biomass=10.0000  (100.00% WT)  neutral
+summary: 3 essential, 1 growth-reducing, 4 neutral reactions
+RESULT: PASS (GPU screen matches CPU within tol=1.0e-09)

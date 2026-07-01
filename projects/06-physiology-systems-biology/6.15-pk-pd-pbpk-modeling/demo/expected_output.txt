@@ -1,5 +1,12 @@
 6.15 -- PK/PD & PBPK Modeling
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+coupled 1-cpt oral PK + indirect-response PD; 4096 virtual patients, 48 h @ dt=0.05 h
+dose=100 mg, median ka=1.00/h CL=5.00 L/h Vc=30.0 L; PD kin=10.0 kout=0.20/h Imax=0.90 IC50=2.00 mg/L (baseline R0=50.00), CV=25%
+sample patients (Cmax mg/L, Tmax h, AUC mg.h/L | Rmax, Tresp h, effect):
+  patient 0    : Cmax=2.6729 Tmax=1.80 AUC=18.3087 | Rmax=66.3490 Tresp=7.30 effect=0.3270
+  patient 1024 : Cmax=3.6883 Tmax=1.50 AUC=16.6711 | Rmax=75.7115 Tresp=6.60 effect=0.5142
+  patient 2048 : Cmax=2.3036 Tmax=2.40 AUC=32.7045 | Rmax=69.8789 Tresp=10.85 effect=0.3976
+  patient 3072 : Cmax=2.2635 Tmax=2.05 AUC=22.2999 | Rmax=66.8416 Tresp=8.80 effect=0.3368
+  patient 4095 : Cmax=3.3036 Tmax=1.55 AUC=21.3655 | Rmax=74.6220 Tresp=7.95 effect=0.4924
+population: mean Cmax=2.3432 mg/L, mean AUC=20.4848 mg.h/L, AUC range [6.3786, 48.0945]
+population: mean PD effect (peak fractional rise above baseline)=0.4098
+RESULT: PASS (GPU population matches CPU within tol=1.0e-06)

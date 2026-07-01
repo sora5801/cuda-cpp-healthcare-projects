@@ -1,94 +1,91 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Ensemble SSA kernel (one thread per trajectory)
 // ---------------------------------------------------------------------------
-// Project 6.11 -- Stochastic (Gillespie) Biochemical Simulation   (template skeleton)
+// Project 6.11 : Stochastic (Gillespie) Biochemical Simulation
 //
 // WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
+//   The GPU twin of simulate_cpu(). Each thread runs the SAME event-by-event
+//   Gillespie loop (simulate_trajectory in ssa.h) for ONE trajectory, then
+//   writes one TrajectoryResult. main.cu runs both sides and compares them.
+//   Because the SSA core + RNG are shared and each trajectory is seeded from its
+//   index, the GPU results are BIT-IDENTICAL to the CPU reference.
 //
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
+//   NO ATOMICS, NO SHARED MEMORY, NO SYNC: trajectories never touch each other's
+//   data, so this is pure independent-work parallelism. The only per-thread cost
+//   is the RNG state and the tiny fixed-size network state, all in registers /
+//   local memory.
 //
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// READ THIS AFTER: kernels.cuh (declarations + mapping), ssa.h (the SSA core).
 // ===========================================================================
 #include "kernels.cuh"
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// Threads per block. 128 balances occupancy against the fact that each thread
+// here is HEAVY (a whole SSA run with a per-thread RNG and local arrays) rather
+// than a one-line SAXPY: a smaller block keeps register pressure per SM in
+// check while still giving the scheduler several warps to hide latency. 128 is a
+// multiple of the 32-lane warp, so no lanes are wasted.
+static constexpr int THREADS_PER_BLOCK = 128;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
+// ssa_kernel: thread `idx` owns trajectory `idx`.
+//   Launch config (set in simulate_gpu):
+//     grid  = ceil(n_traj / THREADS_PER_BLOCK) blocks
 //     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+//   Thread-to-data map: idx = blockIdx.x * blockDim.x + threadIdx.x.
+//   Each thread reads the (by-value) network, runs the FULL SSA time loop, and
+//   writes exactly out[idx]. Divergence is inherent to the algorithm: different
+//   trajectories fire different numbers of events, so warps wait for their
+//   slowest lane. That is expected for Monte-Carlo SSA and is the price of an
+//   *exact* method; THEORY.md discusses tau-leaping as the load-balancing fix.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void ssa_kernel(ReactionNetwork net, int n_traj,
+                           TrajectoryResult* __restrict__ out) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n_traj) return;                 // guard the ragged last block
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+    // Run this trajectory. simulate_trajectory seeds its own RNG stream from
+    // (net.base_seed, idx), so trajectory idx here matches trajectory idx on the
+    // CPU exactly. The result is written once -- no read-modify-write, no race.
+    out[idx] = simulate_trajectory(net, static_cast<uint64_t>(idx));
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// simulate_gpu: host wrapper. The canonical CUDA steps, minus input copies
+//   (the only "input" is the small POD network, passed by value in the launch):
+//     (1) build the network + allocate the device result buffer
+//     (2) launch one thread per trajectory
+//     (3) copy results device->host
+//     (4) free device memory
+//   We time ONLY the kernel (step 2) with CUDA events; the D2H copy of the
+//   results is reported separately in spirit but excluded from the kernel figure
+//   so the number reflects compute, not PCIe (THEORY.md, "honest timing").
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void simulate_gpu(const EnsembleConfig& c, std::vector<TrajectoryResult>& results,
+                  float* kernel_ms) {
+    const int n = c.n_traj;
+    results.assign(static_cast<std::size_t>(n), TrajectoryResult{});
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // Build the SAME network the CPU builds (single source of truth).
+    const ReactionNetwork net = build_gene_network(c);
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // (1) Device output buffer: one TrajectoryResult per trajectory.
+    TrajectoryResult* d_out = nullptr;
+    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(TrajectoryResult);
+    CUDA_CHECK(cudaMalloc(&d_out, bytes));     // can fail: out of device memory
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
+    // (2) Launch. Blocks must cover all n trajectories -> ceiling division.
     const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    ssa_kernel<<<blocks, THREADS_PER_BLOCK>>>(net, n, d_out);
+    *kernel_ms = timer.stop_ms();              // GPU-measured kernel time
+    CUDA_CHECK_LAST("ssa_kernel");             // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // (3) Bring the per-trajectory results back to the host.
+    CUDA_CHECK(cudaMemcpy(results.data(), d_out, bytes, cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
+    // (4) Always free what we allocated (no GPU garbage collector exists).
     CUDA_CHECK(cudaFree(d_out));
 }

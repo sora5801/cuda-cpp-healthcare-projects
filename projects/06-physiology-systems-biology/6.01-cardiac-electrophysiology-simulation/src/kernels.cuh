@@ -1,52 +1,56 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU monodomain interface (declarations + the big idea)
 // ---------------------------------------------------------------------------
-// Project 6.1 -- Cardiac Electrophysiology Simulation   (template skeleton)
+// Project 6.1 : Cardiac Electrophysiology Simulation
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (the STENCIL + per-cell ODE pattern, docs/PATTERNS.md section 1)
+//   The heart is a grid of ~10^8 excitable cells. Two operations advance it:
+//     REACTION  -- each cell integrates its own ODE; cells are INDEPENDENT, so
+//                  we give each cell its own GPU thread (embarrassingly parallel,
+//                  memory-bandwidth bound -- exactly what a GPU is built for).
+//     DIFFUSION -- each cell couples to its 4 grid neighbours: a nearest-neighbour
+//                  STENCIL. We again give each cell a thread, reading neighbours
+//                  from a read-only buffer and writing to a second buffer, then
+//                  PING-PONG the two buffers -- no races, no atomics.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The host runs the operator-split time loop, launching TWO kernels per step
+//   (react then diffuse). The per-cell math is the shared react_step() and
+//   diffuse_cell() in cardiac_cell.h, so the GPU reproduces the CPU result
+//   byte-for-byte (the key to exact verification).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Production cardiac solvers (openCARP, MonoAlg3D) keep this reaction kernel
+//   verbatim but replace the explicit-diffusion kernel with an IMPLICIT solve
+//   (Crank-Nicolson + conjugate gradient via cuSPARSE/cuSOLVER) so they can take
+//   larger, unconditionally-stable timesteps -- see ../THEORY.md "real world".
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// This header is included only by .cu files (it declares __global__ kernels).
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, cardiac_cell.h. Then
+// read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // MonodomainParams (pure C++, safe inside a .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ---- Device kernels -------------------------------------------------------
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// react_kernel: thread (x,y) advances its own cell's (V,w) by the FHN reaction
+//   ODE for one dt. Fully independent per cell; updates V and w in place.
+__global__ void react_kernel(int nx, int ny, MonodomainParams p,
+                             double* __restrict__ V, double* __restrict__ w);
+
+// diffuse_kernel: thread (x,y) applies the 5-point Laplacian diffusion update,
+//   reading the (post-reaction) field V_in and writing V_out (ping-pong).
+__global__ void diffuse_kernel(int nx, int ny, MonodomainParams p,
+                               const double* __restrict__ V_in,
+                               double* __restrict__ V_out);
+
+// ---- Host wrapper ---------------------------------------------------------
+
+// monodomain_gpu: run the full operator-split time loop on the GPU and return
+//   the final voltage field V (size nx*ny) and recovery field w. Reports the
+//   total kernel time of the loop (CUDA events) via *kernel_ms. main.cu calls
+//   exactly this; all CUDA bookkeeping is hidden inside.
+void monodomain_gpu(const MonodomainParams& p,
+                    std::vector<double>& V_final, std::vector<double>& w_final,
+                    float* kernel_ms);

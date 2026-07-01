@@ -31,3 +31,10 @@ add_executable(ecg-forward-problem-body-surface-potential-mapping
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(ecg-forward-problem-body-surface-potential-mapping PRIVATE src)
+
+# Link cuBLAS: gpu_apply_forward computes the body-surface potentials
+# Phi = A * X with cublasDgemm (kernels.cu), applying the lead-field transfer
+# matrix to the cardiac source time series. CUDA::cublas is the modern CMake
+# target that pulls in the right include + lib paths automatically.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(ecg-forward-problem-body-surface-potential-mapping PRIVATE CUDA::cublas)

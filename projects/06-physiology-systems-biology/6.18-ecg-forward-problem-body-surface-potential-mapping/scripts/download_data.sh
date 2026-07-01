@@ -2,11 +2,13 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 6.18 -- ECG Forward Problem & Body-Surface Potential Mapping   (template skeleton)
+# Project 6.18 : ECG Forward Problem & Body-Surface Potential Mapping
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints source URL +
+# expected size, and NEVER bypasses credentials/registration. The real datasets
+# here are registration-gated or ship large 3-D torso meshes, so this script
+# only prints guidance and defers to scripts/make_synthetic.py for the offline,
+# clearly-synthetic stand-in the demo actually uses.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,23 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 6.18 -- ECG Forward Problem & Body-Surface Potential Mapping"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    PhysioNet ECG databases (https://physionet.org); EDGAR body-surface potential database (https://edgar.sci.utah.edu — verify URL); Cardioid ECG module examples (https://github.com/llnl/cardioid); Visible Human torso geometry (https://www.nlm.nih.gov/research/visible/visible_human.html)."
+echo "This project runs on a tiny SYNTHETIC sample (data/sample/ecg_sample.txt),"
+echo "so no download is required to build, run, and verify the demo."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Real-world data sources (study these; most need registration or are large):"
+echo "  * PhysioNet ECG databases          https://physionet.org"
+echo "      -- recorded surface ECGs (credentialed for some sets)."
+echo "  * EDGAR body-surface potential DB   https://edgar.sci.utah.edu  (verify URL)"
+echo "      -- multi-lead body-surface potential maps + torso geometries."
+echo "  * Visible Human torso geometry      https://www.nlm.nih.gov/research/visible/visible_human.html"
+echo "      -- a realistic torso volume conductor mesh (license/registration)."
+echo "  * Cardioid (LLNL) ECG module        https://github.com/llnl/cardioid"
+echo "  * openCARP ECG lead calculation     https://git.opencarp.org/openCARP/openCARP"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "For a larger SYNTHETIC problem (more electrodes/sources/frames), run:"
+echo "  python scripts/make_synthetic.py --L 64 --S 8 --T 500"
+echo
+echo "When wiring a real dataset later, keep this script idempotent:"
+echo "  1) skip download if the file already exists with the right checksum"
+echo "  2) print source URL + expected size + SHA256"
+echo "  3) for credentialed sets, print registration instructions ONLY (never bypass)"

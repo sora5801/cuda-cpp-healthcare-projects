@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Pointers to REAL metabolic models (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 6.12 -- Metabolic Flux / Constraint-Based Modeling   (template skeleton)
+# Project 6.12 : Metabolic Flux / Constraint-Based Modeling
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials. The committed sample is a tiny SYNTHETIC toy model
+# (data/sample/toy_core_model.txt) that runs the demo offline; the genome-scale
+# models below are public but big and in SBML/JSON, which our simple text loader
+# does not parse -- so this script only prints where to get them and how a real
+# workflow (COBRApy) would consume them.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +20,20 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 6.12 -- Metabolic Flux / Constraint-Based Modeling"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    Recon3D — human genome-scale metabolic model (https://github.com/SBRG/Recon3D); HMDB — Human Metabolome Database (https://hmdb.ca); Reactome (https://reactome.org); BiGG Models Database — curated GEMs (http://bigg.ucsd.edu)."
+echo "This project ships a SYNTHETIC toy model (data/sample/toy_core_model.txt)."
+echo "It runs the demo with zero downloads. To regenerate or resize it:"
+echo "    python scripts/make_synthetic.py"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Real genome-scale metabolic models (public, but SBML/JSON -- not our text"
+echo "format; use COBRApy to read them):"
+echo "  * BiGG Models (curated GEMs):     http://bigg.ucsd.edu/models"
+echo "      e.g. E. coli core (95 rxns):  http://bigg.ucsd.edu/models/e_coli_core"
+echo "  * Recon3D (human, ~10600 rxns):   https://github.com/SBRG/Recon3D"
+echo "  * Virtual Metabolic Human portal: https://vmh.life"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Typical real workflow (outside this teaching repo):"
+echo "    pip install cobra"
+echo "    python -c \"import cobra; m=cobra.io.load_model('e_coli_core'); print(m.optimize())\""
+echo
+echo "See THEORY.md 'Where this sits in the real world' for how production FBA"
+echo "differs (sparse interior-point / revised simplex over 1000s of reactions)."
