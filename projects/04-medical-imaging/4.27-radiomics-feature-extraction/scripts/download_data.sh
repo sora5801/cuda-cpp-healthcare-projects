@@ -2,11 +2,13 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 4.27 -- Radiomics Feature Extraction   (template skeleton)
+# Project 4.27 : Radiomics Feature Extraction
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL, and
+# NEVER bypasses credentials/registration. Real radiomics data is large DICOM
+# imaging with segmentation masks (TCIA, GDC); those must not be redistributed
+# here, so this script only prints instructions + links and defers to
+# scripts/make_synthetic.py for an offline stand-in.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,22 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 4.27 -- Radiomics Feature Extraction"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    TCIA NSCLC-Radiomics (https://www.cancerimagingarchive.net/collection/nsclc-radiomics/) — 422 lung CTs with survival; RIDER Breast MRI (via TCIA); QIN-HEADNECK (via TCIA) — head and neck RT; TCGA collections (https://portal.gdc.cancer.gov/)."
+echo "The committed tiny SYNTHETIC sample (data/sample/radiomics_sample.txt) is"
+echo "enough to build and run the demo offline. No download is required."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Real radiomics cohorts (imaging + segmentations) live at:"
+echo "  * TCIA NSCLC-Radiomics (422 lung CTs + survival):"
+echo "      https://www.cancerimagingarchive.net/collection/nsclc-radiomics/"
+echo "  * QIN-HEADNECK (head & neck RT), RIDER Breast MRI -- via TCIA."
+echo "  * TCGA imaging + clinical: https://portal.gdc.cancer.gov/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "How to use real data with this project:"
+echo "  1) Download a collection from TCIA (respect each collection's LICENSE;"
+echo "     some require a Data Use Agreement -- do NOT bypass it)."
+echo "  2) Read the CT/PET/MRI volume and its ROI segmentation with pydicom /"
+echo "     SimpleITK, crop to the ROI bounding box, quantize intensities to Ng"
+echo "     levels, and write the 'nx ny nz Ng' + intensities + mask text format"
+echo "     that data/README.md documents (this conversion is an exercise)."
+echo
+echo "For a larger SYNTHETIC problem instead, run:"
+echo "    python scripts/make_synthetic.py --nx 64 --ny 64 --nz 48 --ng 16"

@@ -1,121 +1,129 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load ASL study, fit CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 4.23 -- Arterial Spin Labeling & Perfusion Imaging   (template skeleton)
+// Project 4.23 : Arterial Spin Labeling & Perfusion Imaging
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load the multi-delay ASL study (data/sample/asl_sample.txt).
+//   2. CPU reference: fit every voxel serially (reference_cpu.cpp) -> trusted.
+//   3. GPU: one thread per voxel, same Gauss-Newton solver (kernels.cu).
+//   4. VERIFY: assert the GPU per-voxel (CBF, ATT) match the CPU to round-off,
+//      AND (a science check) that the fit RECOVERS the known ground-truth
+//      physiology used to synthesize the noise-free curves.
+//   5. REPORT: deterministic per-voxel + summary result to stdout; timing stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Anything that varies run-to-run (timings) goes to
+//   STDERR, which the demo shows but does not diff (docs/PATTERNS.md §3).
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// READ THIS FIRST in the code tour, then asl.h (the model + fit), kernels.cuh ->
+// kernels.cu (the GPU mapping), reference_cpu.cpp (the baseline + loader).
+// See ../THEORY.md for the "why".
 // ===========================================================================
+#include <cmath>      // std::fabs, std::fmax
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // fit_gpu (GPU path)
+#include "reference_cpu.h"    // HostDataset, load_asl, fit_cpu (CPU baseline)
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
+// Program identity (matches demo/expected_output.txt).
 static const char* PROJECT_ID   = "4.23";
 static const char* PROJECT_NAME = "Arterial Spin Labeling & Perfusion Imaging";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Correctness tolerances (docs/PATTERNS.md §4):
+//  * GPU-vs-CPU: both sides run the IDENTICAL double-precision asl_fit_voxel(),
+//    so they should agree to a few ULPs; 1e-9 is a safe round-off ceiling. (The
+//    only permitted divergence is FMA-contraction differences between the host
+//    and device compilers, which are ~1e-12 over this short computation.)
+static constexpr double TOL_GPU_CPU = 1.0e-9;
+//  * Ground-truth recovery: the sample curves are NOISE-FREE, so a converged
+//    Gauss-Newton fit should recover the true CBF/ATT to near round-off too. We
+//    allow a slightly looser 1e-4 to absorb the tiny residual of a finite
+//    iteration cap -- still a strong "the science works" check, not a fudge.
+static constexpr double TOL_RECOVER = 1.0e-4;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load the ASL study ---------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/asl_sample.txt";
+    HostDataset ds;
+    try {
+        ds = load_asl(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
     // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    std::vector<AslFit> fit_cpu_res;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    fit_cpu(ds, fit_cpu_res);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU fit (kernel timed inside the wrapper) ----------------------
+    std::vector<AslFit> fit_gpu_res;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    fit_gpu(ds, fit_gpu_res, &gpu_kernel_ms);
 
     // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // (a) GPU vs CPU: worst per-voxel disagreement in CBF and ATT.
+    double worst_gpu_cpu = 0.0;
+    // (b) recovery: worst |fit - truth| across voxels (the science check).
+    double worst_recover = 0.0;
+    for (int v = 0; v < ds.n_voxels; ++v) {
+        worst_gpu_cpu = std::fmax(worst_gpu_cpu,
+                                  std::fabs(fit_cpu_res[v].cbf - fit_gpu_res[v].cbf));
+        worst_gpu_cpu = std::fmax(worst_gpu_cpu,
+                                  std::fabs(fit_cpu_res[v].att - fit_gpu_res[v].att));
+        worst_recover = std::fmax(worst_recover,
+                                  std::fabs(fit_gpu_res[v].cbf - ds.true_cbf[v]));
+        worst_recover = std::fmax(worst_recover,
+                                  std::fabs(fit_gpu_res[v].att - ds.true_att[v]));
+    }
+    const bool pass_gpu_cpu = worst_gpu_cpu <= TOL_GPU_CPU;
+    const bool pass_recover = worst_recover <= TOL_RECOVER;
+    const bool pass = pass_gpu_cpu && pass_recover;
 
     // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("multi-delay ASL Buxton fit: %d voxels x %d PLDs, Levenberg-Marquardt (<=%d it)\n",
+                ds.n_voxels, ds.n_plds, ds.max_iters);
+    std::printf("PLDs (s):");
+    for (int j = 0; j < ds.n_plds; ++j) std::printf(" %.2f", ds.pld[j]);
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("per-voxel fit (true -> recovered):\n");
+    std::printf("  vox   CBF_true CBF_fit   ATT_true ATT_fit   iters\n");
+    for (int v = 0; v < ds.n_voxels; ++v) {
+        // %.3f keeps the printed digits deterministic (independent of tiny ULP
+        // noise below the 4th decimal) so stdout is byte-stable across machines.
+        std::printf("  v%-3d  %8.3f %7.3f   %8.3f %7.3f   %5d\n",
+                    v, ds.true_cbf[v], fit_gpu_res[v].cbf,
+                    ds.true_att[v], fit_gpu_res[v].att, fit_gpu_res[v].iters);
+    }
+    // Population-style summary (mean recovered CBF/ATT) -- the kind of number an
+    // ASL perfusion map is ultimately reduced to.
+    double mean_cbf = 0.0, mean_att = 0.0;
+    for (int v = 0; v < ds.n_voxels; ++v) {
+        mean_cbf += fit_gpu_res[v].cbf;
+        mean_att += fit_gpu_res[v].att;
+    }
+    mean_cbf /= ds.n_voxels; mean_att /= ds.n_voxels;
+    std::printf("mean recovered: CBF = %.3f mL/100g/min   ATT = %.3f s\n",
+                mean_cbf, mean_att);
+    std::printf("RESULT: %s (GPU==CPU within 1e-09; fit recovers ground truth within 1e-04)\n",
                 pass ? "PASS" : "FAIL");
 
     // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[data]   source: %s  (%d voxels, %d PLDs)\n",
+                 path.c_str(), ds.n_voxels, ds.n_plds);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernel: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact only -- with a few voxels the GPU is "
+                         "launch-bound; the win grows toward whole-brain (~10^5-10^6 voxels).\n");
+    std::fprintf(stderr, "[verify] worst |GPU-CPU| = %.3e (tol %.1e)   worst |fit-truth| = %.3e (tol %.1e)\n",
+                 worst_gpu_cpu, TOL_GPU_CPU, worst_recover, TOL_RECOVER);
 
     // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;

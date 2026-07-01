@@ -6,29 +6,50 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Arterial Spin Labeling (ASL) is a non-contrast MRI method that measures **brain
+perfusion** — how much arterial blood is delivered to tissue each minute. It works
+by magnetically "labeling" (inverting the spins of) water in arterial blood below
+the brain, waiting a **post-labeling delay (PLD)** for that blood to flow into the
+tissue, and subtracting a control image to isolate the tiny perfusion-weighted
+difference signal ΔM (only ~0.5–1% of the raw signal). In **multi-delay** ASL we
+acquire ΔM at several PLDs, giving each voxel an inflow *curve*. This project fits
+the **Buxton kinetic model** to that curve, per voxel, to recover two physiological
+quantities: **cerebral blood flow (CBF)** and **arterial transit time (ATT)**. Every
+voxel is an independent nonlinear least-squares fit, so we give each voxel its own
+GPU thread and solve them all in parallel.
 
 ## What this computes & why the GPU helps
 
-Arterial spin labeling (ASL) magnetically labels water protons in arterial blood upstream and images the resulting perfusion-weighted signal difference (labeled minus control). The signal change is only 0.5–1% of background signal, requiring averaging many pairs to achieve adequate SNR; acquisition of dynamic (time-resolved) ASL with 100+ pairs at 2 mm resolution produces datasets where kinetic model fitting (single/multi-delay Buxton model) per voxel is a Bayesian inverse problem amenable to GPU parallelization. Oxford_asl/BASIL uses variational Bayes inference, parallelized across voxels on GPU. 3D multi-delay ASL combined with compressed sensing requires per-timepoint NUFFT reconstruction — same GPU bottleneck as standard CS-MRI.
+Arterial spin labeling (ASL) magnetically labels water protons in arterial blood
+upstream and images the resulting perfusion-weighted signal difference (label minus
+control). The signal change is only 0.5–1% of background, so many pairs are averaged
+for SNR; multi-delay ASL produces datasets where **kinetic-model fitting per voxel**
+is the compute bottleneck. Oxford_asl/BASIL solves this as a Bayesian inverse problem
+parallelized across voxels on the GPU.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** the per-voxel model fit. A brain volume at 2 mm has
+~10⁵–10⁶ tissue voxels; each requires an iterative nonlinear least-squares solve of
+the Buxton model against its multi-delay curve. These fits are **mutually
+independent** — voxel *v*'s solution needs nothing from voxel *w*. That is the ideal
+GPU pattern: one thread per voxel, no communication, no shared state
+(docs/PATTERNS.md rows 1 & 8). We implement the standard **Levenberg-Marquardt**
+optimizer (the robust engine underneath oxford_asl's model fit) entirely in
+registers per thread.
 
 ## The algorithm in brief
 
-Buxton kinetic model (single/multi-delay), pulsed ASL (PASL), pseudo-continuous ASL (pCASL), Bayesian kinetic model fitting (BASIL), variational Bayes per voxel, compressed sensing 3D dynamic ASL, T1 partial-volume correction.
+- **Buxton general kinetic model** (single-compartment pCASL): a closed-form
+  ΔM(PLD; CBF, ATT) with three regimes (before arrival → arriving bolus → decaying
+  bolus).
+- **Per-voxel nonlinear least squares:** minimize Σⱼ (model(PLDⱼ) − ΔMⱼ)² over
+  (CBF, ATT).
+- **Levenberg-Marquardt** with analytic Jacobian, Marquardt diagonal scaling, and
+  adaptive damping (accept/reject steps) — robust to the ~1000× scale mismatch
+  between the CBF and ATT parameters.
+- **GPU mapping:** one thread per voxel; the shared PLD schedule lives in constant
+  memory (broadcast cache).
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
 derivation.
@@ -56,53 +77,95 @@ msbuild build\arterial-spin-labeling-perfusion-imaging.sln /p:Configuration=Rele
 ./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+The demo builds if needed, runs on `data/sample/asl_sample.txt`, prints the
+per-voxel fit, shows the GPU-vs-CPU agreement check and the ground-truth recovery
+check, and prints a timing line.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
+- **Sample (committed):** `data/sample/asl_sample.txt` — a tiny, offline synthetic
+  study (6 voxels × 7 PLDs) with **noise-free** Buxton curves and known ground-truth
+  CBF/ATT, so the fit's accuracy is checkable.
+- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent;
+  they print sources and never bypass credentials).
 - **Provenance & license:** see [data/README.md](data/README.md).
 
-Catalog dataset notes: HCP ASL data (https://db.humanconnectome.org/); OpenNeuro ASL datasets (https://openneuro.org/ — search "ASL"); ISMRM 2015 ASL challenge data; UK Biobank ASL pilot data.
+Catalog dataset notes: HCP ASL data (<https://db.humanconnectome.org/>); OpenNeuro
+ASL datasets (<https://openneuro.org/> — search "ASL"); ISMRM 2015 ASL challenge
+data; UK Biobank ASL pilot data.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt): each
+voxel's fitted CBF/ATT reproduces its ground-truth value, and the run ends with
+`RESULT: PASS`. The program fits every voxel on both the **GPU** (`src/kernels.cu`)
+and a **CPU reference** (`src/reference_cpu.cpp`) and asserts two things:
+
+1. **GPU == CPU** to ≤ 1e-9 (both call the identical double-precision solver in
+   `src/asl.h`; observed ~7e-15), and
+2. **fit recovers ground truth** to ≤ 1e-4 (noise-free data; observed ~1e-8).
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — loads the study, runs CPU + GPU, verifies, reports.
+2. [`src/asl.h`](src/asl.h) — **the heart**: the `__host__ __device__` Buxton model,
+   its analytic Jacobian, and the Levenberg-Marquardt fit (shared by CPU & GPU).
+3. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the one-thread-per-voxel
+   idea + constant memory for the PLDs.
+4. [`src/kernels.cu`](src/kernels.cu) — the kernel and host wrapper (alloc/copy/launch).
+5. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the loader + trusted serial baseline.
+6. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
 
 ## Prior art & further reading
 
-FSL BASIL (https://fsl.fmrib.ox.ac.uk/fsl/docs/physiological/basil.html) — Bayesian ASL analysis, GPU-parallelizable voxel fits; BART (https://github.com/mrirecon/bart) — dynamic ASL CS reconstruction; ExploreASL (https://github.com/ExploreASL/ExploreASL) — multi-center ASL pipeline; SigPy (https://github.com/mikgroup/sigpy) — dynamic CS-ASL reconstruction.
+- **FSL BASIL** (<https://fsl.fmrib.ox.ac.uk/fsl/docs/physiological/basil.html>) —
+  the reference Bayesian ASL analysis (variational Bayes over voxels); our LM fit is
+  the deterministic core it wraps with priors. Study its kinetic-model definitions.
+- **BART** (<https://github.com/mrirecon/bart>) — dynamic ASL compressed-sensing
+  reconstruction; relevant to the *upstream* CS-MRI stage (out of scope here).
+- **ExploreASL** (<https://github.com/ExploreASL/ExploreASL>) — a full multi-center
+  ASL pipeline; good for understanding preprocessing (motion, registration, PVC).
+- **SigPy** (<https://github.com/mikgroup/sigpy>) — GPU CS reconstruction primitives.
 
 Study these to learn the production approach; **do not copy code wholesale** —
 reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-Per-voxel independent Bayesian fit (one CUDA thread per voxel, Newton-Raphson or variational updates); cuBLAS for kinetic model matrix products; shared memory for model time-course templates; cuFFT for dynamic CS-ASL k-space reconstruction. --
+**Independent per-voxel fit — one CUDA thread per voxel.** Each thread runs the full
+Levenberg-Marquardt loop for its voxel in registers; the shared PLD schedule sits in
+`__constant__` memory (broadcast cache). This is the "same model, many parameter
+sets" pattern (docs/PATTERNS.md rows 1 & 8). We deliberately **do not** pull in
+cuBLAS here: the per-voxel normal equations are only 2×2, so a hand-written
+closed-form solve is faster and far more instructive than a batched library call —
+THEORY.md explains where cuBLAS/cuSOLVER *would* pay off (higher-parameter models).
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Add measurement noise.** Give `make_synthetic.py` a `--noise` flag (Gaussian on
+   ΔM) and watch the recovered CBF/ATT scatter; loosen `TOL_RECOVER` accordingly and
+   plot fitted vs. true. This is where a Bayesian prior (BASIL) starts to help.
+2. **Scale to a whole slice.** Generate `--voxels 1000000` and compare CPU vs. GPU
+   time — the GPU should overtake the CPU by a wide margin. Where does the crossover
+   sit on your card?
+3. **Single-delay ASL.** Fix ATT to a constant and fit CBF only from one PLD (the
+   clinical "single-delay" formula). Compare the CBF bias vs. the multi-delay fit.
+4. **Robustify the init.** Replace the fixed initial guess with a per-voxel estimate
+   (e.g. ATT from the PLD of peak signal). Does it cut the iteration count?
+5. **Partial-volume correction.** Split each voxel into grey/white fractions with
+   two CBFs and fit both — a small step toward the real BASIL PVC model.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Synthetic data.** The committed sample is generated (noise-free Buxton curves);
+  it is labeled synthetic everywhere. Real ΔM is noisy and needs averaging.
+- **Teaching model.** We fit the single-compartment pCASL model with **fixed,
+  assumed-known** T1/α/λ/τ; only CBF and ATT are estimated. Production ASL adds
+  dispersion, a macrovascular (arterial) component, T1 partial-volume correction,
+  and Bayesian priors (BASIL) — described in THEORY §"real world".
+- **No image reconstruction.** We start from already-reconstructed ΔM curves; the
+  upstream k-space / compressed-sensing NUFFT stage (BART/SigPy) is out of scope.
+- **Not clinical.** Outputs are a software demonstration of the kinetic fit, not a
+  perfusion measurement, and must not be used for diagnosis or treatment.

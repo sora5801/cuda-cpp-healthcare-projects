@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 4.26 -- Vessel Segmentation & Centerline Extraction   (template skeleton)
+# Project 4.26 : Vessel Segmentation & Centerline Extraction
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/vessel-segmentation-centerline-extraction.sln (CLAUDE.md §5). Both

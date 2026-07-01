@@ -2,7 +2,7 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 4.29 -- Light-Sheet Microscopy Reconstruction   (template skeleton)
+# Project 4.29 : Light-Sheet Microscopy Reconstruction
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
 # size + checksum, and NEVER bypasses credentials/registration. Defers to
@@ -18,16 +18,22 @@ echo "[download_data] Project 4.29 -- Light-Sheet Microscopy Reconstruction"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
 
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    OpenOrganelle (https://openorganelle.janelia.org/) — FIB-SEM and light-sheet neuroscience; EMBL LSFM public datasets (https://www.embl.org/); Zebrafish SPIM atlas data from Nature Methods papers; BioImage Archive LSFM collections (https://www.ebi.ac.uk/biostudies/bioimages)."
+# This teaching project runs on a SYNTHETIC sample (see scripts/make_synthetic.py
+# and data/README.md). Real light-sheet datasets are terabyte-scale volumes in
+# formats (TIFF/HDF5/N5/Zarr) that this tiny text-based loader does not read, and
+# several require a data-use agreement. So this script prints the public sources
+# and defers to the synthetic generator rather than downloading TBs.
+echo "  This project ships a SYNTHETIC sample; no download is required to run the demo."
+echo "  Regenerate or enlarge it with:"
+echo "    python scripts/make_synthetic.py                 # default 32x32 plane"
+echo "    python scripts/make_synthetic.py --h 64 --w 64   # a larger synthetic plane"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  Real, publicly-documented LSFM data sources (study these; formats differ"
+echo "  from this loader and some need registration -- respect every license):"
+echo "    - OpenOrganelle (Janelia):        https://openorganelle.janelia.org/"
+echo "    - EMBL LSFM public datasets:      https://www.embl.org/"
+echo "    - BioImage Archive (EBI) LSFM:    https://www.ebi.ac.uk/biostudies/bioimages"
+echo "    - Zebrafish SPIM atlas data:      from the Nature Methods SPIM papers"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "  For a credentialed set, register at the source FIRST; this script never"
+echo "  bypasses authentication (CLAUDE.md section 8)."

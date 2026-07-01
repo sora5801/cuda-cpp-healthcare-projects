@@ -1,5 +1,6 @@
 4.29 -- Light-Sheet Microscopy Reconstruction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Richardson-Lucy deconvolution (cuFFT, Fourier domain): 32x32 image, PSF sigma=1.60 px, 12 iterations
+input  (blurry)   : sum=69.1963  max=0.359447  L2=2.549701
+output (deblurred): sum=69.1963  max=0.786365  L2=3.173884
+sharpening        : peak x2.1877  L2 x1.2448  (flux ratio 1.0000)
+RESULT: PASS (GPU cuFFT matches CPU DFT within rel tol=1.0e-09)

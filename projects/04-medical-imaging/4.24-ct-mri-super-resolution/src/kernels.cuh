@@ -1,52 +1,48 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU super-resolution interface (the gather pattern)
 // ---------------------------------------------------------------------------
-// Project 4.24 -- CT/MRI Super-Resolution   (template skeleton)
+// Project 4.24 : CT/MRI Super-Resolution   (reduced-scope teaching version)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (imaging GATHER pattern; PATTERNS.md §1, exemplar 4.01)
+//   Super-resolution turns one LR image into an R x larger HR image. Every HR
+//   output pixel is computed INDEPENDENTLY: it looks up which LR cell + sub-pixel
+//   phase it belongs to, GATHERS the surrounding 3x3 LR neighbourhood, and runs
+//   a tiny two-layer conv network (feature conv + ReLU, then a sub-pixel conv
+//   selected by pixel-shuffle). No two output pixels talk to each other -> we map
+//   ONE GPU THREAD TO ONE HR OUTPUT PIXEL and let thousands run at once.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The per-pixel arithmetic is defined ONCE in sr_core.h (sr_hr_pixel), which
+//   is decorated __host__ __device__ so the CPU reference and this kernel run the
+//   identical math -> exact CPU/GPU agreement (PATTERNS.md §2).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   The network WEIGHTS are read by every thread but never change during the
+//   launch, so we stage them in CONSTANT memory (broadcast cache) -- see
+//   kernels.cu. main.cu calls super_resolve_gpu().
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: sr_core.h, reference_cpu.h, util/cuda_check.cuh, util/timer.cuh.
 // ===========================================================================
 #pragma once
 
-#include <vector>
+#include "reference_cpu.h"   // Image (pure C++, safe to include in a .cu)
+#include "sr_core.h"         // SrWeights, SR_SCALE (shared with the CPU side)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Threads per block along each axis: a 16x16 = 256-thread tile is a solid
+// occupancy default on sm_75..sm_89 for a 2-D output map (matches 4.01's choice).
+static constexpr int SR_BLOCK_X = 16;
+static constexpr int SR_BLOCK_Y = 16;
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// ---------------------------------------------------------------------------
+// super_resolve_gpu: host wrapper around the SR kernel.
+//   Uploads the LR image + weights, launches one thread per HR pixel, copies the
+//   HR result back. Fills *kernel_ms with the GPU-measured kernel time.
+//   Params:
+//     lr        : the low-res input image (host).
+//     W         : the network weights (host copy; uploaded to constant memory).
+//     scale     : upscale factor R (must equal SR_SCALE; asserted in the .cu).
+//     out       : receives the super-resolved HR image (size lr.w*R x lr.h*R).
+//     kernel_ms : out-param, GPU kernel time in milliseconds (teaching artifact).
+//   The output is deterministic: sr_hr_pixel does the same ops in the same order
+//   as the CPU reference, so out matches super_resolve_cpu() to (near) the bit.
+// ---------------------------------------------------------------------------
+void super_resolve_gpu(const Image& lr, const SrWeights& W, int scale,
+                       Image& out, float* kernel_ms);

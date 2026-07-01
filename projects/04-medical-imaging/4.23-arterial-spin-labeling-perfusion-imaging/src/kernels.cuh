@@ -1,52 +1,43 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU per-voxel ASL fit interface
 // ---------------------------------------------------------------------------
-// Project 4.23 -- Arterial Spin Labeling & Perfusion Imaging   (template skeleton)
+// Project 4.23 : Arterial Spin Labeling & Perfusion Imaging
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE PATTERN (independent jobs / "same model, many parameter sets")
+//   Every voxel's Buxton kinetic fit is INDEPENDENT of every other voxel, so we
+//   give each voxel its own GPU thread. The thread reads that voxel's measured
+//   delta-M curve, runs the shared Gauss-Newton solver (asl.h) entirely in
+//   registers, and writes one AslFit. There is NO inter-thread communication --
+//   pure data-parallelism across voxels (docs/PATTERNS.md rows 1 & 8). The PLD
+//   schedule is read by EVERY thread but never changes, so we place it in CUDA
+//   CONSTANT memory, whose broadcast cache is ideal for that access pattern
+//   (the same trick project 1.12 uses for its query fingerprint).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Because the fit math is the shared __host__ __device__ asl_fit_voxel(), the
+//   GPU result matches the CPU reference to round-off (verified in main.cu).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+// This header is included only by .cu files (it declares a __global__ kernel).
+// The pure-C++ types it needs (AslDataset, AslFit) come from reference_cpu.h,
+// which is CUDA-free and therefore safe to include from a .cu.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, asl.h. Then kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // HostDataset, AslDataset, AslFit (pure C++, .cu-safe)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Maximum PLDs we support in constant memory. Multi-delay ASL protocols use a
+// handful of delays (typically 5-8, sometimes up to ~12); 32 is comfortably
+// above any real schedule and keeps the constant-memory footprint tiny.
+static constexpr int ASL_MAX_PLDS = 32;
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// fit_gpu: fit every voxel on the GPU (one thread per voxel) and copy the
+//   AslFit results back to the host.
+//   ds        : the loaded study (owns host buffers; we upload signal[] + PLDs)
+//   fits      : host output, resized to ds.n_voxels (output parameter)
+//   kernel_ms : out-param, milliseconds spent in the fit kernel (CUDA-event timed,
+//               excludes the H2D/D2H copies -- see THEORY §"honest timing")
+// All CUDA bookkeeping (constant-memory upload, malloc/copy/free) is hidden here.
+void fit_gpu(const HostDataset& ds, std::vector<AslFit>& fits, float* kernel_ms);

@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 4.25 -- Image Harmonization Across Scanners/Sites   (template skeleton)
+# Project 4.25 : Image Harmonization Across Scanners/Sites
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/image-harmonization-across-scanners-sites.sln (CLAUDE.md §5). Both

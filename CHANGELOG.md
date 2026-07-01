@@ -1,5 +1,6 @@
 # Changelog — newest first; each entry links to its push-note in `push-notes/`.
 
+- 2026-07-01 #00 -- [phase2 batch5e medical-imaging analysis](push-notes/2026-07-01-00-phase2-batch5e-medical-imaging-analysis.md)
 - 2026-06-30 #11 -- [phase2 batch5d medical-imaging quantitative](push-notes/2026-06-30-11-phase2-batch5d-medical-imaging-quantitative.md)
 - 2026-06-30 #10 -- [phase2 batch5c medical-imaging modalities](push-notes/2026-06-30-10-phase2-batch5c-medical-imaging-modalities.md)
 - 2026-06-30 #09 -- [phase2 batch5b medical-imaging reconstruction](push-notes/2026-06-30-09-phase2-batch5b-medical-imaging-reconstruction.md)

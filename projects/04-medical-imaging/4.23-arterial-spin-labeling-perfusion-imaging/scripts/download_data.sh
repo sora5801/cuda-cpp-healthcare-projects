@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Point at REAL ASL datasets (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 4.23 -- Arterial Spin Labeling & Perfusion Imaging   (template skeleton)
+# Project 4.23 : Arterial Spin Labeling & Perfusion Imaging
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, and NEVER bypasses
+# credentials/registration. The real ASL datasets below are credentialed or
+# large, so this script only PRINTS where to get them and how; the committed
+# synthetic sample (scripts/make_synthetic.py) is what the demo actually runs.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,24 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 4.23 -- Arterial Spin Labeling & Perfusion Imaging"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    HCP ASL data (https://db.humanconnectome.org/); OpenNeuro ASL datasets (https://openneuro.org/ — search "ASL"); ISMRM 2015 ASL challenge data; UK Biobank ASL pilot data."
+echo "The demo runs on the committed SYNTHETIC sample (data/sample/asl_sample.txt),"
+echo "so no download is required. For real multi-delay ASL data, see:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  1) OpenNeuro ASL datasets (open, BIDS-formatted; search 'ASL'):"
+echo "       https://openneuro.org/"
+echo "     Many are directly downloadable (no credentials). Pick a multi-PLD/"
+echo "     multi-delay pCASL dataset; use the perf/ delta-M series + the PLD list."
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "  2) HCP ASL (Human Connectome Project, requires free registration + DUA):"
+echo "       https://db.humanconnectome.org/"
+echo
+echo "  3) ISMRM 2015 ASL challenge data (community reconstruction challenge)."
+echo
+echo "  4) UK Biobank ASL pilot data (requires an approved UK Biobank application)."
+echo
+echo "For (2)-(4) this script intentionally does NOT attempt to bypass login/DUA."
+echo "Register through the portal, then convert one subject's multi-delay delta-M"
+echo "series into the loader format documented in data/README.md."
+echo
+echo "Bigger SYNTHETIC study (no download): "
+echo "  python scripts/make_synthetic.py --voxels 1000000"

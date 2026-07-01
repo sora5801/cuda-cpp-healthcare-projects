@@ -1,52 +1,67 @@
 // ===========================================================================
 // src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 4.27 -- Radiomics Feature Extraction   (template skeleton)
+// Project 4.27 : Radiomics Feature Extraction
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   The "what the GPU offers" header. main.cu calls extract_features_gpu();
+//   kernels.cu implements the host wrapper and the device kernel. Included only
+//   by .cu translation units (it declares a __global__ kernel, so the plain C++
+//   compiler must never see it -- that is why the CPU reference lives in the
+//   separate pure-C++ reference_cpu.h).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+// THE BIG IDEA (parallel histogram / atomic co-occurrence scatter)
+//   The GLCM is a HISTOGRAM in disguise: for every ROI voxel and each of the 13
+//   neighbour directions, we want to add 1 to matrix cell (gray_i, gray_j). The
+//   voxels are independent, so we launch ONE THREAD PER VOXEL. Many voxels land
+//   on the same (i,j) cell, so the increments COLLIDE -> we use atomicAdd. The
+//   GLCM is tiny (Ng x Ng = 64 unsigned ints for Ng=8), so each block keeps its
+//   own copy in SHARED MEMORY, all threads in the block atomic-add into that fast
+//   on-chip copy, and one final atomic flush merges it into the global matrix.
+//   This "privatized histogram" slashes contention on the global cells.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   DETERMINISM: the accumulators are INTEGERS. Integer atomicAdd is associative
+//   and commutative, so the summed counts are identical regardless of thread
+//   order -- reproducible AND exactly equal to the serial CPU counts. (Float
+//   atomics would NOT be; see docs/PATTERNS.md section 3.) The GLCM->features and
+//   histogram->features reductions are then the SAME host code the CPU uses
+//   (reference_cpu.cpp), so the whole feature vector matches.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, radiomics.h,
+//                  reference_cpu.h. Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // Volume, Features, shared reductions (pure C++, safe in .cu)
+
+// ---- Device kernels ------------------------------------------------------
+
+// GLCM kernel: one thread per ROI-candidate voxel scatters co-occurrence pairs
+// into a block-private shared-memory GLCM, then flushes it to the global matrix.
+//   intensity, mask : device copies of the volume arrays ([nx*ny*nz])
+//   nx,ny,nz        : grid dimensions
+//   Ng              : gray levels; vmin,vmax : quantization range
+//   glcm            : [Ng*Ng] global unsigned-int count matrix (atomic target)
+__global__ void glcm_kernel(const float* __restrict__ intensity,
+                            const uint8_t* __restrict__ mask,
+                            int nx, int ny, int nz, int Ng,
+                            float vmin, float vmax,
+                            unsigned int* __restrict__ glcm);
+
+// Histogram kernel: one thread per voxel; ROI voxels atomic-add into the ROI
+// gray-level histogram (length Ng). Same parallel-histogram idea, one axis.
+__global__ void histogram_kernel(const float* __restrict__ intensity,
+                                 const uint8_t* __restrict__ mask,
+                                 int nx, int ny, int nz, int Ng,
+                                 float vmin, float vmax,
+                                 unsigned int* __restrict__ hist);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// extract_features_gpu: run the whole GPU pipeline -- upload the volume, launch
+//   the histogram + GLCM kernels, copy the tiny matrices back, then reuse the
+//   SHARED host reductions (first_order_from_histogram, haralick_from_glcm) so
+//   the features match the CPU exactly. Returns the feature bundle; reports the
+//   kernel time (CUDA events, GLCM + histogram launches) via *kernel_ms.
+Features extract_features_gpu(const Volume& v, float* kernel_ms);

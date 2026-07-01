@@ -1,12 +1,13 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real vessel-imaging dataset pointers (Windows)
 # ---------------------------------------------------------------------------
-# Project 4.26 -- Vessel Segmentation & Centerline Extraction   (template skeleton)
+# Project 4.26 : Vessel Segmentation & Centerline Extraction
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints the source URLs,
+# and NEVER bypasses credentials/registration. The real coronary/vessel datasets
+# require account registration or a challenge sign-up, so this script only prints
+# instructions + links; scripts/make_synthetic.py provides the offline stand-in
+# the demo actually uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,19 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.26 -- Vessel Segmentation & Centerline Extraction"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    ASOCA (Automated Segmentation of Coronary Arteries, https://asoca.grand-challenge.org/); VesselMAP (cerebral vessels, verify URL); IRCAD 3D-IRCADb-01 abdominal (https://www.ircad.fr/research/data-sets/liver-segmentation-3d-ircadb-01/); ImageCAS coronary artery dataset (https://github.com/XiaoweiXu/ImageCAS-A-Large-Scale-Dataset-and-Benchmark-for-Coronary-Artery-Segmentation-based-on-CT)."
+Write-Host "There is nothing to auto-download: the committed synthetic volume in"
+Write-Host "data/sample/vessel_volume.txt is enough to run the demo, and the real"
+Write-Host "datasets below need registration (do NOT try to bypass it)."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "REAL 3-D vessel datasets (register on the site, then export to NIfTI):"
+Write-Host "  ASOCA (coronary CTA challenge) : https://asoca.grand-challenge.org/"
+Write-Host "  ImageCAS (1000 coronary CTAs)  : https://github.com/XiaoweiXu/ImageCAS-A-Large-Scale-Dataset-and-Benchmark-for-Coronary-Artery-Segmentation-based-on-CT"
+Write-Host "  3D-IRCADb-01 (abdominal/liver) : https://www.ircad.fr/research/data-sets/liver-segmentation-3d-ircadb-01/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "To run this teaching filter on real data you must first convert a NIfTI/"
+Write-Host "DICOM volume into this project's plain-text format (see data/README.md)."
+Write-Host "A tiny converter is left as an exercise (README 'Exercises')."
+Write-Host ""
+Write-Host "Bigger SYNTHETIC volume (no download, fully offline):"
+Write-Host "  python scripts/make_synthetic.py --nx 128 --ny 96 --nz 96 --radius 4"

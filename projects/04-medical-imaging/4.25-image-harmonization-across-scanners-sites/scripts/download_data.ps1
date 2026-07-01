@@ -1,33 +1,37 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real multi-site imaging pointers (Windows)
 # ---------------------------------------------------------------------------
-# Project 4.25 -- Image Harmonization Across Scanners/Sites   (template skeleton)
+# Project 4.25 : Image Harmonization Across Scanners/Sites.
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
-#
-# Usage:  ./scripts/download_data.ps1
+# There is NOTHING to auto-download: every real multi-site imaging dataset below
+# requires registration / a data-use agreement, and most FORBID redistribution.
+# This script NEVER attempts to bypass credentials (CLAUDE.md §8). It prints the
+# official links and how to turn extracted features into our loader format; the
+# committed synthetic sample lets the demo run offline in the meantime.
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.25 -- Image Harmonization Across Scanners/Sites"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    ABIDE multi-site autism fMRI (http://fcon_1000.projects.nitrc.org/indi/abide/); UK Biobank imaging (https://www.ukbiobank.ac.uk/); ADNI (Alzheimer's disease, multi-scanner, https://adni.loni.usc.edu/); IXI multi-site brain MRI (https://brain-development.org/ixi-dataset/)."
+Write-Host "ComBat operates on EXTRACTED FEATURES (e.g. FreeSurfer regional volumes /"
+Write-Host "cortical thickness, or radiomic features), not raw voxels. Export a feature"
+Write-Host "table into the format in data/README.md:"
+Write-Host "    line 1 : N P B C"
+Write-Host "    line 2 : batch (scanner/site) label per sample"
+Write-Host "    N lines: C covariate values per sample (age, sex, ...)"
+Write-Host "    P lines: N feature values per line"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Public multi-site imaging datasets (registration / DUA required):"
+Write-Host "  ABIDE (autism, multi-site) : http://fcon_1000.projects.nitrc.org/indi/abide/"
+Write-Host "  ADNI  (Alzheimer's)        : https://adni.loni.usc.edu/"
+Write-Host "  IXI   (multi-site brain MRI): https://brain-development.org/ixi-dataset/"
+Write-Host "  UK Biobank imaging         : https://www.ukbiobank.ac.uk/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Reference implementation to compare against:"
+Write-Host "  NeuroComBat : https://github.com/Jfortin1/ComBatHarmonization"
+Write-Host ""
+Write-Host "No download needed -- generate a bigger SYNTHETIC set instead:"
+Write-Host "  python scripts/make_synthetic.py --p 200 --b 4 --n 120"
+Write-Host ""
+Write-Host "Target data dir: $ProjectRoot\data"

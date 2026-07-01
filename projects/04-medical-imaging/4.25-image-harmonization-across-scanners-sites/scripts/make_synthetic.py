@@ -1,49 +1,116 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate the synthetic multi-site sample
 # ---------------------------------------------------------------------------
-# Project 4.25 -- Image Harmonization Across Scanners/Sites   (template skeleton)
+# Project 4.25 : Image Harmonization Across Scanners/Sites
 #
 # WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+#   Real multi-site imaging (ABIDE, ADNI, UK Biobank, IXI) either needs
+#   credentials or forbids redistribution, so we cannot commit it. To keep the
+#   demo runnable OFFLINE we deterministically generate a clearly-SYNTHETIC
+#   stand-in that reproduces the phenomenon ComBat fixes: several scanners, each
+#   stamping a systematic location (mean) + scale (variance) shift onto every
+#   feature, on top of a shared biological signal we want to KEEP.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
+# THE GENERATIVE MODEL (so the demo is interpretable, PATTERNS.md §6)
+#   For sample n on scanner b, feature p:
+#       y = alpha_p                      (feature's grand mean)
+#         + beta_p * age_z_n             (biological covariate signal -- KEEP)
+#         + gamma_{p,b}                  (scanner location signature -- REMOVE)
+#         + delta_{p,b} * noise_{p,n}    (scanner scale signature   -- REMOVE)
+#   ComBat should collapse the across-scanner mean gap toward ~0 while leaving the
+#   age->feature relationship intact. We use a fixed seed so the committed sample
+#   and expected_output.txt never drift.
 #
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# OUTPUT FORMAT (matches load_dataset in src/reference_cpu.cpp)
+#   line 1 : N P B C
+#   line 2 : batch label (0..B-1) for each of the N samples
+#   next N lines : C covariate values per sample   (here C=1: standardized age)
+#   next P lines : N feature values per line        (one feature row per line)
 #
-# USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+# Usage:
+#   python make_synthetic.py [--out PATH] [--n N] [--p P] [--b B] [--seed S]
 # ===========================================================================
 import argparse
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+import os
+import random
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
-    args = ap.parse_args()
+def build(n_samples, n_features, n_batches, seed):
+    """Return (header, batch, cov_rows, feature_rows) as Python lists.
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    Everything is generated with the stdlib `random` module seeded once, so the
+    output is byte-identical across machines and Python versions (no NumPy RNG
+    version drift). Values are rounded to 6 decimals on write for a stable file.
+    """
+    rng = random.Random(seed)
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    # --- assign samples to scanners round-robin (balanced, deterministic) ------
+    batch = [n % n_batches for n in range(n_samples)]
+
+    # --- one biological covariate: standardized "age" in roughly [-1.5, 1.5] ---
+    # Evenly spread so the age->feature slope is easy to recover; this is the
+    # signal ComBat must PRESERVE while removing the scanner effect.
+    age = [((n / (n_samples - 1)) * 3.0 - 1.5) for n in range(n_samples)]
+
+    # --- per-feature grand mean and age slope ----------------------------------
+    alpha = [50.0 + 10.0 * rng.random() for _ in range(n_features)]      # grand mean
+    beta = [1.0 + 2.0 * rng.random() for _ in range(n_features)]         # age slope (KEEP)
+
+    # --- per-(feature,batch) scanner signature ---------------------------------
+    # Location gamma: a clear offset per scanner (some positive, some negative),
+    # jittered per feature. Scale delta: a per-scanner multiplier > 0.
+    gamma = [[(b - (n_batches - 1) / 2.0) * 3.0 + (rng.random() - 0.5) * 1.0
+              for b in range(n_batches)] for _ in range(n_features)]
+    delta = [[0.7 + 0.6 * b / max(1, n_batches - 1) + (rng.random() - 0.5) * 0.1
+              for b in range(n_batches)] for _ in range(n_features)]
+
+    # --- assemble the feature rows ---------------------------------------------
+    feature_rows = []
+    for p in range(n_features):
+        row = []
+        for n in range(n_samples):
+            b = batch[n]
+            noise = rng.gauss(0.0, 1.0)                 # unit within-scanner noise
+            y = (alpha[p]
+                 + beta[p] * age[n]                     # biology (preserve)
+                 + gamma[p][b]                          # scanner location (remove)
+                 + delta[p][b] * noise)                 # scanner scale (remove)
+            row.append(y)
+        feature_rows.append(row)
+
+    header = (n_samples, n_features, n_batches, 1)      # C = 1 covariate (age)
+    cov_rows = [[a] for a in age]
+    return header, batch, cov_rows, feature_rows
+
+
+def write(path, header, batch, cov_rows, feature_rows):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", newline="\n") as f:
+        f.write("# SYNTHETIC multi-site imaging FEATURE table (project 4.25).\n")
+        f.write("# NOT REAL PATIENT DATA. Generated by scripts/make_synthetic.py.\n")
+        f.write("# Format: 'N P B C' / batch labels / N cov rows / P feature rows.\n")
+        n, p, b, c = header
+        f.write(f"{n} {p} {b} {c}\n")
+        f.write(" ".join(str(x) for x in batch) + "\n")
+        for row in cov_rows:
+            f.write(" ".join(f"{v:.6f}" for v in row) + "\n")
+        for row in feature_rows:
+            f.write(" ".join(f"{v:.6f}" for v in row) + "\n")
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(description="Generate synthetic multi-site feature table (project 4.25).")
+    here = os.path.dirname(os.path.abspath(__file__))
+    default_out = os.path.join(here, "..", "data", "sample", "harmonization_sample.txt")
+    ap.add_argument("--out", default=default_out, help="output path")
+    ap.add_argument("--n", type=int, default=24, help="number of samples")
+    ap.add_argument("--p", type=int, default=12, help="number of features")
+    ap.add_argument("--b", type=int, default=3, help="number of scanners/batches")
+    ap.add_argument("--seed", type=int, default=42, help="RNG seed (fixed for reproducibility)")
+    args = ap.parse_args()
+
+    header, batch, cov_rows, feature_rows = build(args.n, args.p, args.b, args.seed)
+    write(os.path.normpath(args.out), header, batch, cov_rows, feature_rows)
+    print(f"wrote synthetic sample: {os.path.normpath(args.out)} "
+          f"(N={args.n}, P={args.p}, B={args.b}, C=1, seed={args.seed})")

@@ -6,32 +6,50 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Blood vessels in a 3-D CT-angiography (CTA) volume look like bright **tubes** on a
+darker background. This project implements the **Frangi vesselness filter** — the
+classic way to turn "how tube-like is the neighbourhood of each voxel?" into a
+score in `[0, 1]` — and runs it on the GPU with **one thread per voxel**. For each
+voxel we build the local **Hessian** (the 3×3 matrix of second derivatives),
+compute its three **eigenvalues**, and combine them into a vesselness score:
+high on vessels, ~0 in flat tissue. Thresholding the score gives a first-pass
+segmentation, and its peak along a vessel is a centerline seed. The GPU result is
+verified against a plain-C++ reference that runs the **identical** per-voxel math,
+so the two agree **exactly** on the demo.
 
 ## What this computes & why the GPU helps
 
-Vascular tree segmentation in CT angiography (CTA) detects tubular structures as small as 1–2 mm diameter in noisy 3D volumes; GPU-accelerated Hessian-based vesselness filters (Frangi) compute the full 3×3 Hessian eigenvalue decomposition per voxel — ~10⁶ symmetric 3×3 Eigen-decompositions for a clinical CTA. U-Net-based vessel segmentation processes the full 3D volume in overlapping patches, requiring GPU for interactive-speed inference. Centerline extraction via fast-marching or geodesic path algorithms is inherently sequential but GPU implementations exist via parallel priority queues. Clinical applications include coronary CTA FFRCT computation and aortic endograft planning.
+Vascular tree segmentation in CTA detects tubular structures as small as 1–2 mm in
+noisy 3-D volumes. The workhorse is the **Hessian-based vesselness filter**
+(Frangi 1998): it computes a **symmetric 3×3 eigenvalue decomposition per voxel**
+— roughly **10⁶–10⁸ eigendecompositions** for a clinical CTA. Downstream steps
+(3-D U-Net segmentation, fast-marching centerlines) also lean on the GPU.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck this project targets:** the per-voxel eigendecomposition.
+Every voxel's Hessian and eigenvalues depend only on its local 3×3×3
+neighbourhood, so the voxels are **fully independent** — a textbook "map" (one GPU
+thread computes one voxel, no communication, no atomics). This is where the GPU's
+throughput on ~10⁷ independent small linear-algebra problems dominates a serial CPU
+loop; the rest of a clinical pipeline (network inference, path finding) is out of
+scope for this teaching version (see THEORY §7).
 
 ## The algorithm in brief
 
-Hessian-based vesselness filter (Frangi, Sato), multi-scale vesselness (scale-space), 3D U-Net vessel segmentation, V-Net, nnDetection for tubular object detection, fast-marching centerline (FMM on GPU), minimum-path centerline (Dijkstra-like), vascular topology graph extraction.
+- **Gaussian pre-smoothing** at scale `σ` (separable 1-D passes) so the filter
+  responds to vessels of ~that radius.
+- **Hessian by finite differences** — the 6 unique second derivatives per voxel.
+- **Closed-form symmetric 3×3 eigenvalues** (Cardano / trigonometric formula) —
+  deterministic, no iteration, so CPU and GPU match to ~1e-9.
+- **Frangi vesselness** from the eigenvalue ratios `R_A`, `R_B` and the
+  structureness `S`, with a sign gate for bright-on-dark vessels.
+- **Segmentation + centerline seed** — threshold the score; report the peak voxel.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+Catalog also lists multi-scale vesselness, 3-D U-Net / V-Net, and fast-marching
+centerlines; those are discussed as the real-world pipeline in
+[THEORY.md](THEORY.md), which has the full science → math → algorithm →
+GPU-mapping derivation.
 
 ## Build
 
@@ -49,6 +67,10 @@ Command-line alternative (Developer PowerShell):
 msbuild build\vessel-segmentation-centerline-extraction.sln /p:Configuration=Release /p:Platform=x64
 ```
 
+This project links only the CUDA runtime (`cudart_static.lib`) — no extra CUDA
+libraries, since the eigendecomposition is hand-rolled on purpose (that is the
+lesson).
+
 ## Run the demo
 
 ```powershell
@@ -56,53 +78,103 @@ msbuild build\vessel-segmentation-centerline-extraction.sln /p:Configuration=Rel
 ./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+The demo builds if needed, runs on `data/sample/vessel_volume.txt`, prints the
+peak-vesselness voxel + segmented voxel count + the across-vessel response profile,
+shows the GPU-vs-CPU agreement check, and prints a timing line.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
+- **Sample (committed):** `data/sample/vessel_volume.txt` — a tiny 24×16×16
+  synthetic volume with one embedded bright vessel, so the demo runs offline with
+  zero downloads.
+- **Full dataset:** `scripts/download_data.ps1` / `.sh` print links/instructions
+  (the real sets need registration; the scripts never bypass it).
 - **Provenance & license:** see [data/README.md](data/README.md).
 
-Catalog dataset notes: ASOCA (Automated Segmentation of Coronary Arteries, https://asoca.grand-challenge.org/); VesselMAP (cerebral vessels, verify URL); IRCAD 3D-IRCADb-01 abdominal (https://www.ircad.fr/research/data-sets/liver-segmentation-3d-ircadb-01/); ImageCAS coronary artery dataset (https://github.com/XiaoweiXu/ImageCAS-A-Large-Scale-Dataset-and-Benchmark-for-Coronary-Artery-Segmentation-based-on-CT).
+Real datasets: ASOCA (<https://asoca.grand-challenge.org/>), ImageCAS
+(<https://github.com/XiaoweiXu/ImageCAS-A-Large-Scale-Dataset-and-Benchmark-for-Coronary-Artery-Segmentation-based-on-CT>),
+3D-IRCADb-01 (<https://www.ircad.fr/research/data-sets/liver-segmentation-3d-ircadb-01/>).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt). The key
+line is the **across-vessel profile** — a clean single-peak ridge
+(`… 0.16 0.63 0.63 0.16 …`) that is zero away from the tube, i.e. the filter has
+localized the vessel. The program computes the vesselness on both the **GPU**
+(`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`) and asserts
+they agree; here the max difference is **`0.000e+00`** (they run identical math),
+so `RESULT: PASS`.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — loads the volume, smooths it, runs CPU + GPU,
+   verifies, and prints the deterministic report.
+2. [`src/frangi.h`](src/frangi.h) — **the heart**: the shared `__host__ __device__`
+   per-voxel math (finite-difference Hessian, closed-form 3×3 eigenvalues, Frangi
+   score). Read this to understand *what* is being computed.
+3. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the serial pipeline (loader,
+   separable Gaussian smooth, per-voxel loop, deterministic summary).
+4. [`src/kernels.cuh`](src/kernels.cuh) → [`src/kernels.cu`](src/kernels.cu) — the
+   GPU twin: one thread per voxel calling the same `frangi.h` functions.
+5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, CUDA-event timer, host I/O.
 
 ## Prior art & further reading
 
-VMTK (Vascular Modeling Toolkit, https://github.com/vmtk/vmtk) — centerline extraction, meshing, CFD integration; SlicerVMTK (https://github.com/vmtk/SlicerExtension-VMTK) — 3D Slicer integration; MONAI (https://github.com/Project-MONAI/MONAI) — 3D vessel segmentation networks; nnDetection (https://github.com/MIC-DKFZ/nnDetection) — GPU object detection for tubular structures.
+- **VMTK** (Vascular Modeling Toolkit, <https://github.com/vmtk/vmtk>) — the
+  reference open-source toolkit for centerline extraction and vascular meshing.
+  Study how it turns a segmentation into a **graph** of centerlines with radii.
+- **SlicerVMTK** (<https://github.com/vmtk/SlicerExtension-VMTK>) — VMTK inside
+  3D Slicer; good for seeing the interactive clinical workflow.
+- **MONAI** (<https://github.com/Project-MONAI/MONAI>) — 3-D vessel-segmentation
+  networks (U-Net/V-Net); study how learned segmentation complements the classic
+  Hessian filter (the filter is a strong hand-crafted prior / preprocessing step).
+- **nnDetection** (<https://github.com/MIC-DKFZ/nnDetection>) — GPU object
+  detection framing for tubular structures.
 
-Study these to learn the production approach; **do not copy code wholesale** —
+Study these for the production approach; **do not copy code wholesale** —
 reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-Custom CUDA Hessian kernel (per-voxel 3×3 eigendecomposition using Jacobi iteration); cuDNN (3D U-Net inference); GPU priority queue for parallel fast-marching (thrust); shared memory for neighborhood gradient computation. --
+The **map** pattern (docs/PATTERNS.md §1, exemplified by the stencil/per-element
+flagships): one GPU thread per voxel, a 3-D grid of 3-D blocks over the volume, no
+atomics or shared memory in the teaching version. The per-voxel physics lives in a
+single shared `__host__ __device__` header (`frangi.h`, PATTERNS.md §2) so the CPU
+reference and the GPU kernel are byte-for-byte identical. The catalog also mentions
+Jacobi iteration, cuDNN, and Thrust priority queues; this project uses the
+**closed-form** eigensolver (deterministic, exact) instead of Jacobi and leaves the
+learned/graph steps to THEORY §7.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Move the smoothing onto the GPU.** Today the separable Gaussian runs on the
+   host; write three 1-D convolution kernels (with shared-memory halos) and keep
+   the whole pipeline on the device.
+2. **Multi-scale vesselness.** Run the filter at several `σ` values and take the
+   per-voxel **max** response — the standard way to catch vessels of different
+   radii. Add a `--scales` list to `make_synthetic.py`'s companion.
+3. **Shared-memory tiling.** The map kernel re-reads each neighbour up to 27×;
+   stage a block's tile+halo into shared memory and measure the bandwidth win.
+4. **A real converter.** Write a small Python tool that reads a NIfTI CTA volume
+   (via `nibabel`), crops a region, and writes this project's text format, so the
+   filter runs on ASOCA/ImageCAS data.
+5. **Eigenvectors + direction.** Extend `frangi.h` to also return the eigenvector
+   of the smallest-magnitude eigenvalue (the vessel direction) and trace a crude
+   centerline by walking along it from the peak seed.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- The committed volume is **synthetic** — one straight bright tube plus noise. It
+  is engineered so the result is verifiable; it is **not** a real angiogram.
+- This is **single-scale** Frangi; real pipelines are multi-scale and often follow
+  with a learned network. The "centerline" here is only the **peak-response voxel**
+  (a seed), not the graph VMTK produces.
+- The peak voxel in the demo sits at the `x = 23` volume boundary: clamp-to-edge
+  borders slightly inflate the response at the tube's ends. This is an honest
+  finite-difference edge effect, not a bug (see THEORY §5); a larger `nx` or edge
+  masking moves the peak into the interior.
+- Timings are a **teaching artifact, not a benchmark**: on this tiny volume the
+  kernel is launch/copy-bound. The GPU's edge grows with clinical-size volumes.
+- **Not for clinical use.** No diagnostic or therapeutic claim is made or implied.

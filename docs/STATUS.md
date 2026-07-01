@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 135/301 projects done (44.9%) | todo 166 | in-progress 0 | missing 0
+**Progress:** 141/301 projects done (46.8%) | todo 160 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 45 | 0 | 22 |
-| 🟡 Intermediate | 206 | 84 | 0 | 122 |
+| 🟡 Intermediate | 206 | 90 | 0 | 116 |
 | 🔴 Advanced | 28 | 6 | 0 | 22 |
 
 ## 1. Drug Discovery & Molecular Design  (35/35 done)
@@ -125,7 +125,7 @@
 | 3.29 | Motif Finding in Genomic Sequences | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 3.30 | Pangenome Graph Construction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 
-## 4. Medical Imaging & Image Reconstruction  (25/33 done)
+## 4. Medical Imaging & Image Reconstruction  (31/33 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -151,13 +151,13 @@
 | 4.20 | Dual-Energy / Spectral CT Reconstruction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 4.21 | MR Fingerprinting Reconstruction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 4.22 | Quantitative Susceptibility Mapping (QSM) | 🟡 Intermediate | Active R&D | [x] done | - | - |
-| 4.23 | Arterial Spin Labeling & Perfusion Imaging | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 4.24 | CT/MRI Super-Resolution | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 4.25 | Image Harmonization Across Scanners/Sites | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 4.26 | Vessel Segmentation & Centerline Extraction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 4.27 | Radiomics Feature Extraction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 4.23 | Arterial Spin Labeling & Perfusion Imaging | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 4.24 | CT/MRI Super-Resolution | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 4.25 | Image Harmonization Across Scanners/Sites | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 4.26 | Vessel Segmentation & Centerline Extraction | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 4.27 | Radiomics Feature Extraction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 4.28 | GPU-Accelerated DRR Generation for 2D/3D Registration | 🟢 Beginner | Established | [x] done | worker-4.28 | - |
-| 4.29 | Light-Sheet Microscopy Reconstruction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 4.29 | Light-Sheet Microscopy Reconstruction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 4.30 | Deconvolution Microscopy | 🟢 Beginner | Established | [x] done | - | - |
 | 4.31 | Virtual Colonoscopy & CT Colonography | 🟢 Beginner | Established | [x] done | - | - |
 | 4.32 | GPU-Accelerated Landmark Detection | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

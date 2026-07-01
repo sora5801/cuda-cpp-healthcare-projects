@@ -153,6 +153,9 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- sr_core.h : the __host__ __device__ per-pixel network math, shared by
+         reference_cpu.cpp (host) and kernels.cu (device) so CPU==GPU exactly. -->
+    <ClInclude Include="..\src\sr_core.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

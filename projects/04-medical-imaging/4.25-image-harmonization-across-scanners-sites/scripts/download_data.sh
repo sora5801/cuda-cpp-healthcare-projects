@@ -1,33 +1,38 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real multi-site imaging pointers (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 4.25 -- Image Harmonization Across Scanners/Sites   (template skeleton)
+# Project 4.25 : Image Harmonization Across Scanners/Sites.
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# There is NOTHING to auto-download: every real multi-site imaging dataset below
+# requires registration / a data-use agreement, and most FORBID redistribution.
+# This script NEVER attempts to bypass credentials (CLAUDE.md §8). It prints the
+# official links and how to turn extracted features into our loader format; the
+# committed synthetic sample lets the demo run offline in the meantime.
 # ===========================================================================
 set -euo pipefail
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "[download_data] Project 4.25 -- Image Harmonization Across Scanners/Sites"
-echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    ABIDE multi-site autism fMRI (http://fcon_1000.projects.nitrc.org/indi/abide/); UK Biobank imaging (https://www.ukbiobank.ac.uk/); ADNI (Alzheimer's disease, multi-scanner, https://adni.loni.usc.edu/); IXI multi-site brain MRI (https://brain-development.org/ixi-dataset/)."
+echo "ComBat operates on EXTRACTED FEATURES (e.g. FreeSurfer regional volumes /"
+echo "cortical thickness, or radiomic features), not raw voxels. Export a feature"
+echo "table into the format in data/README.md:"
+echo "    line 1 : N P B C"
+echo "    line 2 : batch (scanner/site) label per sample"
+echo "    N lines: C covariate values per sample (age, sex, ...)"
+echo "    P lines: N feature values per line"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Public multi-site imaging datasets (registration / DUA required):"
+echo "  ABIDE (autism, multi-site)  : http://fcon_1000.projects.nitrc.org/indi/abide/"
+echo "  ADNI  (Alzheimer's)         : https://adni.loni.usc.edu/"
+echo "  IXI   (multi-site brain MRI): https://brain-development.org/ixi-dataset/"
+echo "  UK Biobank imaging          : https://www.ukbiobank.ac.uk/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Reference implementation to compare against:"
+echo "  NeuroComBat : https://github.com/Jfortin1/ComBatHarmonization"
+echo
+echo "No download needed -- generate a bigger SYNTHETIC set instead:"
+echo "  python scripts/make_synthetic.py --p 200 --b 4 --n 120"
+echo
+echo "Target data dir: $ROOT/data"

@@ -1,94 +1,127 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  GPU per-voxel ASL Buxton fit (one thread per voxel)
 // ---------------------------------------------------------------------------
-// Project 4.23 -- Arterial Spin Labeling & Perfusion Imaging   (template skeleton)
+// Project 4.23 : Arterial Spin Labeling & Perfusion Imaging
 //
 // WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
+//   The GPU twin of fit_cpu(): thread `v` fits voxel `v` by calling the shared
+//   asl_fit_voxel() (asl.h) -- the same Gauss-Newton solve the CPU reference
+//   runs -- and writes one AslFit. main.cu runs both and checks agreement.
 //
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
+//   Two teaching points live here:
+//     (1) CONSTANT MEMORY for the PLD schedule: it is read by every thread but
+//         is identical across the launch, so the constant cache broadcasts one
+//         value to a whole warp in a single transaction (cf. project 1.12).
+//     (2) The canonical five-step host wrapper (alloc / H2D / launch / D2H /
+//         free), with the kernel timed by CUDA events (util/timer.cuh).
 //
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// READ THIS AFTER: kernels.cuh (the pattern + declarations) and asl.h (the math).
 // ===========================================================================
 #include "kernels.cuh"
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// Threads per block. 128 is a solid default here: the fit is register- and
+// compute-heavy (a few Gauss-Newton iterations, each a loop over PLDs), so we do
+// not need a huge block to hide memory latency; 128 keeps register pressure low
+// enough for good occupancy on sm_75..sm_89 while still giving 4 warps/block.
+static constexpr int THREADS_PER_BLOCK = 128;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
+// CONSTANT MEMORY: the shared PLD schedule.
+//   __constant__ memory is a small (64 KB) read-only space cached by a dedicated
+//   broadcast cache. Every thread reads the SAME pld[j] at step j, so a warp's 32
+//   reads collapse to one -- the perfect use case. We copy the host PLDs here
+//   once per launch with cudaMemcpyToSymbol.
+// ---------------------------------------------------------------------------
+__constant__ double c_pld[ASL_MAX_PLDS];   // [n_plds] delay schedule (s)
+
+// ---------------------------------------------------------------------------
+// asl_fit_kernel: thread v owns voxel v.
+//   Launch config (set in fit_gpu):
+//     grid  = ceil(n_voxels / THREADS_PER_BLOCK) blocks
 //     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+//   Thread-to-data map: v = blockIdx.x * blockDim.x + threadIdx.x.
+//   Memory: reads this voxel's signal row from global memory and the PLDs from
+//   constant memory; the whole Gauss-Newton state lives in registers; writes one
+//   AslFit to global memory. No shared memory or atomics -- voxels are independent.
+//
+//   We rebuild a local AslDataset `view` that points the model at the CONSTANT-
+//   memory PLDs (c_pld) instead of the global copy, so the hot inner loop reads
+//   delays from the broadcast cache. Everything else (signal pointer, constants,
+//   fit controls) is copied by value from the passed `meta`.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void asl_fit_kernel(AslDataset meta,
+                               const double* __restrict__ d_signal,
+                               AslFit* __restrict__ d_fits) {
+    const int v = blockIdx.x * blockDim.x + threadIdx.x;
+    if (v >= meta.n_voxels) return;         // guard the ragged last block
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+    // Point the model at constant-memory PLDs and the device signal buffer.
+    AslDataset view = meta;                 // value copy (counts, constants, controls)
+    view.pld    = c_pld;                    // broadcast-cached delay schedule
+    view.signal = d_signal;                 // device-resident measured curves
+
+    // The identical shared solver the CPU reference calls -> matching result.
+    d_fits[v] = asl_fit_voxel(view, v);
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
+// fit_gpu: host wrapper. The five canonical steps of a CUDA computation:
+//   (0) upload the PLD schedule to constant memory
+//   (1) allocate device memory for the signal + the fit outputs
+//   (2) copy the signal host->device
+//   (3) launch the kernel (one thread per voxel), timed with CUDA events
+//   (4) copy the AslFit results device->host
 //   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// We time ONLY step (3) so the reported figure is the fit cost, not the PCIe
+// transfer cost (discussed separately in THEORY §"honest timing").
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void fit_gpu(const HostDataset& ds, std::vector<AslFit>& fits, float* kernel_ms) {
+    const int   nV = ds.n_voxels;
+    const int   nP = ds.n_plds;
+    const size_t sig_bytes = (size_t)nV * nP * sizeof(double);
+    const size_t fit_bytes = (size_t)nV * sizeof(AslFit);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
+    fits.assign(nV, AslFit{});
+
+    // Guard: constant-memory PLD buffer is fixed-size; refuse an oversized schedule.
+    if (nP > ASL_MAX_PLDS) {
+        std::fprintf(stderr, "[fit_gpu] n_plds=%d exceeds ASL_MAX_PLDS=%d\n", nP, ASL_MAX_PLDS);
+        std::exit(EXIT_FAILURE);
+    }
+
+    // (0) Upload the delay schedule into constant memory (broadcast cache).
+    CUDA_CHECK(cudaMemcpyToSymbol(c_pld, ds.pld.data(), (size_t)nP * sizeof(double)));
+
+    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md §12):
     //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    double* d_signal = nullptr;
+    AslFit* d_fits   = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_signal, sig_bytes));   // can fail: out of device memory
+    CUDA_CHECK(cudaMalloc(&d_fits,   fit_bytes));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // (2) Copy the measured signal curves H2D. .data() is vector's contiguous store.
+    CUDA_CHECK(cudaMemcpy(d_signal, ds.signal.data(), sig_bytes, cudaMemcpyHostToDevice));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // A metadata view WITHOUT valid pointers: the kernel overwrites pld/signal with
+    // the constant-memory and device pointers. We pass it by value (small struct).
+    AslDataset meta = ds.view();
+    meta.pld    = nullptr;   // replaced by c_pld inside the kernel
+    meta.signal = nullptr;   // replaced by d_signal inside the kernel
+
+    // (3) Launch. Blocks must cover all voxels -> ceiling division (round up).
+    const int blocks = (nV + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    asl_fit_kernel<<<blocks, THREADS_PER_BLOCK>>>(meta, d_signal, d_fits);
+    *kernel_ms = timer.stop_ms();           // GPU-measured kernel time
+    CUDA_CHECK_LAST("asl_fit_kernel");      // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // (4) Bring the fitted physiology back to the host.
+    CUDA_CHECK(cudaMemcpy(fits.data(), d_fits, fit_bytes, cudaMemcpyDeviceToHost));
 
     // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    CUDA_CHECK(cudaFree(d_signal));
+    CUDA_CHECK(cudaFree(d_fits));
 }

@@ -1,12 +1,12 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 4.24 -- CT/MRI Super-Resolution   (template skeleton)
+# Project 4.24 : CT/MRI Super-Resolution
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The real CT/MRI SR datasets require
+# accounts and/or forbid redistribution, so this script prints instructions +
+# links ONLY and defers to scripts/make_synthetic.py for an offline stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,21 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.24 -- CT/MRI Super-Resolution"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    HCP 7T/3T paired brain MRI (https://db.humanconnectome.org/); fastMRI (https://fastmri.med.nyu.edu/) — implicitly used for SR evaluation; IXI brain MRI dataset (https://brain-development.org/ixi-dataset/); MSD CT tasks for resolution enhancement."
+Write-Host "The committed sample data/sample/phantom_hr.txt (SYNTHETIC) already lets"
+Write-Host "the demo run offline. Real datasets below require registration -- this"
+Write-Host "script does NOT bypass it; it only prints where to get them."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real CT/MRI super-resolution datasets (register + accept terms yourself):"
+Write-Host "  * HCP 7T/3T paired brain MRI : https://db.humanconnectome.org/"
+Write-Host "  * fastMRI                     : https://fastmri.med.nyu.edu/"
+Write-Host "  * IXI brain MRI (CC BY-SA 3.0): https://brain-development.org/ixi-dataset/"
+Write-Host "  * MSD CT/MRI tasks           : http://medicaldecathlon.com/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "To turn a real slice into this project's input format:"
+Write-Host "  1) load one axial slice, normalize intensities to [0,1];"
+Write-Host "  2) crop/pad both dims to a multiple of SR_SCALE (=2);"
+Write-Host "  3) write '<w> <h>' then w*h floats row-major (see data/README.md)."
+Write-Host ""
+Write-Host "For a larger SYNTHETIC phantom instead, run:"
+Write-Host "  python scripts/make_synthetic.py --size 128"

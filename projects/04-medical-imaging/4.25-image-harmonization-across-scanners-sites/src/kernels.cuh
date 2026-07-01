@@ -1,52 +1,39 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU ComBat interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 4.25 -- Image Harmonization Across Scanners/Sites   (template skeleton)
+// Project 4.25 : Image Harmonization Across Scanners/Sites
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (pattern: ENSEMBLE OF INDEPENDENT PER-FEATURE SOLVES)
+//   ComBat harmonizes every FEATURE independently: fit a small regression,
+//   estimate this feature's per-batch location/scale, shrink them toward the
+//   panel-wide empirical-Bayes priors, and subtract the batch signature. Because
+//   feature p never touches feature q, the natural GPU mapping is ONE THREAD PER
+//   FEATURE -- thread p runs the entire ComBat pipeline for row p in registers.
+//   No shared memory, no atomics, no cross-thread reduction: the same "ensemble
+//   of tiny solves" shape as the ODE-ensemble flagships (9.02 SEIR, 13.02 PBPK).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The per-feature math is the SHARED __host__ __device__ core cb_harmonize_
+//   feature() in combat.h, so the GPU thread and the CPU reference execute
+//   byte-for-byte identical arithmetic (PATTERNS.md §2) -> exact verification.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   The design matrix and the EB priors are computed ONCE on the host (they are
+//   the same across features, and the prior fit is a cheap across-feature reduce)
+//   and uploaded read-only; kernels.cu just launches the per-feature kernel.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: combat.h, reference_cpu.h, util/cuda_check.cuh, util/timer.cuh.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // Dataset + build_design + estimate_priors (pure C++)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
-
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// combat_gpu: harmonize the whole [P x N] feature table on the GPU.
+//   Inputs mirror combat_cpu(): the dataset, the shared design matrix, the EB
+//   priors, and the per-batch sample counts (all host vectors; copied to device
+//   inside). Fills `out` [P*N] with the harmonized table and returns the GPU
+//   kernel time via kernel_ms (CUDA-event measured, kernel only -- not copies).
+void combat_gpu(const Dataset& d, const std::vector<double>& design,
+                const std::vector<double>& gamma_bar, const std::vector<double>& tau2,
+                const std::vector<double>& a_prior,   const std::vector<double>& b_prior,
+                const std::vector<int>&    batch_n,
+                std::vector<double>& out, float* kernel_ms);

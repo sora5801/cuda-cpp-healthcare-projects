@@ -31,3 +31,10 @@ add_executable(light-sheet-microscopy-reconstruction
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(light-sheet-microscopy-reconstruction PRIVATE src)
+
+# Link cuFFT: this project convolves in the Fourier domain (Richardson-Lucy
+# deconvolution), so kernels.cu calls cufftExecD2Z / cufftExecZ2D every RL
+# iteration. CUDA::cufft is the modern imported target from FindCUDAToolkit;
+# hand-rolling a batched 2D FFT would be hundreds of lines and far slower.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(light-sheet-microscopy-reconstruction PRIVATE CUDA::cufft)

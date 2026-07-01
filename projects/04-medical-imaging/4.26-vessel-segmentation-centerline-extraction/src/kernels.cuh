@@ -1,52 +1,48 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU vesselness interface
 // ---------------------------------------------------------------------------
-// Project 4.26 -- Vessel Segmentation & Centerline Extraction   (template skeleton)
+// Project 4.26 : Vessel Segmentation & Centerline Extraction
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (the "map" pattern)
+//   The Frangi vesselness of a voxel depends only on its local 3x3x3
+//   neighbourhood (to form the Hessian by finite differences). Every voxel's
+//   score is therefore INDEPENDENT -- a textbook "map": one GPU thread computes
+//   one voxel. We launch a 3-D grid of 3-D thread blocks over the volume; thread
+//   (x,y,z) owns output voxel (x,y,z). No atomics, no cross-thread communication.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The per-voxel math (Hessian eigenvalues + Frangi score) is the SHARED
+//   frangi.h, so the kernel reproduces the CPU reference to ~1e-9.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Note: the Gaussian pre-smoothing is done ONCE on the host (it is a separable
+//   convolution both paths share); the kernel takes the already-smoothed volume.
+//   Smoothing on the GPU too is a natural exercise (THEORY / README).
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, frangi.h, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // Volume, FrangiParams (pure C++, safe in a .cu)
 
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// vesselness_kernel: thread (x,y,z) computes the Frangi score of its voxel.
+//   nx,ny,nz : volume dimensions (guard the ragged edge blocks)
+//   s        : device pointer to the SMOOTHED volume (nx*ny*nz floats)
+//   fp       : Frangi parameters (passed by value -> in each thread's registers)
+//   vness    : device pointer to the nx*ny*nz output scores
+__global__ void vesselness_kernel(int nx, int ny, int nz,
+                                  const float* __restrict__ s,
+                                  FrangiParams fp,
+                                  float* __restrict__ vness);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// vesselness_gpu: run the whole GPU vesselness computation.
+//   Takes the host-side SMOOTHED volume, uploads it, launches the kernel over a
+//   3-D grid, downloads the score field, and reports the measured KERNEL time
+//   (CUDA events) via *kernel_ms. main.cu calls exactly this.
+//     smoothed : host input (already Gaussian-smoothed on the host)
+//     fp       : Frangi parameters
+//     vness    : host output, resized to nx*ny*nz (output parameter)
+//     kernel_ms: out-param, milliseconds spent in the kernel (not copies)
+void vesselness_gpu(const Volume& smoothed, const FrangiParams& fp,
+                    std::vector<float>& vness, float* kernel_ms);

@@ -1,5 +1,8 @@
 4.26 -- Vessel Segmentation & Centerline Extraction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+volume: 24x16x16 voxels, sigma=1.50, alpha=0.50 beta=0.50 c=15.0, bright-on-dark
+Frangi vesselness: peak = 0.633602 at voxel (23,7,7)
+segmentation: 96 voxels with vesselness >= 0.50
+vesselness checksum (sum*1000, rounded) = 91284
+across-vessel vesselness profile v(y) at x=23 z=7:
+ 0.0000 0.0000 0.0000 0.0000 0.0000 0.0000 0.1619 0.6336 0.6294 0.1583 0.0000 0.0000 0.0000 0.0000 0.0000 0.0000
+RESULT: PASS (GPU vesselness matches CPU within tol=1.0e-06)

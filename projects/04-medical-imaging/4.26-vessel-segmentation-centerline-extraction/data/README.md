@@ -1,37 +1,61 @@
 # Data — 4.26 Vessel Segmentation & Centerline Extraction
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/vessel_volume.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
+| Origin | **Synthetic** 3-D volume (`scripts/make_synthetic.py`, fixed seed 42) |
 | License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Size | ~54 KB, 24 × 16 × 16 = 6144 voxels |
+| Contents | one bright cylindrical "vessel" along the x-axis + seeded noise |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+This project's input is a small **3-D intensity volume**. The committed sample
+embeds a single **known** structure — a straight bright tube of radius 2 voxels
+running along x through the (y, z) center — so the Frangi filter's response is
+**interpretable and checkable**: vesselness should peak on the tube axis, be
+near-zero away from it, and a threshold should recover roughly the tube's
+cross-section. That is exactly what the demo output shows.
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+The tiny file lets `demo/run_demo` run **offline, with zero downloads** — a hard
+requirement for every project (CLAUDE.md §8).
 
-## Full dataset
+### File format
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+```
+line 1:  nx ny nz sigma alpha beta c bright mask_threshold
+then  :  nx*ny*nz float intensities, row-major (x fastest, then y, then z)
+```
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+| Field | Meaning |
+|---|---|
+| `nx ny nz` | volume dimensions (x fastest in memory) |
+| `sigma` | Gaussian pre-smoothing scale, in voxels (the vessel radius the filter targets) |
+| `alpha` | Frangi sensitivity to `R_A = |λ2|/|λ3|` (plate-vs-line) |
+| `beta` | Frangi sensitivity to `R_B = |λ1|/√(|λ2 λ3|)` (blob-vs-line) |
+| `c` | Frangi "structureness" scale (suppresses response in flat noise) |
+| `bright` | `1` = vessels brighter than background (CTA); `0` = darker |
+| `mask_threshold` | vesselness ≥ this counts as a segmented vessel voxel |
 
-Catalog dataset notes (verbatim):
+Default sample header: `24 16 16 1.5 0.5 0.5 15.0 1 0.5`. The value of `c` is
+scaled to this synthetic intensity range (peak amplitude ~200); on real Hounsfield
+data you would re-tune `c` (see THEORY §4).
 
-> ASOCA (Automated Segmentation of Coronary Arteries, https://asoca.grand-challenge.org/); VesselMAP (cerebral vessels, verify URL); IRCAD 3D-IRCADb-01 abdominal (https://www.ircad.fr/research/data-sets/liver-segmentation-3d-ircadb-01/); ImageCAS coronary artery dataset (https://github.com/XiaoweiXu/ImageCAS-A-Large-Scale-Dataset-and-Benchmark-for-Coronary-Artery-Segmentation-based-on-CT).
+## Full / real datasets
 
-## Provenance & field meanings
+The real vessel datasets need registration or a challenge sign-up, so
+`scripts/download_data.*` only prints links and instructions (it never bypasses
+credentials, CLAUDE.md §8). To use one, register, export a volume to NIfTI, and
+convert it to the plain-text format above (a converter is a README exercise).
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+- **ASOCA** — coronary CTA segmentation challenge: <https://asoca.grand-challenge.org/>
+- **ImageCAS** — 1000 coronary CTAs: <https://github.com/XiaoweiXu/ImageCAS-A-Large-Scale-Dataset-and-Benchmark-for-Coronary-Artery-Segmentation-based-on-CT>
+- **3D-IRCADb-01** — abdominal/liver vasculature: <https://www.ircad.fr/research/data-sets/liver-segmentation-3d-ircadb-01/>
+
+Bigger synthetic volume:
+`python scripts/make_synthetic.py --nx 128 --ny 96 --nz 96 --radius 4`.
+
+## Provenance & honesty
+
+The committed volume is **synthetic** and geometrically trivial (one straight
+tube). It demonstrates the Frangi-vesselness GPU pattern; it is **not** a real
+angiogram, is not validated, and is **not for any clinical use**.

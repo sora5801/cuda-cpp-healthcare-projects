@@ -1,94 +1,111 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  GPU super-resolution kernel + host wrapper
 // ---------------------------------------------------------------------------
-// Project 4.24 -- CT/MRI Super-Resolution   (template skeleton)
+// Project 4.24 : CT/MRI Super-Resolution   (reduced-scope teaching version)
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// This is the GPU twin of super_resolve_cpu(): identical math (via sr_core.h),
+// but one thread per HR output pixel instead of a serial double loop. main.cu
+// runs both and checks they agree.  See ../THEORY.md "GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
-#include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "sr_core.h"                 // sr_hr_pixel (the __host__ __device__ core)
+#include "util/cuda_check.cuh"       // CUDA_CHECK, CUDA_CHECK_LAST
+#include "util/timer.cuh"            // GpuTimer
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+#include <cstdio>
+#include <cstdlib>
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// c_weights: the network weights in CONSTANT memory.
+//   WHY CONSTANT MEMORY: every thread reads the SAME weights (a few hundred
+//   floats) and never writes them. Constant memory has a broadcast cache -- when
+//   all threads in a warp read the same address, it costs one fetch, not 32.
+//   That is the ideal store for read-only, uniformly-accessed parameters like
+//   conv weights (same reasoning as the query in 1.12 / the filter in 7.10).
+//   SrWeights is a POD struct, so it copies into constant memory as a blob.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__constant__ SrWeights c_weights;
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+// ---------------------------------------------------------------------------
+// sr_kernel: compute ONE high-res output pixel per thread.
+//   Launch configuration (set by super_resolve_gpu):
+//     grid  : ceil(HW/16) x ceil(HH/16) blocks covering the HR image.
+//     block : 16 x 16 = 256 threads (SR_BLOCK_X x SR_BLOCK_Y).
+//   Thread-to-data map:
+//     thread (blockIdx, threadIdx) -> HR pixel
+//        hx = blockIdx.x*blockDim.x + threadIdx.x
+//        hy = blockIdx.y*blockDim.y + threadIdx.y
+//   Memory spaces touched:
+//     * d_lr   : GLOBAL memory, read-only (the LR image). __restrict__ + const
+//                let the compiler cache reads through the read-only data path.
+//     * c_weights : CONSTANT memory (broadcast).
+//     * d_hr   : GLOBAL memory, write-only (one store per thread -> coalesced
+//                across a warp because consecutive threads write consecutive hx).
+//   No shared memory, no atomics, no __syncthreads: pure independent gather.
+//
+//   All the arithmetic is delegated to sr_hr_pixel() in sr_core.h, so this
+//   kernel and the CPU reference are guaranteed to compute the same value.
+// ---------------------------------------------------------------------------
+__global__ void sr_kernel(const float* __restrict__ d_lr, int lw, int lh,
+                          int hw, int hh, float* __restrict__ d_hr) {
+    const int hx = blockIdx.x * blockDim.x + threadIdx.x;   // this thread's HR col
+    const int hy = blockIdx.y * blockDim.y + threadIdx.y;   // this thread's HR row
+    if (hx >= hw || hy >= hh) return;   // guard the ragged edge blocks
+
+    // One call does the whole per-pixel forward pass (feature conv + ReLU, then
+    // the pixel-shuffle-selected sub-pixel conv). Same code path as the CPU.
+    const float v = sr_hr_pixel(d_lr, lw, lh, hx, hy, c_weights);
+    d_hr[(size_t)hy * hw + hx] = v;     // coalesced write
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// super_resolve_gpu: upload -> launch -> download. Declared in kernels.cuh.
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void super_resolve_gpu(const Image& lr, const SrWeights& W, int scale,
+                       Image& out, float* kernel_ms) {
+    // This teaching kernel is compiled for a fixed R = SR_SCALE (the constant is
+    // baked into sr_core.h's index math). Refuse mismatches loudly.
+    if (scale != SR_SCALE) {
+        std::fprintf(stderr, "[super_resolve_gpu] scale=%d but SR_SCALE=%d "
+                             "(rebuild with matching SR_SCALE)\n", scale, SR_SCALE);
+        std::exit(EXIT_FAILURE);
+    }
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    const int lw = lr.w, lh = lr.h;         // low-res dimensions
+    const int hw = lw * scale, hh = lh * scale;  // high-res dimensions
+    out.w = hw; out.h = hh;
+    out.pix.assign(static_cast<size_t>(hw) * hh, 0.0f);
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    const size_t lr_bytes = static_cast<size_t>(lw) * lh * sizeof(float);
+    const size_t hr_bytes = static_cast<size_t>(hw) * hh * sizeof(float);
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // --- Upload the weights into constant memory (once per call). -----------
+    // cudaMemcpyToSymbol copies host bytes into the __constant__ symbol; from
+    // then on every thread reads them through the broadcast cache.
+    CUDA_CHECK(cudaMemcpyToSymbol(c_weights, &W, sizeof(SrWeights)));
+
+    // --- Device buffers for the LR input and HR output. ---------------------
+    float* d_lr = nullptr;
+    float* d_hr = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_lr, lr_bytes));   // read-only input
+    CUDA_CHECK(cudaMalloc(&d_hr, hr_bytes));   // write-only output
+    CUDA_CHECK(cudaMemcpy(d_lr, lr.pix.data(), lr_bytes, cudaMemcpyHostToDevice));
+
+    // --- Launch: 2-D grid of 16x16 blocks tiling the HR image. --------------
+    const dim3 block(SR_BLOCK_X, SR_BLOCK_Y);
+    const dim3 grid((hw + block.x - 1) / block.x,
+                    (hh + block.y - 1) / block.y);
+
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
+    sr_kernel<<<grid, block>>>(d_lr, lw, lh, hw, hh, d_hr);
     *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    CUDA_CHECK_LAST("sr_kernel");          // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // --- Copy the HR result back to the host. -------------------------------
+    CUDA_CHECK(cudaMemcpy(out.pix.data(), d_hr, hr_bytes, cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    // --- Free device memory (teaching code: explicit, paired with the mallocs).
+    CUDA_CHECK(cudaFree(d_lr));
+    CUDA_CHECK(cudaFree(d_hr));
 }
