@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Fetch / point to the FULL dataset (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 4.14 -- Digital Breast Tomosynthesis   (template skeleton)
+# Project 4.14 -- Digital Breast Tomosynthesis
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The real DBT/mammography datasets are
+# credentialed or non-redistributable, so this script prints how to obtain them
+# and defers to scripts/make_synthetic.py for an offline synthetic stand-in.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,18 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 4.14 -- Digital Breast Tomosynthesis"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    OPTIMAM Mammography Image Database (OMI-DB, access via ICR UK); CBIS-DDSM (https://wiki.cancerimagingarchive.net/display/Public/CBIS-DDSM) — 2,620 mammograms via TCIA; VinDr-Mammo (https://physionet.org/content/vindr-mammo/1.0.0/); BCS-DBT (Duke DBT challenge dataset, https://bcs-dbt.grand-challenge.org/)."
+echo "The committed tiny sample (data/sample/dbt_sample.txt) is SYNTHETIC and is"
+echo "all the demo needs -- no download required. Real DBT/mammography data:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  * CBIS-DDSM (curated mammograms via TCIA, open):"
+echo "      https://wiki.cancerimagingarchive.net/display/Public/CBIS-DDSM"
+echo "  * BCS-DBT (Duke tomosynthesis challenge, true DBT projections):"
+echo "      https://bcs-dbt.grand-challenge.org/"
+echo "  * VinDr-Mammo (PhysioNet, CREDENTIALED -- requires a signed DUA):"
+echo "      https://physionet.org/content/vindr-mammo/1.0.0/"
+echo "  * OPTIMAM / OMI-DB (access via ICR UK, CREDENTIALED)."
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "This script does NOT bypass any registration/credential wall. For the"
+echo "credentialed sets, register at the link, accept the licence, and place the"
+echo "files under data/ yourself. For a larger SYNTHETIC problem instead, run:"
+echo "    python scripts/make_synthetic.py --img 128 --angles 21 --det 160"

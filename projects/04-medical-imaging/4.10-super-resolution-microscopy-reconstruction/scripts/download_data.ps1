@@ -1,12 +1,10 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real SMLM-data pointers (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 4.10 -- Super-Resolution Microscopy Reconstruction   (template skeleton)
-#
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# Project 4.10 : Super-Resolution Microscopy Reconstruction  (SMLM). Nothing to
+# fetch automatically -- real STORM/PALM movies are large multi-GB TIFF stacks
+# and several need registration, so per CLAUDE.md §8 this script only prints the
+# sources and defers to scripts/make_synthetic.py for an offline stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -15,19 +13,21 @@ $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.10 -- Super-Resolution Microscopy Reconstruction"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    EPFL SMLM Challenge dataset (https://srm.epfl.ch/srm/dataset/challenge-2016/) — synthetic and real STORM/PALM frames; BioImage Archive SMLM collections (https://www.ebi.ac.uk/biostudies/bioimages); OpenMicroscopy Environment (OME-TIFF standard)."
+Write-Host "Real SMLM movies are multi-frame TIFF/OME-TIFF stacks. To use one, export"
+Write-Host "each frame's pixels into the text format in data/README.md:"
+Write-Host "  header:  'F H W background threshold'   then F*H*W floats, row-major."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  EPFL SMLM Challenge : https://srm.epfl.ch/srm/dataset/challenge-2016/"
+Write-Host "                        (synthetic + real STORM/PALM frames, with ground truth)"
+Write-Host "  BioImage Archive    : https://www.ebi.ac.uk/biostudies/bioimages"
+Write-Host "                        (public SMLM collections)"
+Write-Host "  OME-TIFF standard   : https://www.openmicroscopy.org/ome-files/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Tools to read/convert TIFF stacks: tifffile (Python), Fiji/ImageJ, ThunderSTORM."
+Write-Host ""
+Write-Host "No download needed for the demo -- the committed data/sample/smlm_stack.txt"
+Write-Host "runs offline. For a bigger SYNTHETIC movie:"
+Write-Host "    python scripts/make_synthetic.py --frames 200 --width 64 --height 64"
+Write-Host ""
+Write-Host "Target data dir: $DataDir"

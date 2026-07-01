@@ -1,22 +1,26 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load projections, run SART on CPU + GPU, verify
 // ---------------------------------------------------------------------------
-// Project 4.14 -- Digital Breast Tomosynthesis   (template skeleton)
+// Project 4.14 : Digital Breast Tomosynthesis
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// WHAT THIS FILE DOES  (the 5-step shape EVERY project in this repo follows)
+//   1. LOAD the limited-angle projection problem (data/sample or a CLI path).
+//   2. Precompute the angle (cos/sin) table shared by both reconstructions.
+//   3a. CPU reference SART reconstruction  (reference_cpu.cpp)  -> trusted answer.
+//   3b. GPU SART reconstruction            (kernels.cu)          -> the thing taught.
+//   4. VERIFY: assert the GPU image matches the CPU image within tolerance.
+//   5. REPORT: deterministic reconstruction samples to stdout; timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Timings (which vary run-to-run) go to STDERR, shown
+//   but never diffed (docs/PATTERNS.md §3).
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+// WHY THE OUTPUT IS INTERPRETABLE
+//   The committed sample encodes a synthetic compressed-breast slice: a soft
+//   ellipse of fibroglandular tissue with two small dense "lesion" discs at
+//   KNOWN locations. A correct reconstruction recovers elevated attenuation at
+//   those spots, so we report the reconstructed value at each planted lesion and
+//   the location of the global peak -- a result you can sanity-check by eye.
 //
 // READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
 // reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
@@ -25,98 +29,85 @@
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // reconstruct_sart_gpu (GPU path), DBTProblem
+#include "reference_cpu.h"    // load_dbt, compute_angles, reconstruct_sart_cpu
+#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "4.14";
 static const char* PROJECT_NAME = "Digital Breast Tomosynthesis";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Verification tolerance. SART forward/backprojection sum many bilinearly
+// interpolated float samples over several iterations; the GPU's fused
+// multiply-add and the host compiler diverge by only float rounding, so a small
+// ABSOLUTE tolerance is the honest bar (docs/PATTERNS.md §4, same class as 4.01).
+static constexpr double TOLERANCE = 1.0e-3;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load the limited-angle problem ---------------------------------
+    const std::string path = (argc > 1) ? argv[1]
+                                        : "data/sample/dbt_sample.txt";
+    DBTProblem p;
+    try {
+        p = load_dbt(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. Angle table (shared by CPU and GPU for bit-identical trig) -----
+    std::vector<float> cosv, sinv;
+    compute_angles(p, cosv, sinv);
+
+    // ---- 3a. CPU reference SART (timed) ------------------------------------
+    std::vector<float> img_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    reconstruct_sart_cpu(p, cosv, sinv, img_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3b. GPU SART (kernel time accumulated inside the driver) ----------
+    std::vector<float> img_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    reconstruct_sart_gpu(p, cosv, sinv, img_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify GPU vs CPU ----------------------------------------------
+    const double err  = util::max_abs_err(img_cpu, img_gpu);
+    const bool   pass = err <= TOLERANCE;
 
     // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    const int N = p.img;
+
+    // Locate the global peak of the reconstruction (should sit on a lesion).
+    float vmax = img_gpu[0];
+    int   amax = 0;
+    for (std::size_t i = 1; i < img_gpu.size(); ++i)
+        if (img_gpu[i] > vmax) { vmax = img_gpu[i]; amax = static_cast<int>(i); }
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("Limited-angle SART: %d projections over +/-%.1f deg, %d detectors -> %dx%d image\n",
+                p.n_angles, static_cast<double>(p.half_span) * 180.0 / 3.14159265358979323846,
+                p.n_det, N, N);
+    std::printf("SART: %d iterations, relaxation lambda = %.2f\n", p.n_iters, p.relax);
+    std::printf("center pixel value = %.4f\n", img_gpu[(N / 2) * N + (N / 2)]);
+    std::printf("peak value = %.4f at (px,py)=(%d,%d)\n", vmax, amax % N, amax / N);
+    // Central-row profile: 8 evenly spaced columns across the reconstruction.
+    // With two planted lesions on the central row this profile shows two humps.
+    std::printf("central row profile (8 samples):");
+    for (int s = 0; s < 8; ++s) {
+        const int px = (s * (N - 1)) / 7;
+        std::printf(" %.4f", img_gpu[(N / 2) * N + px]);
+    }
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-03)\n", pass ? "PASS" : "FAIL");
 
     // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    std::fprintf(stderr, "[data]   source: %s  (%d angles x %d det -> %dx%d image, %d SART iters)\n",
+                 path.c_str(), p.n_angles, p.n_det, N, N, p.n_iters);
+    std::fprintf(stderr, "[timing] CPU SART: %.3f ms   GPU SART (all kernels): %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact -- the GPU's edge grows with image size, "
+                         "detector count, and iteration count (clinical DBT volumes are far larger).\n");
+    std::fprintf(stderr, "[verify] max_abs_err = %.3e  (tolerance %.1e)\n", err, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

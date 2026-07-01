@@ -1,5 +1,7 @@
 4.14 -- Digital Breast Tomosynthesis
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Limited-angle SART: 15 projections over +/-25.0 deg, 96 detectors -> 64x64 image
+SART: 20 iterations, relaxation lambda = 0.30
+center pixel value = 0.0717
+peak value = 0.3479 at (px,py)=(23,31)
+central row profile (8 samples): 0.0000 0.0000 0.0187 0.0000 0.0685 0.0642 0.0000 0.0000
+RESULT: PASS (GPU matches CPU within tol=1.0e-03)

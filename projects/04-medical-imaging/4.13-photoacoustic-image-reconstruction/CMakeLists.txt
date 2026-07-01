@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 4.13 -- Photoacoustic Image Reconstruction   (template skeleton)
+# Project 4.13 : Photoacoustic Image Reconstruction
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/photoacoustic-image-reconstruction.sln (CLAUDE.md §5). Both

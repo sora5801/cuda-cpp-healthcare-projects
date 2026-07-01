@@ -1,37 +1,59 @@
 # Data — 4.11 Digital Pathology / Whole-Slide Image Analysis
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/slide_sample.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
+| Origin | **Synthetic** tile-feature bag (`scripts/make_synthetic.py`, seed 411) |
 | License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Size | < 5 KB |
+| Contents | One "slide": 64 tiles × 8 features, 6 planted **tumor** tiles, slide label 1 |
 
 This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
 is a hard requirement for every project (CLAUDE.md §8).
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+### File format
+
+```
+<N> <D> <label>          # N tiles, D features/tile (D MUST equal FEAT_DIM=8), label 0/1/-1
+<tile 0: D floats>       # one row per tile: the tile's feature vector
+<tile 1: ...>
+... (N rows)
+```
+
+Each **tile** is a small patch of the slide; each row is that tile's **feature
+vector** — in a real pipeline the output of a frozen CNN/ViT encoder (ResNet-50,
+UNI). Here we synthesize the features directly (we do **not** reimplement the
+encoder). Features 0 and 1 are the "tumor markers": **background** tiles keep them
+low (~0.1), the 6 planted **tumor** tiles push them high (~0.9). The frozen
+attention head (`default_params()` in `src/reference_cpu.cpp`) is tuned to fire on
+that pattern, so attention concentrates on the tumor tiles and the slide is called
+"TUMOR". The remaining 6 features are small nuisance values (a stand-in for the
+hundreds of non-diagnostic dimensions of a real encoder).
+
+The `label` (1 here) is the slide-level ground truth; the model does **not** see
+it (weakly-supervised MIL), but the demo can report whether its call matches.
 
 ## Full dataset
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+Real WSIs are multi-gigabyte pyramids; you tile them, run an encoder per tile, and
+save the `N × D` feature bag in the format above. Everything is credentialed/large,
+so `scripts/download_data.*` **prints instructions only** (never bypasses logins):
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+- **TCGA slides (GDC):** <https://portal.gdc.cancer.gov/> — pan-cancer WSIs.
+- **CAMELYON16/17:** <https://camelyon17.grand-challenge.org/> — lymph-node metastasis.
+- **TUPAC16:** <http://tupac.tue-image.nl/> — tumor proliferation.
+- **OpenSlide** (<https://openslide.org/>) reads the pyramids; **CLAM**
+  (<https://github.com/mahmoodlab/CLAM>) does tiling + feature bags + MIL; **UNI**
+  (<https://github.com/mahmoodlab/UNI>) is a pretrained ViT feature extractor.
 
-Catalog dataset notes (verbatim):
+Bigger synthetic bag (no download): `python scripts/make_synthetic.py --n 20000`.
+A benign slide: `python scripts/make_synthetic.py --tumor-frac 0`.
 
-> TCGA (The Cancer Genome Atlas) slides — access via GDC Data Portal (https://portal.gdc.cancer.gov/); CAMELYON16/17 lymph node metastasis detection (https://camelyon17.grand-challenge.org/); PanCancer Atlas WSIs via TCGA; TUPAC16 tumor proliferation.
+## Provenance & honesty
 
-## Provenance & field meanings
-
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+The sample is a **synthetic** feature bag — Gaussian "tumor" and "background"
+tiles — **not** real histology and with **no clinical meaning**. It exists to make
+the attention-MIL result interpretable (attention lands on the planted tumor tiles)
+and the GPU-vs-CPU comparison verifiable. Synthetic data is labeled synthetic
+everywhere it appears (CLAUDE.md §8).

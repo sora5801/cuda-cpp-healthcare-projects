@@ -1,5 +1,18 @@
 4.15 -- Diffusion MRI & Tractography
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+DWI volume: 16x16x4 = 1024 voxels, 13 measurements (1 b0 + 12 dirs)
+DTI fit (per-voxel, 196 tissue voxels):
+  mean FA = 0.799022   max FA = 0.799022   mean MD = 7.666667e-04 mm^2/s
+seed voxels (highest FA), tensor fit:
+  (12,12, 0)  FA=0.799022  MD=7.6667e-04  v1=( 0.2425, 0.9701, 0.0000)
+  (12,12, 1)  FA=0.799022  MD=7.6667e-04  v1=( 0.2425, 0.9701, 0.0000)
+  (12,12, 2)  FA=0.799022  MD=7.6667e-04  v1=( 0.2425, 0.9701, 0.0000)
+  (12,12, 3)  FA=0.799022  MD=7.6667e-04  v1=( 0.2425, 0.9701, 0.0000)
+  ( 2, 3, 0)  FA=0.799022  MD=7.6667e-04  v1=( 0.9864, 0.1644, 0.0000)
+tractography (5 seeds, step=0.50, FA_min=0.15):
+  streamline 0: 7 points
+  streamline 1: 10 points
+  streamline 2: 12 points
+  streamline 3: 10 points
+  streamline 4: 13 points
+  total streamline points: 52
+RESULT: PASS (GPU matches CPU: fit tol=1e-09, tract tol=1e-03)

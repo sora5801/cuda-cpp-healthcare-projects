@@ -1,5 +1,6 @@
 4.13 -- Photoacoustic Image Reconstruction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+2-D delay-and-sum backprojection
+64 sensors x 512 samples -> 96x96 image (c=1500.0 m/s, dt=5.000e-08 s)
+peak value = 33.2748 at pixel (px,py)=(47,47) = (x,y)=(-0.0001,-0.0001) m
+center-row profile (8 samples): 0.1328 2.0825 1.8289 3.5928 4.2744 1.7030 1.8482 0.1791
+RESULT: PASS (GPU matches CPU within tol=1.0e-03)

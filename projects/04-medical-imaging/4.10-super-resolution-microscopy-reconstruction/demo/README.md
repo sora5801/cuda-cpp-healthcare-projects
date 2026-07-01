@@ -2,32 +2,36 @@
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+`run_demo.ps1` (Windows) / `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on `data/sample/smlm_stack.txt` (60 frames × 40×40 px, synthetic
+   STORM/PALM movie).
+3. **Verify** that the GPU pipeline matches the CPU reference **exactly** — same
+   number of localizations, same fixed-point super-resolution image (identical
+   checksum and every pixel), and mean statistics agreeing to `0` (see below).
+4. **Report** the localization count, the reconstructed image dimensions, its
+   fixed-point checksum, and mean fit statistics.
 
-The program splits its output deliberately:
+stdout (the deterministic digest) is diffed against
+[`expected_output.txt`](expected_output.txt); the timing line is on stderr only.
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+## Canonical output
 
-## Expected result
+See [`expected_output.txt`](expected_output.txt). The pipeline detects and fits
+**187 emitters** across the 60 frames and renders them into a **320×320** super-
+resolution image (8× upsampled) with **123 illuminated bins**. `RESULT: PASS`
+means the GPU and CPU produced the **same localizations and the same image
+exactly** (`count 187/187`, `checksum` equal, `pixels_exact=yes`, `mean_err=0`).
+The mean fit width (~1.35 px) is close to the true PSF sigma (1.3 px) the data was
+generated with — a sanity check that the localizer is working, not just that CPU
+and GPU agree.
 
-```
-4.10 -- Super-Resolution Microscopy Reconstruction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
+The GPU is *slower* than the CPU here (the tiny sample is launch-bound: 60 small
+kernel launches dominate); the GPU's edge appears at the 10⁴–10⁵ frames of a real
+STORM run. Timing is a **teaching artifact, never a benchmark claim** (CLAUDE.md
+§12; docs/PATTERNS.md §7).
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+> The data is a **synthetic** blinking-emitter movie, not a real microscope
+> acquisition — a demonstration of GPU single-molecule localization, not a
+> scientific measurement of any specimen.

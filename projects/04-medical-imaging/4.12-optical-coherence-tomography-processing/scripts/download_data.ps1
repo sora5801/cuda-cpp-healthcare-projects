@@ -1,12 +1,15 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real OCT dataset pointers (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 4.12 -- Optical Coherence Tomography Processing   (template skeleton)
+# Project 4.12 : Optical Coherence Tomography Processing (SD-OCT reconstruction)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL, and
+# NEVER bypasses credentials/registration. The public OCT datasets below ship
+# PROCESSED B-scan IMAGES (already reconstructed), not the vendor RAW spectra our
+# reconstruction consumes -- raw interferograms are device-specific and rarely
+# public. So this script downloads nothing; it points at the datasets for the
+# downstream tasks (segmentation, classification) and defers to
+# scripts/make_synthetic.py for a runnable RAW-spectrum stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +19,17 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.12 -- Optical Coherence Tomography Processing"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    OCTDL (https://www.nature.com/articles/s41597-024-03182-7) — 2,064 labeled OCT B-scans; Duke DME OCT dataset (https://people.duke.edu/~sf59/Chiu_BOE_2012_dataset.htm) — 110 annotated volumes; OCTA-500 (https://arxiv.org/abs/2012.07261) — OCT angiography volumes with labels."
+Write-Host "Public OCT datasets (PROCESSED B-scans / volumes, for segmentation/classification):"
+Write-Host "  OCTDL     : https://www.nature.com/articles/s41597-024-03182-7  (2,064 labeled B-scans)"
+Write-Host "  Duke DME  : https://people.duke.edu/~sf59/Chiu_BOE_2012_dataset.htm  (110 annotated volumes)"
+Write-Host "  OCTA-500  : https://arxiv.org/abs/2012.07261  (OCT angiography volumes with labels)"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "NOTE: those provide reconstructed images, not vendor RAW spectra. This"
+Write-Host "project reconstructs FROM raw spectra, so the committed sample is synthetic"
+Write-Host "raw interferograms (scripts/make_synthetic.py). Raw-spectrum access requires"
+Write-Host "the OCT device SDK (Thorlabs/Bioptigen/Heidelberg) -- follow the vendor's"
+Write-Host "terms; this script will not bypass any registration."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Bigger SYNTHETIC B-scan (no download):"
+Write-Host "  python scripts/make_synthetic.py --n-ascan 128 --n-spec 1024"

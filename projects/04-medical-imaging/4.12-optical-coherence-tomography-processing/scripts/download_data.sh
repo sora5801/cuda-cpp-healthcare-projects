@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real OCT dataset pointers (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 4.12 -- Optical Coherence Tomography Processing   (template skeleton)
+# Project 4.12 : Optical Coherence Tomography Processing (SD-OCT reconstruction)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. The public OCT datasets below ship PROCESSED
+# B-scan images (already reconstructed), not the vendor RAW spectra this project's
+# reconstruction consumes -- so nothing is downloaded here; we point at the
+# datasets for downstream tasks and defer to scripts/make_synthetic.py for a
+# runnable RAW-spectrum stand-in.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +20,16 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 4.12 -- Optical Coherence Tomography Processing"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    OCTDL (https://www.nature.com/articles/s41597-024-03182-7) — 2,064 labeled OCT B-scans; Duke DME OCT dataset (https://people.duke.edu/~sf59/Chiu_BOE_2012_dataset.htm) — 110 annotated volumes; OCTA-500 (https://arxiv.org/abs/2012.07261) — OCT angiography volumes with labels."
+echo "Public OCT datasets (PROCESSED B-scans / volumes, for segmentation/classification):"
+echo "  OCTDL     : https://www.nature.com/articles/s41597-024-03182-7  (2,064 labeled B-scans)"
+echo "  Duke DME  : https://people.duke.edu/~sf59/Chiu_BOE_2012_dataset.htm  (110 annotated volumes)"
+echo "  OCTA-500  : https://arxiv.org/abs/2012.07261  (OCT angiography volumes with labels)"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "NOTE: those provide reconstructed images, not vendor RAW spectra. This project"
+echo "reconstructs FROM raw spectra, so the committed sample is synthetic raw"
+echo "interferograms (scripts/make_synthetic.py). Raw-spectrum access requires the"
+echo "OCT device SDK (Thorlabs/Bioptigen/Heidelberg) -- follow the vendor's terms;"
+echo "this script will not bypass any registration."
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Bigger SYNTHETIC B-scan (no download):"
+echo "  python scripts/make_synthetic.py --n-ascan 128 --n-spec 1024"

@@ -1,5 +1,30 @@
-4.12 -- Optical Coherence Tomography Processing
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+4.12 -- Optical Coherence Tomography Processing (SD-OCT)
+B-scan: 32 A-scans x 256 spectral samples  (N/2=128 depths)  dispersion a2=18.0 a3=9.0
+peak depth per A-scan (bin index of strongest reflector):
+    8   9   9  10  11  11  12  12  13  13  13  13  14  14  14  14  14  14  14  14  13  13  13  13  12  12  11  11  10   9   9   8
+reconstructed B-scan (depth down, A-scans across; dispersion-compensated):
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+  :                              :
+  @+                            +@
+  :@@.                        .@@:
+   .%@+.                    .+@%. 
+     -@@+.                .+@@-   
+       +@@#:.          .:#@@+     
+        .=@@@@+-::::-+@@@@=.      
+           :+@@@@@@@@@@+:         
+               .::::.             
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+RESULT: PASS (GPU peak depths match CPU exactly; images agree within atol=2e-4)

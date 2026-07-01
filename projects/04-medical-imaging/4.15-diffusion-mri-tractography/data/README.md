@@ -1,37 +1,73 @@
 # Data — 4.15 Diffusion MRI & Tractography
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/dwi_sample.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
+| Origin | **Synthetic** (forward-simulated by `scripts/make_synthetic.py`) |
 | License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Size | 16×16×4 = 1024 voxels × 13 measurements, ~150 KB text |
+| Why synthetic | Real dMRI (HCP/ABCD/UK Biobank) requires a data-use agreement and is far too large to commit. We embed a **known ground-truth** so the demo is interpretable and verifiable. |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+The sample is generated **deterministically** (no RNG, no noise) so
+`demo/expected_output.txt` is stable. It runs the demo **offline, with zero
+downloads** — a hard requirement (CLAUDE.md §8).
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+### What the sample contains
 
-## Full dataset
+A tiny 3-D volume with a **curved fiber bundle** (a quarter-circle arc, repeated
+in each z-slice) of highly anisotropic tissue embedded in an isotropic
+background. Each voxel's diffusion-weighted signal is computed from the
+**Stejskal–Tanner** equation `S_k = S0 · exp(−b_k · gᵏᵀ D gᵏ)` for a chosen
+ground-truth tensor `D`:
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+- **On the bundle:** an axially-symmetric ("cigar") tensor with eigenvalues
+  λ∥ = 1.7e-3, λ⊥ = 0.3e-3 mm²/s, fast axis along the local arc tangent → high
+  anisotropy (FA ≈ 0.80).
+- **Background:** an isotropic tensor λ = 0.9e-3 mm²/s → FA ≈ 0.
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+So the fit should recover FA ≈ 0.80 along the bundle with the principal
+eigenvector v1 pointing along the arc, and tractography should reconstruct the
+curve. That built-in answer is what makes the demo output *checkable*.
 
-Catalog dataset notes (verbatim):
+### File format
 
-> Human Connectome Project (HCP) — 1,200 subjects, 3T/7T multi-shell dMRI (https://db.humanconnectome.org/); ABCD Study dMRI (https://abcdstudy.org/); UK Biobank dMRI (https://www.ukbiobank.ac.uk/); TMS-EEG Tractography Contest (verify URL).
+```
+<nx> <ny> <nz> <nmeas>                 # e.g. "16 16 4 13"  (nmeas MUST be 13)
+<mask> S_0 S_1 ... S_12                # one line per voxel, x fastest then y then z
+...                                    # nx*ny*nz voxel lines total
+```
 
-## Provenance & field meanings
+- `nmeas = 13` = 1 non-diffusion-weighted (b=0) image + 12 diffusion directions.
+- `S_0` is the b=0 signal; `S_1..S_12` are the diffusion-weighted signals at the
+  fixed **1 + 12 icosahedral** gradient scheme (b = 1000 s/mm², defined in
+  `src/reference_cpu.cpp::make_gradient_scheme` and mirrored in
+  `scripts/make_synthetic.py`).
+- `mask` is 1 for tissue (fit + seed tractography here), 0 for background.
+- The loader (`src/reference_cpu.cpp::load_dwi`) rejects a file whose `nmeas`
+  differs from the compiled `NMEAS`.
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+## Full (real) dataset
+
+Real diffusion MRI comes as a 4-D NIfTI volume plus a `bvec`/`bval` table (the
+gradient scheme). Public sources — each requiring a free account and a data-use
+agreement (which we do **not** bypass):
+
+- **Human Connectome Project (HCP)** — 3T/7T multi-shell dMRI:
+  <https://db.humanconnectome.org/>
+- **ABCD Study** dMRI: <https://abcdstudy.org/>
+- **UK Biobank** dMRI: <https://www.ukbiobank.ac.uk/>
+
+`scripts/download_data.ps1` / `.sh` print the links and a conversion recipe
+(DIPY/nibabel or MRtrix3 `mrconvert`) to write a small ROI into this project's
+text format. For a larger synthetic volume instead:
+
+```
+python scripts/make_synthetic.py --nx 64 --ny 64 --nz 32
+```
+
+## Provenance & honesty
+
+The committed sample is **synthetic** and labeled as such everywhere. The signals
+are forward-simulated, noise-free, and carry **no clinical meaning**. Nothing here
+may be used for diagnosis or any real medical decision (repository-wide rule).

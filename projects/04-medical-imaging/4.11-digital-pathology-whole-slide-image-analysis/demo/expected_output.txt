@@ -1,5 +1,8 @@
 4.11 -- Digital Pathology / Whole-Slide Image Analysis
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+attention-MIL over a slide bag: 64 tiles x 8 features -> 1 slide score
+slide embedding z = 0.871216 0.874266 0.152275 0.140651 0.132520 0.160201 0.150928 0.133825
+slide logit = 0.223377   tumor probability = 0.555613
+top attention tile = 13   (weight 0.169674)
+top-5 attention tiles: #13=0.169674 #33=0.160279 #43=0.160273 #3=0.158542 #23=0.154160
+slide call @0.5 = TUMOR
+RESULT: PASS (GPU attention+embedding+probability match CPU within tol=1.0e-09)

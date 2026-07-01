@@ -31,3 +31,9 @@ add_executable(optical-coherence-tomography-processing
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(optical-coherence-tomography-processing PRIVATE src)
+
+# Link cuFFT (batched 1D FFTs, one per A-scan). find_package supplies both the
+# headers (<cufft.h>) and the import target CUDA::cufft; no manual paths needed
+# (docs/BUILD_GUIDE.md §7b, docs/PATTERNS.md §5).
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(optical-coherence-tomography-processing PRIVATE CUDA::cufft)

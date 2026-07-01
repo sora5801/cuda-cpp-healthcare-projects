@@ -1,37 +1,60 @@
 # Data — 4.10 Super-Resolution Microscopy Reconstruction
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/smlm_stack.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
+| Origin | **Synthetic** STORM/PALM movie (`scripts/make_synthetic.py`, seed 7) |
 | License | Public domain (CC0) — it is synthetic |
-| Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Contents | 60 frames × 40×40 px; sparse Gaussian PSFs on two crossing sub-pixel lines |
+| Size | ~660 KB |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+### File format
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+```
+<F> <H> <W> <background> <threshold>      # header: frames, height, width, bg, detect cutoff
+<frame 0: H*W floats, row-major>          # pixel intensities, one frame ...
+<frame 1: H*W floats>                     # ... after another
+... (F frames)
+```
+
+- **F, H, W** — number of frames and each frame's pixel dimensions.
+- **background** — flat level subtracted from every pixel during localization
+  (camera offset + out-of-focus haze). In the sample: `40.0`.
+- **threshold** — a candidate pixel must exceed this to be a detection. In the
+  sample: `100.0` (well above background + noise, below an on-emitter's peak).
+- **pixels** — intensities in arbitrary detector units, written at 3-decimal
+  precision so the C++ loader reads identical values every run (keeping CPU==GPU
+  verification exact).
+
+### How the sample is engineered (so the demo is interpretable)
+
+Two thin lines are drawn at **sub-pixel** positions (a stand-in for microtubules).
+In each frame, each site on those lines blinks **on** with low probability, so a
+frame contains a sparse scatter of separated Gaussian blobs. The localizer fits
+each blob's centre to a fraction of a pixel; overlaying ~187 localizations across
+the 60 frames renders the two lines far sharper than any single diffraction-
+limited frame — the essence of super-resolution.
 
 ## Full dataset
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+Real SMLM data are large multi-frame TIFF/OME-TIFF stacks:
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+- **EPFL SMLM Challenge** (<https://srm.epfl.ch/srm/dataset/challenge-2016/>) —
+  synthetic **and** real STORM/PALM frames with ground-truth positions (ideal for
+  scoring a localizer). 
+- **BioImage Archive** (<https://www.ebi.ac.uk/biostudies/bioimages>) — public
+  SMLM collections.
+- **OME-TIFF** (<https://www.openmicroscopy.org/ome-files/>) — the standard movie
+  container; read with `tifffile` (Python), Fiji/ImageJ, or ThunderSTORM.
 
-Catalog dataset notes (verbatim):
+Export each frame's pixels into the header+floats format above (see
+`scripts/download_data.*`). Bigger synthetic movie:
+`python scripts/make_synthetic.py --frames 200 --width 64 --height 64`.
 
-> EPFL SMLM Challenge dataset (https://srm.epfl.ch/srm/dataset/challenge-2016/) — synthetic and real STORM/PALM frames; BioImage Archive SMLM collections (https://www.ebi.ac.uk/biostudies/bioimages); OpenMicroscopy Environment (OME-TIFF standard).
+## Provenance & honesty
 
-## Provenance & field meanings
-
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+The sample is **synthetic** blinking-emitter data, not a real microscope
+acquisition, and carries no clinical or scientific claim about any specimen. It
+exists to make the reconstruction interpretable (the two lines are recovered) and
+the GPU/CPU comparison verifiable.

@@ -2,32 +2,37 @@
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+`run_demo.ps1` (Windows) / `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on `data/sample/slide_sample.txt` — one synthetic slide of 64 tiles
+   × 8 features, with 6 planted "tumor" tiles (label 1).
+3. **Verify** that the GPU attention-MIL forward pass matches the CPU reference —
+   attention weights, pooled embedding, and slide probability all within `1e-9`
+   (the fixed-point pooling makes the embedding and probability match *exactly*).
+4. **Report** the pooled slide embedding, the tumor probability, the top-attention
+   tile, a top-5 attention ranking, and the `@0.5` slide call.
 
-The program splits its output deliberately:
+stdout (the result) is deterministic and diffed against
+[`expected_output.txt`](expected_output.txt); the timing and raw error magnitudes
+are on stderr only.
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+## Canonical output
 
-## Expected result
+See [`expected_output.txt`](expected_output.txt). The interesting thing to look at:
 
-```
-4.11 -- Digital Pathology / Whole-Slide Image Analysis
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
-```
+- **Attention concentrates on the tumor tiles.** The top-5 attention tiles are
+  `#13, #33, #43, #3, #23` — exactly five of the six planted tumor tiles (at
+  indices 3, 13, 23, 33, 43, 53), each with weight ~0.16 versus the uniform
+  `1/64 ≈ 0.0156`. The model "looks at" the diagnostic tiles, ignoring background.
+- **The slide is called `TUMOR`** (probability ≈ 0.556 ≥ 0.5), matching the
+  ground-truth label 1. Regenerate a benign slide with
+  `python scripts/make_synthetic.py --tumor-frac 0` and the call flips to `benign`
+  (probability ≈ 0.08) with a flat, uninformative attention map.
+- **`RESULT: PASS`** means the GPU and CPU produced the same attention, embedding,
+  and probability within tolerance. The stderr `[verify]` line shows the raw
+  differences (`max embed diff = 0`, `prob diff = 0` — the fixed-point trick at
+  work; `max attn diff ~1e-16` — device vs host transcendentals).
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+> The data is a **synthetic** feature bag, not real histology — a demonstration of
+> GPU attention-MIL, **not** a clinical analysis.

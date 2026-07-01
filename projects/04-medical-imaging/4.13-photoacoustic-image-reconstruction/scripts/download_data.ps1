@@ -1,12 +1,16 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 4.13 -- Photoacoustic Image Reconstruction   (template skeleton)
+# Project 4.13 : Photoacoustic Image Reconstruction
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
 # expected size + checksum, and NEVER bypasses credentials/registration. If a
 # dataset needs an account, this script only prints instructions + links and
 # defers to scripts/make_synthetic.py for an offline stand-in.
+#
+# NOTE: this project needs NO download to run -- the committed synthetic sample
+# (data/sample/pa_sample.txt) is generated locally by make_synthetic.py. The
+# pointers below are for learners who want real photoacoustic data.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +20,17 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.13 -- Photoacoustic Image Reconstruction"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    k-Wave simulation datasets (generated locally); USCT (Ultrasound Computed Tomography) benchmark data (verify URL); in vivo photoacoustic datasets from Nature Communications publications (open access); PASCAA challenge datasets (verify URL at photoacoustics.org)."
+Write-Host "The demo needs NO download: data/sample/pa_sample.txt is synthetic and"
+Write-Host "regenerable with:  python scripts/make_synthetic.py"
+Write-Host "For a bigger synthetic problem:  python scripts/make_synthetic.py --sensors 256 --samples 1024 --img 256"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "To study REAL photoacoustic data, see (verify URLs; respect each license):"
+Write-Host "  * k-Wave toolbox + example datasets .......... http://www.k-wave.org/"
+Write-Host "  * k-Wave CUDA fluid solver ................... https://github.com/klepo/k-Wave-Fluid-CUDA"
+Write-Host "  * PyTomography (GPU tomography incl. PA) ..... https://github.com/lukepolson/pytomography"
+Write-Host "  * In-vivo PA datasets in open-access Nature Communications papers"
+Write-Host "  * PASCAA / IPASC challenge data .............. photoacoustics.org (verify URL)"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Credentialed/registration-gated sets: this script will NOT bypass a login."
+Write-Host "Register at the source, then place files under data/ yourself."

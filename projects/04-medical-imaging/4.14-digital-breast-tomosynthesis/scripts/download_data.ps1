@@ -1,12 +1,12 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Fetch / point to the FULL dataset (Windows)
 # ---------------------------------------------------------------------------
-# Project 4.14 -- Digital Breast Tomosynthesis   (template skeleton)
+# Project 4.14 -- Digital Breast Tomosynthesis
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The real DBT/mammography datasets are
+# credentialed or non-redistributable, so this script prints how to obtain them
+# and defers to scripts/make_synthetic.py for an offline synthetic stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,19 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.14 -- Digital Breast Tomosynthesis"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    OPTIMAM Mammography Image Database (OMI-DB, access via ICR UK); CBIS-DDSM (https://wiki.cancerimagingarchive.net/display/Public/CBIS-DDSM) — 2,620 mammograms via TCIA; VinDr-Mammo (https://physionet.org/content/vindr-mammo/1.0.0/); BCS-DBT (Duke DBT challenge dataset, https://bcs-dbt.grand-challenge.org/)."
+Write-Host "The committed tiny sample (data/sample/dbt_sample.txt) is SYNTHETIC and is"
+Write-Host "all the demo needs -- no download required. Real DBT/mammography data:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  * CBIS-DDSM (curated mammograms via TCIA, open):"
+Write-Host "      https://wiki.cancerimagingarchive.net/display/Public/CBIS-DDSM"
+Write-Host "  * BCS-DBT (Duke tomosynthesis challenge, true DBT projections):"
+Write-Host "      https://bcs-dbt.grand-challenge.org/"
+Write-Host "  * VinDr-Mammo (PhysioNet, CREDENTIALED -- requires a signed DUA):"
+Write-Host "      https://physionet.org/content/vindr-mammo/1.0.0/"
+Write-Host "  * OPTIMAM / OMI-DB (access via ICR UK, CREDENTIALED)."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "This script does NOT bypass any registration/credential wall. For the"
+Write-Host "credentialed sets, register at the link, accept the licence, and place the"
+Write-Host "files under data/ yourself. For a larger SYNTHETIC problem instead, run:"
+Write-Host "    python scripts/make_synthetic.py --img 128 --angles 21 --det 160"

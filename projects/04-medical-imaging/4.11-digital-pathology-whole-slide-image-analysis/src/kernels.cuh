@@ -1,52 +1,68 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU attention-MIL interface (the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 4.11 -- Digital Pathology / Whole-Slide Image Analysis   (template skeleton)
+// Project 4.11 : Digital Pathology / Whole-Slide Image Analysis
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA  (pattern: PER-TILE PROJECTION + SOFTMAX + ATOMIC POOL)
+//   A slide is a BAG of N tile feature vectors (produced upstream by a frozen
+//   CNN/ViT -- NOT reimplemented here; see THEORY.md). Attention-MIL turns that
+//   bag into one slide prediction in four steps, mapped to the GPU like this:
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//     1. LOGITS  kernel: one thread per TILE computes that tile's attention logit
+//                e_i = w . (tanh(V h_i) * sigmoid(U h_i))   -- embarrassingly
+//                parallel, each tile independent (the wsi.h math).      [per-tile]
+//     2. SOFTMAX (host): a tiny deterministic reduction over the N logits ->
+//                attention weights a_i (numerically-stable, subtract-max). N is
+//                small and this keeps stdout bit-reproducible.          [host]
+//     3. POOL    kernel: one thread per TILE atomically adds its weighted feature
+//                a_i * h_i into D shared accumulators, IN FIXED-POINT integers so
+//                the atomic sum is order-independent and matches the CPU exactly.
+//                                                             [atomic reduction]
+//     4. CLASSIFY(host): s = w_c . z + b_c, probability = sigmoid(s).   [host]
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Steps 1 and 3 are the GPU kernels (below); steps 2 and 4 are tiny host
+//   reductions REUSED from the CPU reference so the CPU and GPU produce identical
+//   numbers. This split -- heavy parallel work on the device, a small exact
+//   reduction on the host -- is the same shape as flagship 11.09 (k-means).
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+//   kernels.cu implements the kernels + the host wrapper mil_forward_gpu().
+//   main.cu calls mil_forward_gpu() and compares it to mil_forward_cpu().
+//
+// READ THIS AFTER: wsi.h, util/cuda_check.cuh, util/timer.cuh, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
-#include <vector>
+#include "reference_cpu.h"   // SlideBag, MilResult, AttnParams (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ---- Kernel 1: per-tile attention logits ---------------------------------
+// LOGITS: logits[i] = wsi_attention_logit(features + i*FEAT_DIM, params).
+//   grid  : ceil(N / block) blocks
+//   block : 256 threads (a good occupancy default on sm_75..sm_89)
+//   thread (blockIdx.x, threadIdx.x) -> tile index i = bx*blockDim.x + tx.
+// The frozen model parameters live in CONSTANT memory (see kernels.cu): every
+// thread reads the same weights, which is exactly what constant memory's
+// broadcast cache is for.
+__global__ void attention_logits_kernel(const double* __restrict__ features,
+                                        int N,
+                                        double* __restrict__ logits);
+
+// ---- Kernel 2: attention-weighted fixed-point pooling --------------------
+// POOL: for each tile i, atomically add its fixed-point weighted feature
+//   wsi_quantize(attn[i] * features[i][d]) into fixed_embed[d]. Integer atomic
+//   adds commute -> deterministic and CPU-matching (wsi.h explains the trick).
+//   Same thread-to-tile mapping as kernel 1.
+__global__ void attention_pool_kernel(const double* __restrict__ features,
+                                      const double* __restrict__ attn,
+                                      int N,
+                                      unsigned long long* __restrict__ fixed_embed);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// mil_forward_gpu: run the whole attention-MIL forward pass on the GPU.
+//   Uploads the bag, runs the LOGITS kernel, does the softmax on the host,
+//   uploads the weights, runs the POOL kernel, brings back the fixed-point
+//   embedding, then classifies on the host. Fills a MilResult identical to the
+//   CPU one. *kernel_ms returns the summed GPU kernel time (CUDA events).
+//     bag       : input slide bag (N tiles x FEAT_DIM)
+//     p         : frozen attention model (copied into constant memory)
+//     kernel_ms : out-param, milliseconds spent in the two kernels
+MilResult mil_forward_gpu(const SlideBag& bag, const AttnParams& p, float* kernel_ms);

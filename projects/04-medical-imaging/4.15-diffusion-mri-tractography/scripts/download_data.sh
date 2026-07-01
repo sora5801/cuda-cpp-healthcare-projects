@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  How to get REAL diffusion MRI (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 4.15 -- Diffusion MRI & Tractography   (template skeleton)
+# Project 4.15 : Diffusion MRI & Tractography
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. Every real dMRI dataset below requires
+# a free account and a data-use agreement, so this script only prints instructions
+# and defers to scripts/make_synthetic.py for an offline stand-in. It downloads
+# nothing by itself.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,25 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 4.15 -- Diffusion MRI & Tractography"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    Human Connectome Project (HCP) — 1,200 subjects, 3T/7T multi-shell dMRI (https://db.humanconnectome.org/); ABCD Study dMRI (https://abcdstudy.org/); UK Biobank dMRI (https://www.ukbiobank.ac.uk/); TMS-EEG Tractography Contest (verify URL)."
+echo "Real diffusion MRI comes as NIfTI volumes plus a b-vectors/b-values table"
+echo "(the gradient scheme). All public sources require a free account and a"
+echo "data-use agreement -- respect them; this script will NOT bypass any login:"
+echo "  * Human Connectome Project (HCP), 3T/7T multi-shell: https://db.humanconnectome.org/"
+echo "  * ABCD Study dMRI:      https://abcdstudy.org/"
+echo "  * UK Biobank dMRI:      https://www.ukbiobank.ac.uk/"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Recommended tooling to read/convert a real dataset (study, do not copy"
+echo "wholesale -- see README 'Prior art'):"
+echo "  * MRtrix3 (mrconvert, dwi2tensor, tckgen): https://www.mrtrix.org/"
+echo "  * DIPY (Python; read_bvals_bvecs, TensorModel): https://dipy.org/"
+echo "  * FSL (dtifit, bedpostx):  https://fsl.fmrib.ox.ac.uk/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "To convert a NIfTI DWI + bvec/bval into THIS project's text format (one b0 +"
+echo "12 directions per voxel; see data/README.md), a short DIPY/nibabel script"
+echo "suffices: load the 4-D volume, pick a small ROI, and write '<mask> S_0 .. S_12'"
+echo "per voxel. Keep NMEAS = 13 to match the compiled gradient scheme"
+echo "(src/dti_core.h) or regenerate make_gradient_scheme."
+echo
+echo "Offline stand-in (no download, fully reproducible, SYNTHETIC):"
+echo "  python scripts/make_synthetic.py                 # the committed 16x16x4 sample"
+echo "  python scripts/make_synthetic.py --nx 64 --ny 64 --nz 32   # a bigger volume"

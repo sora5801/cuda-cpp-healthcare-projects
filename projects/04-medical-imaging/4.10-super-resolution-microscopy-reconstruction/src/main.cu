@@ -1,122 +1,127 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: reconstruct a super-resolution image, verify
 // ---------------------------------------------------------------------------
-// Project 4.10 -- Super-Resolution Microscopy Reconstruction   (template skeleton)
+// Project 4.10 : Super-Resolution Microscopy Reconstruction  (STORM / PALM SMLM)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the shape every project in this repo follows):
+//   1. Load the raw SMLM movie (data/sample, or the path in argv[1]).
+//   2. CPU reference: detect + localize + render      (reference_cpu.cpp).
+//   3. GPU pipeline:  detect + localize + atomic render (kernels.cu).
+//   4. VERIFY: the localization list, the fixed-point image, and the summary all
+//      match the CPU exactly (integer/render fields) or within a tiny tolerance
+//      (the double-precision mean statistics). See THEORY §6.
+//   5. REPORT: a DETERMINISTIC digest to stdout (diffed by the demo); timing and
+//      run-varying detail to stderr (shown, not diffed).
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
-//
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then smlm.h (the fit), reference_cpu.h/.cpp (baseline +
+// shared render), kernels.cuh/.cu (the GPU twin). See ../THEORY.md for the "why".
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // smlm_gpu, FrameStack, Localization, ResultSummary
+#include "reference_cpu.h"    // load_stack, detect_and_localize_cpu, render_image, summarize
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "4.10";
 static const char* PROJECT_NAME = "Super-Resolution Microscopy Reconstruction";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Verification tolerance for the double-precision MEAN statistics only. The
+// integer fields (localization count, image checksum, bright-bin count) must be
+// EXACT (== 0 difference): the fit is the same fixed-iteration double arithmetic
+// on both sides and the render sums fixed-point integers, so those cannot drift.
+// The means are averages of thousands of doubles that were computed in the same
+// order on both sides; 1e-6 is generous slack for last-ULP differences. (See
+// docs/PATTERNS.md §4 and THEORY §6.)
+static constexpr double MEAN_TOL = 1.0e-6;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1]
+                                        : "data/sample/smlm_stack.txt";
+    FrameStack stack;
+    try {
+        stack = load_stack(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<Localization> locs_cpu;
+    std::vector<unsigned long long> img_cpu;
+    int srH_cpu = 0, srW_cpu = 0;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    detect_and_localize_cpu(stack, locs_cpu);
+    render_image(stack, locs_cpu, img_cpu, srH_cpu, srW_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
+    const ResultSummary S_cpu = summarize(locs_cpu, img_cpu, srH_cpu, srW_cpu);
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU pipeline (kernels timed inside the wrapper) ---------------
+    std::vector<Localization> locs_gpu;
+    std::vector<unsigned long long> img_gpu;
+    int srH_gpu = 0, srW_gpu = 0;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    const ResultSummary S_gpu =
+        smlm_gpu(stack, locs_gpu, img_gpu, srH_gpu, srW_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify ---------------------------------------------------------
+    // (a) Same number of localizations, in the same canonical order.
+    const bool count_ok = (S_cpu.n_localizations == S_gpu.n_localizations);
+    // (b) The fixed-point render is bit-identical (exact integer checksum + the
+    //     same number of illuminated bins).
+    const bool image_ok = count_ok
+        && (S_cpu.img_checksum == S_gpu.img_checksum)
+        && (S_cpu.bright_bins  == S_gpu.bright_bins)
+        && (srH_cpu == srH_gpu) && (srW_cpu == srW_gpu);
+    // (c) Also confirm every fixed-point pixel matches (not just the checksum) --
+    //     a stronger, still-exact check that no two bins swapped contents.
+    bool pixels_ok = image_ok && (img_cpu.size() == img_gpu.size());
+    if (pixels_ok)
+        for (std::size_t i = 0; i < img_cpu.size(); ++i)
+            if (img_cpu[i] != img_gpu[i]) { pixels_ok = false; break; }
+    // (d) The double-precision mean statistics agree within MEAN_TOL.
+    const double dmx = std::fabs(S_cpu.mean_x       - S_gpu.mean_x);
+    const double dmy = std::fabs(S_cpu.mean_y       - S_gpu.mean_y);
+    const double dms = std::fabs(S_cpu.mean_sigma   - S_gpu.mean_sigma);
+    const double dmp = std::fabs(S_cpu.mean_photons - S_gpu.mean_photons);
+    const double mean_err = std::fmax(std::fmax(dmx, dmy), std::fmax(dms, dmp));
+    const bool means_ok = mean_err <= MEAN_TOL;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    const bool pass = count_ok && image_ok && pixels_ok && means_ok;
+
+    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) ----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("STORM/PALM SMLM: %d frames of %dx%d px\n", stack.F, stack.H, stack.W);
+    std::printf("localizations: %zu emitters fitted (7x7 patch, %d refine iters)\n",
+                S_gpu.n_localizations, FIT_ITERS);
+    std::printf("super-resolution image: %dx%d px (%dx upsampled), %zu illuminated bins\n",
+                S_gpu.srH, S_gpu.srW, UPSAMPLE, S_gpu.bright_bins);
+    std::printf("image checksum (fixed-point sum): %llu\n", S_gpu.img_checksum);
+    // Mean statistics rounded to 4 decimals: deterministic and stable well
+    // within MEAN_TOL, so they are safe to diff byte-for-byte.
+    std::printf("mean position: x=%.4f y=%.4f px\n", S_gpu.mean_x, S_gpu.mean_y);
+    std::printf("mean PSF sigma: %.4f px   mean intensity: %.4f\n",
+                S_gpu.mean_sigma, S_gpu.mean_photons);
+    std::printf("RESULT: %s (GPU localizations+image match CPU)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
+    std::fprintf(stderr, "[data]   source: %s  (%d frames, %dx%d, bg=%.2f, thr=%.2f)\n",
+                 path.c_str(), stack.F, stack.H, stack.W, stack.background, stack.threshold);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernels: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- the tiny sample is launch-bound; "
+                         "the GPU's edge grows with the 10^4-10^5 frames of a real STORM run.\n");
+    std::fprintf(stderr, "[verify] count(cpu/gpu)=%zu/%zu  checksum(cpu/gpu)=%llu/%llu  "
+                         "bright_bins(cpu/gpu)=%zu/%zu  pixels_exact=%s  mean_err=%.3e (tol %.1e)\n",
+                 S_cpu.n_localizations, S_gpu.n_localizations,
+                 S_cpu.img_checksum, S_gpu.img_checksum,
+                 S_cpu.bright_bins, S_gpu.bright_bins,
+                 pixels_ok ? "yes" : "NO", mean_err, MEAN_TOL);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

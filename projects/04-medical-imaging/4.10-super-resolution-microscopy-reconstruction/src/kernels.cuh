@@ -1,52 +1,68 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU SMLM interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 4.10 -- Super-Resolution Microscopy Reconstruction   (template skeleton)
+// Project 4.10 : Super-Resolution Microscopy Reconstruction  (STORM / PALM SMLM)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (flagship pattern: INDEPENDENT JOBS + ATOMIC REDUCTION)
+//   Two GPU phases, mirroring the CPU reference exactly:
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//     LOCALIZE : one GPU THREAD PER INTERIOR PIXEL tests whether that pixel is a
+//                strict local maximum above threshold; if so it runs the SAME
+//                smlm_localize() fit the CPU uses (from smlm.h) on its own 7x7
+//                patch and writes the result into the OUTPUT SLOT indexed by its
+//                scan position. Every fit is independent (reads only its patch,
+//                writes only its slot) -> embarrassingly parallel, no atomics.
+//                Because a slot's index IS its (frame,row,col) scan position, a
+//                host compaction that keeps slots in index order reproduces the
+//                CPU's canonical localization order EXACTLY.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//     RENDER   : one GPU thread per localization scatters its photons into the
+//                super-resolution image bin its (x,y) falls in, via atomicAdd on
+//                FIXED-POINT integers (smlm.h). Integer atomics commute, so the
+//                rendered image is order-independent and bit-identical to the CPU
+//                render (docs/PATTERNS.md §3). This is the atomic-reduction half.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+//   kernels.cu implements both kernels + the host wrapper smlm_gpu(). main.cu
+//   calls smlm_gpu() and compares its ResultSummary with the CPU's.
+//
+//   Included ONLY by .cu files (it declares __global__ kernels). The CPU
+//   reference cannot see this header -- it uses reference_cpu.h + smlm.h instead.
+//
+// READ THIS AFTER: smlm.h, reference_cpu.h, util/cuda_check.cuh, util/timer.cuh.
 // ===========================================================================
 #pragma once
 
+#include <cstddef>
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // FrameStack, Localization, ResultSummary (pure C++)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// ---- Device kernels (documented at their definitions in kernels.cu) --------
+
+// LOCALIZE: thread per interior pixel of one frame. Writes a Localization into
+// slot[i] and sets valid[i]=1 iff pixel i is a detected+localized emitter.
+__global__ void localize_kernel(const float* __restrict__ frame, int H, int W,
+                                double background, double threshold, int frame_idx,
+                                Localization* __restrict__ slot,
+                                unsigned char* __restrict__ valid);
+
+// RENDER: thread per localization. Atomically adds each emitter's fixed-point
+// photons into its super-resolution bin.
+__global__ void render_kernel(const Localization* __restrict__ locs, int n,
+                              int srH, int srW,
+                              unsigned long long* __restrict__ img_fixed);
+
+// ---- Host wrapper ----------------------------------------------------------
+// smlm_gpu: run the whole GPU pipeline on a frame stack.
+//   Detects + localizes every frame (localize_kernel), compacts the results into
+//   the canonical (frame,row,col) order on the host, renders them into a
+//   fixed-point super-resolution image (render_kernel), and fills:
+//     out_locs  : the localization list, in canonical order (matches the CPU)
+//     img_fixed : the fixed-point super-resolution image (srH*srW)
+//     srH, srW  : render dimensions
+//     kernel_ms : total GPU kernel time (localize + render), CUDA-event measured
+//   Returns the ResultSummary (same fields the CPU produces) for verification.
+ResultSummary smlm_gpu(const FrameStack& stack,
+                       std::vector<Localization>& out_locs,
+                       std::vector<unsigned long long>& img_fixed,
+                       int& srH, int& srW, float* kernel_ms);

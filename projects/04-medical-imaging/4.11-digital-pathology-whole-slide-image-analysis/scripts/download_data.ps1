@@ -1,12 +1,14 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real WSI-data pointers (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 4.11 -- Digital Pathology / Whole-Slide Image Analysis   (template skeleton)
+# Project 4.11 : Digital Pathology / Whole-Slide Image Analysis
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints source URLs, and
+# NEVER bypasses credentials/registration. Whole-slide images are multi-gigabyte
+# and their public repositories require a (free) account and agreeing to a data-
+# use agreement, so this script does NOT auto-download; it prints where to get
+# the data and how to turn it into this project's tile-feature-bag format. The
+# committed synthetic sample already lets the demo run offline.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +18,23 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.11 -- Digital Pathology / Whole-Slide Image Analysis"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    TCGA (The Cancer Genome Atlas) slides — access via GDC Data Portal (https://portal.gdc.cancer.gov/); CAMELYON16/17 lymph node metastasis detection (https://camelyon17.grand-challenge.org/); PanCancer Atlas WSIs via TCGA; TUPAC16 tumor proliferation."
+Write-Host "This project consumes a BAG of tile FEATURE vectors per slide, not raw"
+Write-Host "pixels. The real pipeline is: download WSIs -> tile + tissue-detect ->"
+Write-Host "run a frozen CNN/ViT encoder per tile -> save the N x D features."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Public WSI datasets (free account + data-use agreement required):"
+Write-Host "  TCGA slides (GDC) : https://portal.gdc.cancer.gov/"
+Write-Host "  CAMELYON16/17     : https://camelyon17.grand-challenge.org/"
+Write-Host "  TUPAC16           : http://tupac.tue-image.nl/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Tools to read WSIs and extract features:"
+Write-Host "  OpenSlide         : https://openslide.org/           (read .svs/.tif pyramids)"
+Write-Host "  CLAM              : https://github.com/mahmoodlab/CLAM (tiling + feature bags + MIL)"
+Write-Host "  UNI encoder       : https://github.com/mahmoodlab/UNI  (pretrained ViT features)"
+Write-Host ""
+Write-Host "Export each slide as 'N D label' then N rows of D features (D must equal"
+Write-Host "FEAT_DIM in src/wsi.h). See data/README.md for the exact format."
+Write-Host ""
+Write-Host "No download needed to run the demo. Bigger SYNTHETIC bag:"
+Write-Host "  python scripts/make_synthetic.py --n 20000"

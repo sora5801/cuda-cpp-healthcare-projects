@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 4.11 -- Digital Pathology / Whole-Slide Image Analysis   (template skeleton)
+# Project 4.11 : Digital Pathology / Whole-Slide Image Analysis
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/digital-pathology-whole-slide-image-analysis.sln (CLAUDE.md §5). Both
