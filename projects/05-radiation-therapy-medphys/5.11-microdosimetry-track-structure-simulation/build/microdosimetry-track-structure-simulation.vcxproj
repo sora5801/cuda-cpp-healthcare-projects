@@ -153,6 +153,10 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- Shared host+device physics core: included by BOTH reference_cpu.cpp (host
+         compiler) and kernels.cu/main.cu (nvcc), so CPU and GPU run identical
+         tracks. See src/ts_physics.h and PATTERNS.md section 2. -->
+    <ClInclude Include="..\src\ts_physics.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 5.5 -- Deformable Dose Accumulation & Adaptive Radiotherapy   (template skeleton)
+# Project 5.5 -- Deformable Dose Accumulation & Adaptive Radiotherapy
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/deformable-dose-accumulation-adaptive-radiotherapy.sln (CLAUDE.md §5). Both

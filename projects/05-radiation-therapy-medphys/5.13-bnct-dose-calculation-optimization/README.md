@@ -6,29 +6,54 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+This project is a **reduced-scope teaching Monte Carlo** for **Boron Neutron
+Capture Therapy (BNCT)** dose calculation. It fires simulated neutrons into a
+1-D tissue slab, tracks each one as it slows down and is eventually captured, and
+tallies the four physically distinct BNCT dose components — **boron**
+(¹⁰B(n,α)⁷Li, the therapeutic reaction), **nitrogen**, **hydrogen-capture
+gamma**, and **fast-neutron recoil** — as a function of depth. It then reports
+the **CBE/RBE-weighted biological dose** (Gy-Eq). Every neutron history is
+independent, so the simulation maps naturally onto the GPU: **one thread per
+history**, with results scored via `atomicAdd` into a shared dose tally. Because
+energy is accumulated in **integer keV quanta**, the GPU result matches the CPU
+reference **exactly** — a clean, zero-tolerance verification that teaches the
+"integer atomics = deterministic reduction" lesson. It is educational only, not a
+clinical dose engine (see [THEORY.md](THEORY.md) §7).
 
 ## What this computes & why the GPU helps
 
 Boron Neutron Capture Therapy (BNCT) delivers therapeutic dose by targeting tumor cells loaded with ¹⁰B, which captures thermal neutrons to release high-LET alpha particles and lithium recoils. Dose calculation involves: (1) neutron transport (diffusion or discrete ordinates / Monte Carlo) to compute thermal neutron flux maps, (2) boron dose from ¹⁰B(n,α)⁷Li reaction rates, (3) high-LET photon dose, and (4) fast neutron dose — each requiring separate cross-section libraries and requiring GPU-parallel transport. The compound biological effectiveness (CBE) factor and boron uptake heterogeneity add biological modeling complexity. Treatment planning must jointly optimize beam direction and boron carrier dosing.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** simulating the **neutron histories**. A useful dose
+estimate needs 10⁶–10¹⁰ independent histories, and each is an independent
+random walk (sample a free path, decide scatter vs. capture, deposit energy,
+repeat). That is the classic *embarrassingly parallel* Monte-Carlo workload:
+we give **each history its own GPU thread** (a grid-stride loop over millions of
+them) and score deposits with `atomicAdd`. The transport per history is cheap;
+the win comes from running a huge *number* of them concurrently.
 
 ## The algorithm in brief
 
-Monte Carlo neutron transport (OpenMC, MCNP, GATE), discrete ordinates neutron transport (Sₙ), multi-group cross-section library (ENDF/B-VIII), boron dose kernel convolution, CBE-weighted biological dose, neutron activation analysis on GPU, joint boron+neutron beam optimization.
+- **Monte Carlo neutron transport** — sample each neutron's exponential free
+  path `s = -ln(ξ)/Σ_tot`, advance it, and decide the interaction by
+  cross-section shares (this teaching version uses **two energy groups**, fast +
+  thermal, in a 1-D slab).
+- **Thermalization** — fast neutrons elastically scatter (mostly off hydrogen)
+  until they slow to thermal energy; a fast scatter deposits a recoil-proton
+  dose quantum.
+- **Capture & dose components** — a thermal capture is assigned to ¹⁰B, ¹⁴N, or
+  ¹H in proportion to each nuclide's macroscopic capture cross section `Σ_a`,
+  depositing that reaction's energy into the matching dose component.
+- **CBE/RBE-weighted biological dose** — the four physical component doses are
+  combined with their biological weights, `D_bio = Σ_c w_c·D_c` (Gy-Eq).
+- **GPU pattern** — one thread per neutron history (grid-stride), integer-quanta
+  `atomicAdd` scoring for a deterministic, exactly-verifiable tally.
+
+The catalog also lists discrete-ordinates (Sₙ) transport, full ENDF/B-VIII
+cross-section libraries, and joint beam+boron optimization; those belong to the
+production version described in [THEORY.md](THEORY.md) §7.
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
 derivation.
@@ -61,19 +86,26 @@ GPU-vs-CPU agreement check, and prints a timing line.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
+- **Sample (committed):** `data/sample/bnct_params.txt` — a tiny, **synthetic**,
+  offline parameter file (15 numbers) so the demo runs with zero downloads.
+  Regenerate/scale with `python scripts/make_synthetic.py`.
+- **Full dataset:** `scripts/download_data.ps1` / `.sh` print pointers to real
+  BNCT references (OpenMC, GATE, ENDF/B-VIII, IAEA benchmarks); none is needed
+  for the demo, and gated data is never bypassed.
+- **Provenance, field meanings & license:** see [data/README.md](data/README.md).
 
 Catalog dataset notes: IAEA BNCT benchmark cases (verify URL at iaea.org); BNCT clinical trial CT data from Finnish accelerator BNCT program; OpenMC validation datasets (https://github.com/openmc-dev/openmc/tree/develop/tests); NIST neutron cross-section data (verify URL).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt): the
+four component totals with their dose shares, the CBE/RBE-weighted biological
+dose, and the boron depth-dose curve (which rises to a sub-surface peak then
+falls — the thermal-neutron build-up). The program computes the tally on both the
+**GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`) and
+asserts they agree **exactly** — because the dose is accumulated in integer keV
+quanta, the tolerance is **zero mismatches**, not an approximate float bound.
+That exact agreement is the correctness guarantee.
 
 ## Code tour
 
@@ -94,15 +126,45 @@ reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-GPU neutron transport via OpenMP offload or custom CUDA kernel (one thread per neutron history); material cross-section tables in texture memory; boron concentration map in 3D GPU array; cuBLAS for multi-group matrix-vector flux equations; warp-divergence mitigation by material-sorted particle batches. --
+**Per-thread Monte-Carlo histories + atomic scoring** (docs/PATTERNS.md §1, as in
+flagship 5.01): one GPU thread per neutron history via a grid-stride loop, a
+private reproducible RNG per thread (shared `__host__ __device__` header so
+CPU==GPU), and `atomicAdd` into a small global dose tally. The catalog also
+mentions cross-section tables in texture memory, a 3-D boron map, cuBLAS for
+multi-group flux equations, and material-sorted particle batches to fight warp
+divergence — those are production optimizations described in
+[THEORY.md](THEORY.md) §4/§7 and left as exercises.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Tumor selectivity.** Make `Σ_a,B` **depth-dependent** — high only in a
+   "tumor" band of bins, near-zero elsewhere — and show the boron dose spikes
+   inside the tumor while the background components stay flat. This is the core
+   BNCT idea. (Requires passing a per-bin boron array instead of a scalar.)
+2. **Convergence.** Sweep `n_histories` (1e4 → 1e7) and plot the boron
+   depth-dose's statistical noise shrinking as ~1/√N. Note where the GPU starts
+   to clearly beat the CPU (small N is launch-bound; see `docs/PATTERNS.md §7`).
+3. **Fight divergence.** Sort/bin histories by whether they thermalize before
+   scoring, or process fast and thermal phases in separate kernels, and measure
+   the effect on kernel time (warp-divergence mitigation from THEORY §4).
+4. **Reduce atomic contention.** Give each block a shared-memory sub-tally and
+   flush once per block — compare timing for a much larger `n_bins`.
+5. **Better physics.** Add a third energy group (epithermal), or replace the flat
+   two-group cross sections with a small tabulated Σ(E) read into constant/texture
+   memory — a step toward the multi-group libraries real codes use.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced-scope teaching model, not a dose engine.** It is **1-D** (a slab, not
+  a voxelized patient), uses **two flat energy groups** (not continuous-energy
+  ENDF/B cross sections), and deposits reaction energy **locally** (kerma
+  approximation — it does not transport the α/⁷Li/proton secondaries).
+- **All data is synthetic.** The cross sections in `data/sample/bnct_params.txt`
+  are order-of-magnitude realistic but are **not** a validated library; the
+  `gray_per_keV` scale is arbitrary. The reported Gy / Gy-Eq numbers are a
+  teaching artifact, **not** a real patient dose.
+- **No clinical claim.** Nothing here may inform diagnosis or treatment
+  (CLAUDE.md §8). The CBE/RBE weights are representative literature values, not a
+  patient- or drug-specific calibration.
+- **Timing is illustrative**, not a benchmark (CLAUDE.md §12). Production BNCT
+  differs on every axis described in [THEORY.md](THEORY.md) §7.

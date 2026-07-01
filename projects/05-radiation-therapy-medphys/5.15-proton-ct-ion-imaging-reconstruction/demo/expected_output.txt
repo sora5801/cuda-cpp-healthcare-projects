@@ -1,5 +1,8 @@
 5.15 -- Proton CT & Ion Imaging Reconstruction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+list-mode SART: 1440 protons, 40 sweeps, relax=0.80, 64 MLP samples/proton
+grid: 32x32 voxels over world [-5.00,5.00]^2 cm
+reconstructed RSP: center=1.1586  q1=0.9896  q3=0.7986
+mean RSP inside phantom = 1.0244
+RMSE vs ground-truth RSP = 0.0935
+central row RSP profile (8 samples): -0.0559 0.8559 0.9255 0.8904 1.1440 1.5959 0.9487 -0.0152
+RESULT: PASS (GPU matches CPU within tol=1.0e-03)

@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 5.10 -- Secondary Cancer Risk & Stray-Dose Monte Carlo   (template skeleton)
+# Project 5.10 -- Secondary Cancer Risk & Stray-Dose Monte Carlo
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/secondary-cancer-risk-stray-dose-monte-carlo.sln (CLAUDE.md §5). Both

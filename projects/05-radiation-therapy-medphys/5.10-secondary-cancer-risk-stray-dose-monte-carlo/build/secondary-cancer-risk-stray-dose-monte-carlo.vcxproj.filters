@@ -32,6 +32,12 @@
     <ClInclude Include="..\src\reference_cpu.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\stray_physics.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\risk_model.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\util\cuda_check.cuh">
       <Filter>Header Files\util</Filter>
     </ClInclude>

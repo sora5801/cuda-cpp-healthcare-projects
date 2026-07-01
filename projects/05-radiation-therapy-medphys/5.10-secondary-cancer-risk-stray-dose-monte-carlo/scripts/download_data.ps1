@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 5.10 -- Secondary Cancer Risk & Stray-Dose Monte Carlo   (template skeleton)
+# Project 5.10 : Secondary Cancer Risk & Stray-Dose Monte Carlo
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# expected size + checksum, and NEVER bypasses credentials/registration. The
+# real inputs (ICRP-110 voxel phantoms, NIST XCOM cross-sections, TCIA CTs) are
+# large and/or registration-gated, so this script prints instructions + links and
+# defers to scripts/make_synthetic.py for the offline stand-in the demo uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,17 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 5.10 -- Secondary Cancer Risk & Stray-Dose Monte Carlo"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    ICRP 110 voxel phantoms (adult male/female, https://www.icrp.org/publication.asp?id=ICRP%20Publication%20110); NIST photon cross-section databases (https://www.nist.gov/pml/xcom-photon-cross-sections); secondary dose measurements from literature; TCIA proton therapy planning CTs."
+Write-Host "This project ships a SYNTHETIC committed sample (data/sample/phantom.txt),"
+Write-Host "so no download is required to run the demo."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real datasets (registration/attribution required -- fetch by hand):"
+Write-Host "  * ICRP 110 voxel phantoms (adult male/female):"
+Write-Host "      https://www.icrp.org/publication.asp?id=ICRP%20Publication%20110"
+Write-Host "  * NIST XCOM photon cross-sections:"
+Write-Host "      https://www.nist.gov/pml/xcom-photon-cross-sections"
+Write-Host "  * TCIA proton-therapy planning CTs (account + attribution):"
+Write-Host "      https://www.cancerimagingarchive.net/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "For a larger SYNTHETIC problem instead, run:"
+Write-Host "    python scripts/make_synthetic.py --histories 2000000 --seed 7"

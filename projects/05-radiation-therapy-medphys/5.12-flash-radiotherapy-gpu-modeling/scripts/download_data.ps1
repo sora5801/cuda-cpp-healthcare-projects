@@ -1,12 +1,15 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 5.12 -- FLASH Radiotherapy GPU Modeling   (template skeleton)
+# Project 5.12 : FLASH Radiotherapy GPU Modeling
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and
+# NEVER bypasses credentials/registration. This project's "input" is a tiny
+# ensemble-configuration file (a parameter sweep); the physics lives in the
+# code, so there is NO large binary dataset to download. Real FLASH-RT
+# validation data (dosimetry, tumour oxygenation, radiolysis yields) is
+# credentialed or not redistributable -- we point to it and generate a
+# synthetic stand-in instead.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +19,22 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 5.12 -- FLASH Radiotherapy GPU Modeling"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    FLASH-RT experimental dosimetry from CERN/CLEAR, UCLouvain, Stanford FLASH programs (verify access); AAPM FLASH-RT working group benchmark datasets (verify URL); published oxygen tension measurements in tumors; GEANT4-DNA radiolysis validation datasets."
+Write-Host "This project ships a SYNTHETIC ensemble-config sample; no bulk download is"
+Write-Host "needed to run the demo. Real-world reference data (for those extending the"
+Write-Host "model) is credentialed / not redistributable:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  * FLASH-RT experimental dosimetry -- CERN/CLEAR, UCLouvain, Stanford FLASH"
+Write-Host "    programs (institutional access; verify each program's data-sharing policy)."
+Write-Host "  * AAPM FLASH-RT working-group benchmark datasets (verify current URL)."
+Write-Host "  * Published tumour oxygen-tension (pO2) measurements -- see the literature"
+Write-Host "    (e.g. Eppendorf-electrode and EPR-oximetry studies)."
+Write-Host "  * Geant4-DNA radiolysis validation datasets -- https://geant4-dna.org"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "To (re)generate the committed synthetic sample offline, run:"
+Write-Host "    python scripts/make_synthetic.py"
+Write-Host ""
+Write-Host "For a finer oxygen sweep (more ensemble members), run e.g.:"
+Write-Host "    python scripts/make_synthetic.py --n-po2 32"
+Write-Host ""
+Write-Host "[download_data] Nothing to download; done."

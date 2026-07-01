@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 5.13 -- BNCT Dose Calculation & Optimization   (template skeleton)
+# Project 5.13 -- BNCT Dose Calculation & Optimization (reduced-scope teaching MC)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/bnct-dose-calculation-optimization.sln (CLAUDE.md §5). Both

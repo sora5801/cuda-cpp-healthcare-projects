@@ -1,94 +1,117 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  GPU track-structure kernel (per-thread tracks + atomics)
 // ---------------------------------------------------------------------------
-// Project 5.11 -- Microdosimetry & Track-Structure Simulation   (template skeleton)
+// Project 5.11 : Microdosimetry & Track-Structure Simulation
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of track_cpu(): identical tracks (shared ts_physics.h), but run in
+// parallel and scored with atomicAdd into shared integer tallies. main.cu runs
+// both and asserts every tally matches EXACTLY. See ../THEORY.md "GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
+#include "ts_physics.h"          // TrackParams, Rng, simulate_track (host+device)
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
+// Threads per block. 256 is a solid default on sm_75..sm_89: a multiple of the
+// 32-lane warp, gives the scheduler 8 warps per block to hide latency, and leaves
+// plenty of blocks resident for occupancy. (Track simulation is compute-bound and
+// branchy; 256 keeps register pressure and occupancy well balanced here.)
 static constexpr int THREADS_PER_BLOCK = 256;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// track_kernel: grid-stride over primary tracks. Each iteration simulates ONE
+// primary with its own reproducible RNG stream and atomically adds its integer
+// results into the shared tallies.
+//   * No shared memory for the tallies: they are tiny (three scalars + a small
+//     histogram) but written by every thread, so they live in global memory and
+//     are updated with atomicAdd.
+//   * Integer quanta / counts => the atomics COMMUTE => deterministic, exactly
+//     CPU-matching sums (PATTERNS.md §3). A float energy tally would drift.
+//   * WARP DIVERGENCE is the classic track-structure challenge: different
+//     primaries take different numbers of steps and branches, so lanes in a warp
+//     finish at different times. Production codes (Geant4-DNA/MPEXS-DNA) sort
+//     tracks by interaction type before each step to keep a warp coherent; we
+//     keep the readable one-thread-per-track version and explain the fix in
+//     THEORY.md rather than obscuring the teaching kernel with it.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void track_kernel(TrackParams tp, unsigned long long n_tracks,
+                             unsigned long long seed,
+                             unsigned long long* __restrict__ d_quanta,
+                             unsigned long long* __restrict__ d_ssb,
+                             unsigned long long* __restrict__ d_dsb,
+                             unsigned long long* __restrict__ d_yhist) {
+    // Grid-stride bounds: `start` is this thread's first track, `stride` is the
+    // total number of threads. The loop lets a fixed-size grid cover any number
+    // of tracks -- the standard idiom for "more work items than threads".
+    const unsigned long long stride =
+        static_cast<unsigned long long>(blockDim.x) * gridDim.x;
+    const unsigned long long start =
+        static_cast<unsigned long long>(blockIdx.x) * blockDim.x + threadIdx.x;
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
+    for (unsigned long long i = start; i < n_tracks; i += stride) {
+        Rng rng = rng_seed(seed, i);                 // this track's private stream
+        TrackResult r = simulate_track(tp, rng);     // shared physics (ts_physics.h)
+
+        // Fold the integer results into the shared tallies. Many threads hit the
+        // same addresses => atomicAdd. Integer adds are order-independent, so the
+        // final sums are deterministic and identical to the serial CPU tally.
+        atomicAdd(d_quanta, r.energy_quanta);
+        if (r.ssb) atomicAdd(d_ssb, static_cast<unsigned long long>(r.ssb));
+        if (r.dsb) atomicAdd(d_dsb, static_cast<unsigned long long>(r.dsb));
+        atomicAdd(&d_yhist[r.y_bin], 1ULL);          // one increment into y-spectrum
     }
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// track_gpu: host wrapper. Allocate + zero the device tallies, launch all
+// tracks, copy the results back, free. We time ONLY the kernel with CUDA events
+// so the reported figure is the compute cost (the tally copy-back is a few tens
+// of bytes, negligible; there are no large H2D transfers because the "input" is
+// just parameters passed by value).
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void track_gpu(const TrackProblem& prob, TrackTally& tally, float* kernel_ms) {
+    const int n_bins = prob.tp.n_y_bins;
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // Device accumulators. Three scalar counters + the y-histogram, all u64 so
+    // the sums cannot overflow across many tracks and so integer atomics apply.
+    unsigned long long *d_quanta = nullptr, *d_ssb = nullptr, *d_dsb = nullptr;
+    unsigned long long *d_yhist = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_quanta, sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_ssb,    sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_dsb,    sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_yhist,  n_bins * sizeof(unsigned long long)));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // Zero everything before scoring (atomicAdd accumulates onto these).
+    CUDA_CHECK(cudaMemset(d_quanta, 0, sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_ssb,    0, sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_dsb,    0, sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_yhist,  0, n_bins * sizeof(unsigned long long)));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // A fixed, generous grid: enough resident warps to hide the branchy per-track
+    // work; the grid-stride loop then covers any number of tracks.
+    const int blocks = 1024;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
+    track_kernel<<<blocks, THREADS_PER_BLOCK>>>(prob.tp, prob.n_tracks, prob.seed,
+                                                d_quanta, d_ssb, d_dsb, d_yhist);
     *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    CUDA_CHECK_LAST("track_kernel");       // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // Copy the small tallies back into the host TrackTally.
+    tally.y_hist.assign(static_cast<std::size_t>(n_bins), 0ULL);
+    CUDA_CHECK(cudaMemcpy(&tally.total_quanta, d_quanta, sizeof(unsigned long long),
+                          cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(&tally.total_ssb, d_ssb, sizeof(unsigned long long),
+                          cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(&tally.total_dsb, d_dsb, sizeof(unsigned long long),
+                          cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(tally.y_hist.data(), d_yhist,
+                          n_bins * sizeof(unsigned long long),
+                          cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    // Free device memory (no GPU garbage collector).
+    CUDA_CHECK(cudaFree(d_quanta));
+    CUDA_CHECK(cudaFree(d_ssb));
+    CUDA_CHECK(cudaFree(d_dsb));
+    CUDA_CHECK(cudaFree(d_yhist));
 }

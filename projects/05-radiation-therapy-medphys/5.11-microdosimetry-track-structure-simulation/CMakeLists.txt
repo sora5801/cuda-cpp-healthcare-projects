@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 5.11 -- Microdosimetry & Track-Structure Simulation   (template skeleton)
+# Project 5.11 : Microdosimetry & Track-Structure Simulation
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/microdosimetry-track-structure-simulation.sln (CLAUDE.md §5). Both

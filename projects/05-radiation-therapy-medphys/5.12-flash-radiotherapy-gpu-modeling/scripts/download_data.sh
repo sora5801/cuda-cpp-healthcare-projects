@@ -2,11 +2,15 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 5.12 -- FLASH Radiotherapy GPU Modeling   (template skeleton)
+# Project 5.12 : FLASH Radiotherapy GPU Modeling
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and
+# NEVER bypasses credentials/registration. This project's "input" is a tiny
+# ensemble-configuration file (a parameter sweep); the physics lives in the
+# code, so there is NO large binary dataset to download. Real FLASH-RT
+# validation data (dosimetry, tumour oxygenation, radiolysis yields) is
+# credentialed or not redistributable -- we point to it and generate a
+# synthetic stand-in instead.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +21,21 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 5.12 -- FLASH Radiotherapy GPU Modeling"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    FLASH-RT experimental dosimetry from CERN/CLEAR, UCLouvain, Stanford FLASH programs (verify access); AAPM FLASH-RT working group benchmark datasets (verify URL); published oxygen tension measurements in tumors; GEANT4-DNA radiolysis validation datasets."
+echo "This project ships a SYNTHETIC ensemble-config sample; no bulk download is"
+echo "needed to run the demo. Real-world reference data (for those extending the"
+echo "model) is credentialed / not redistributable:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  * FLASH-RT experimental dosimetry -- CERN/CLEAR, UCLouvain, Stanford FLASH"
+echo "    programs (institutional access; verify each program's data-sharing policy)."
+echo "  * AAPM FLASH-RT working-group benchmark datasets (verify current URL)."
+echo "  * Published tumour oxygen-tension (pO2) measurements -- see the literature"
+echo "    (e.g. Eppendorf-electrode and EPR-oximetry studies)."
+echo "  * Geant4-DNA radiolysis validation datasets -- https://geant4-dna.org"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "To (re)generate the committed synthetic sample offline, run:"
+echo "    python scripts/make_synthetic.py"
+echo
+echo "For a finer oxygen sweep (more ensemble members), run e.g.:"
+echo "    python scripts/make_synthetic.py --n-po2 32"
+echo
+echo "[download_data] Nothing to download; done."

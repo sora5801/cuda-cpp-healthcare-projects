@@ -1,122 +1,142 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load protons, run SART on CPU + GPU, verify
 // ---------------------------------------------------------------------------
-// Project 5.15 -- Proton CT & Ion Imaging Reconstruction   (template skeleton)
+// Project 5.15 : Proton CT & Ion Imaging Reconstruction
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (mirrors every project in this repo):
+//   1. Load the list-mode proton data + geometry + ground truth (data/sample).
+//   2a. CPU reference SART reconstruction (reference_cpu.cpp).
+//   2b. GPU SART reconstruction (kernels.cu).
+//   3. VERIFY: the GPU RSP image matches the CPU image within tolerance.
+//   4. REPORT: deterministic RSP probes + recovery metrics -> stdout;
+//      timing + run-varying detail -> stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it against
+// demo/expected_output.txt; timings (which vary run to run) go to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+// The ground-truth RSP map (synthetic) is used ONLY for reporting how well the
+// reconstruction recovered the known phantom -- never by the solver.
 //
 // READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
 // reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // reconstruct_gpu, PctProblem
+#include "reference_cpu.h"    // load_pct, reconstruct_cpu
+#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "5.15";
 static const char* PROJECT_NAME = "Proton CT & Ion Imaging Reconstruction";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// TOLERANCE. The SART tally is fixed-point (order-independent), and the shared
+// __host__ __device__ MLP + binning make CPU and GPU compute the same values.
+// The only possible divergence is the float forward-projection sum rsp*seg_len,
+// where host vs device FMA contraction can differ by ~1 ULP and, over `iters`
+// sweeps, could nudge a voxel by a tiny amount (docs/PATTERNS.md section 4). We
+// therefore verify to a small PHYSICAL tolerance in RSP units and say so plainly
+// rather than pretending the two are bit-identical. In practice the observed
+// error is far below this (printed on stderr).
+static constexpr double TOLERANCE = 1.0e-3;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
+// mean RSP over voxels whose GROUND TRUTH exceeds a threshold (inside the
+// phantom) -- one interpretable number for the demo output.
+static double mean_inside(const std::vector<float>& img,
+                          const std::vector<float>& truth, float thresh) {
+    double sum = 0.0; long long cnt = 0;
+    for (std::size_t i = 0; i < img.size(); ++i)
+        if (truth[i] > thresh) { sum += img[i]; ++cnt; }
+    return cnt ? sum / static_cast<double>(cnt) : 0.0;
 }
 
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
+// root-mean-square error of the reconstruction vs. the ground-truth phantom
+// (over the whole image) -- "did we recover the known answer?" (PATTERNS 6).
+static double rmse(const std::vector<float>& img, const std::vector<float>& truth) {
+    double se = 0.0;
+    for (std::size_t i = 0; i < img.size(); ++i) {
+        const double d = static_cast<double>(img[i]) - static_cast<double>(truth[i]);
+        se += d * d;
     }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+    return img.empty() ? 0.0 : std::sqrt(se / static_cast<double>(img.size()));
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/protons_sample.txt";
+    PctProblem prob;
+    try {
+        prob = load_pct(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const int N     = prob.geom.n;
+    const int cells = N * N;
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2a. CPU reference SART (timed) -----------------------------------
+    std::vector<float> img_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    reconstruct_cpu(prob, img_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 2b. GPU SART (kernel time summed over sweeps) --------------------
+    std::vector<float> img_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    reconstruct_gpu(prob, img_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 3. Verify GPU vs CPU ---------------------------------------------
+    const double err  = util::max_abs_err(img_cpu, img_gpu);
+    const bool   pass = err <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 4a. Deterministic report -> STDOUT -------------------------------
+    // Probe voxels: image centre, and quarter/three-quarter along the diagonal.
+    const int c  = (N / 2) * N + (N / 2);
+    const int q  = (N / 4) * N + (N / 4);
+    const int q3 = (3 * N / 4) * N + (3 * N / 4);
+
+    // Recovery metrics on the CPU image (the trusted baseline; GPU matches it).
+    const double mean_obj     = mean_inside(img_cpu, prob.truth, 0.5f);
+    const double err_vs_truth = rmse(img_cpu, prob.truth);
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("list-mode SART: %d protons, %d sweeps, relax=%.2f, %d MLP samples/proton\n",
+                static_cast<int>(prob.protons.size()), prob.iters,
+                static_cast<double>(prob.relax), prob.path_samples);
+    std::printf("grid: %dx%d voxels over world [%.2f,%.2f]^2 cm\n",
+                N, N, -static_cast<double>(prob.geom.half),
+                static_cast<double>(prob.geom.half));
+    std::printf("reconstructed RSP: center=%.4f  q1=%.4f  q3=%.4f\n",
+                img_cpu[c], img_cpu[q], img_cpu[q3]);
+    std::printf("mean RSP inside phantom = %.4f\n", mean_obj);
+    std::printf("RMSE vs ground-truth RSP = %.4f\n", err_vs_truth);
+    std::printf("central row RSP profile (8 samples):");
+    for (int s = 0; s < 8; ++s) {
+        const int px = (s * (N - 1)) / 7;           // 8 evenly spaced columns
+        std::printf(" %.4f", img_cpu[(N / 2) * N + px]);
+    }
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("RESULT: %s (GPU matches CPU within tol=%.1e)\n",
+                pass ? "PASS" : "FAIL", TOLERANCE);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 4b. Run-varying detail -> STDERR ---------------------------------
+    // Ground-truth mean inside the phantom, for context.
+    double truth_sum = 0.0; long long truth_cnt = 0;
+    for (int i = 0; i < cells; ++i)
+        if (prob.truth[i] > 0.5f) { truth_sum += prob.truth[i]; ++truth_cnt; }
+    const double truth_mean = truth_cnt ? truth_sum / static_cast<double>(truth_cnt) : 0.0;
+
+    std::fprintf(stderr, "[data]   source: %s  (%d protons, %dx%d grid)\n",
+                 path.c_str(), static_cast<int>(prob.protons.size()), N, N);
+    std::fprintf(stderr, "[truth]  mean RSP inside phantom (ground truth) = %.4f\n", truth_mean);
+    std::fprintf(stderr, "[timing] CPU SART: %.3f ms   GPU SART (kernels): %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact -- the GPU's edge grows with proton count; "
+                         "a clinical scan is ~10^8 protons vs the tiny sample here.\n");
+    std::fprintf(stderr, "[verify] max_abs_err(GPU,CPU) = %.3e  (tolerance %.1e)\n", err, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

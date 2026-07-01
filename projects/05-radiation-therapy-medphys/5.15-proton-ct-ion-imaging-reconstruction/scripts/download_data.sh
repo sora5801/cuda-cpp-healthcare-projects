@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  How to get REAL proton-CT data (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 5.15 -- Proton CT & Ion Imaging Reconstruction   (template skeleton)
+# Project 5.15 : Proton CT & Ion Imaging Reconstruction
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): prints source pointers; downloads NOTHING and NEVER
+# bypasses credentials/registration. The committed synthetic sample runs the
+# demo offline; scripts/make_synthetic.py generates larger synthetic problems.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +17,20 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 5.15 -- Proton CT & Ion Imaging Reconstruction"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    PRaVDA proton CT datasets (verify URL); PRIMA proton CT consortium data (verify URL); TOPAS-generated pCT simulation data; ACE collaboration proton CT phantom datasets."
+echo "Real / standard proton-CT list-mode data:"
+echo "  * TOPAS (https://github.com/OpenTOPAS/OpenTOPAS) or GATE -- simulate a"
+echo "    pCT scan and export per-proton entry/exit tracks + residual range,"
+echo "    then convert to this project's list-mode format (see data/README.md)."
+echo "  * PRaVDA / PRIMA proton-CT consortia -- prototype-scanner datasets"
+echo "    (verify current URLs; registration may be required -- this script"
+echo "    does NOT bypass it)."
+echo "  * ACE collaboration proton-CT phantom datasets (verify URL)."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Offline stand-in (no download, reproducible, SYNTHETIC):"
+echo "  python scripts/make_synthetic.py                       # the committed sample"
+echo "  python scripts/make_synthetic.py --n 48 --angles 90 --rays 48   # larger"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "When wiring a real dataset, keep it idempotent:"
+echo "  1) skip the download if the file already exists with the right SHA256"
+echo "  2) print source URL + expected size + checksum"
+echo "  3) for credentialed sets, print registration instructions ONLY"

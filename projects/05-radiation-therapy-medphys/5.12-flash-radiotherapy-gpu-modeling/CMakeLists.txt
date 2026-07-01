@@ -1,11 +1,12 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 5.12 -- FLASH Radiotherapy GPU Modeling   (template skeleton)
+# Project 5.12 -- FLASH Radiotherapy GPU Modeling
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/flash-radiotherapy-gpu-modeling.sln (CLAUDE.md §5). Both
-# compile the SAME src/ files, so they stay in lockstep.
+# compile the SAME src/ files, so they stay in lockstep. Only the CUDA runtime is
+# needed (no cuBLAS/cuFFT/etc.), so there is nothing extra to link.
 #
 #   cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build/cmake

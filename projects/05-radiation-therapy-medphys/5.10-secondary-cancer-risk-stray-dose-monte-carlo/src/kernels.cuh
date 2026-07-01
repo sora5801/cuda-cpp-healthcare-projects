@@ -1,52 +1,44 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU Monte Carlo stray-dose interface
 // ---------------------------------------------------------------------------
-// Project 5.10 -- Secondary Cancer Risk & Stray-Dose Monte Carlo   (template skeleton)
+// Project 5.10 : Secondary Cancer Risk & Stray-Dose Monte Carlo
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (pattern: per-thread RNG + atomic scoring; exemplar 5.01)
+//   Particle histories are INDEPENDENT, so each GPU thread tracks one primary
+//   photon (grid-stride over millions of them). Three MC-specific lessons live in
+//   the kernel, all in kernels.cu:
+//     * PER-THREAD RNG: each thread seeds its own reproducible stream from its
+//       history index (rng_seed in stray_physics.h). The shared header means the
+//       CPU reproduces the identical histories, so verification is EXACT.
+//     * VARIANCE REDUCTION: survival biasing + Russian roulette + forced
+//       detection (all inside simulate_history) turn a rare stray-dose signal into
+//       a low-variance per-history tally -- the reason stray-dose MC is tractable.
+//     * ATOMIC + FIXED-POINT SCORING: many threads deposit into the SAME organ
+//       bins, so the tally uses atomicAdd. Deposits are FIXED-POINT INTEGERS, so
+//       the atomic adds are order-independent -> the GPU result is deterministic
+//       and equals the CPU tally exactly (a float atomic sum would not).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   kernels.cu defines the kernel; main.cu calls dose_gpu().
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: stray_physics.h, reference_cpu.h.
+// READ NEXT: kernels.cu, then main.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // StrayProblem, SimParams (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Device kernel: each thread simulates one or more primary histories (grid-stride)
+// and scores fixed-point stray dose into the shared `dose` tally via atomicAdd.
+//   sp   : phantom + beam + variance-reduction parameters (by value -> registers)
+//   dose : device pointer to n_organs 64-bit accumulators (fixed-point)
+__global__ void stray_kernel(SimParams sp,
+                             unsigned long long* __restrict__ dose);
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Host wrapper: allocate + zero the device tally, launch the histories, copy the
+// dose back.
+//   prob      : the loaded problem (phantom + organs + history count)
+//   dose      : resized to n_organs; filled with per-organ fixed-point dose
+//   kernel_ms : out-param, GPU kernel time in milliseconds (teaching artifact)
+void dose_gpu(const StrayProblem& prob, std::vector<unsigned long long>& dose,
+              float* kernel_ms);

@@ -1,5 +1,10 @@
 5.11 -- Microdosimetry & Track-Structure Simulation
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+water box 100.0 nm, sigma_ion=1.000 /nm (LET spread 0.50), dna_radius=3.00 nm, 25 DNA segments
+tracks = 4000, quantum = 30.0 eV
+energy imparted = 1599001 quanta (47970.030 keV total)
+DNA damage: SSB = 1032, DSB = 457  (SSB/DSB = 2.258)
+DSB per track = 0.1143
+dose-mean lineal energy yD = 225.677 keV/um
+lineal-energy spectrum f(y) (counts per bin):
+  15 373 808 861 630 465 302 201 136 80 40 89
+RESULT: PASS (GPU tallies match CPU exactly)

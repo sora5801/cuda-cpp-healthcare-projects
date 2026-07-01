@@ -1,5 +1,15 @@
 5.13 -- BNCT Dose Calculation & Optimization
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+REDUCED-SCOPE TEACHING MODEL (synthetic 1-D two-group MC; not clinical)
+slab L=10.0 cm, 20 depth bins, histories=200000
+thermal Sigma_a (1/cm): B=0.0700 N=0.0050 H=0.0210  Sig_s_th=1.500
+fast: Sig_s=0.900 /cm  p_thermalize=0.25
+component totals (keV quanta and % of physical dose):
+  boron  (10B(n,a)7Li) :    173236140  ( 35.0%)
+  nitro  (14N(n,p)14C) :      3398554  (  0.7%)
+  gamma  (1H(n,g)2H)   :     49764224  ( 10.1%)
+  fast   (recoil p)    :    267952000  ( 54.2%)
+physical dose total = 0.0005 Gy (scale 1.000e-12 Gy/keV)
+CBE/RBE-weighted biological dose = 0.0016 Gy-Eq
+boron depth-dose (keV per bin):
+  6290130 9240000 10937850 11873400 12469380 12654180 12358500 12132120 11679360 11106480 10030020 9293130 8392230 7849380 6724410 5934390 5112030 4026330 3042270 2090550
+RESULT: PASS (GPU per-component dose tally matches CPU exactly)

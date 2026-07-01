@@ -1,52 +1,60 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU track-structure interface (declarations + big idea)
 // ---------------------------------------------------------------------------
-// Project 5.11 -- Microdosimetry & Track-Structure Simulation   (template skeleton)
+// Project 5.11 : Microdosimetry & Track-Structure Simulation
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   Particle tracks are INDEPENDENT: one primary's ionizations never influence
+//   another's. So each GPU thread simulates ONE primary track (grid-stride over
+//   millions of them). Two Monte-Carlo lessons this project teaches:
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//     * PER-THREAD RNG: each thread seeds its own reproducible counter-based
+//       stream from its track index (rng_seed in ts_physics.h). Because the CPU
+//       reference seeds the same way and runs the same transport, it reproduces
+//       the identical tracks -> the tallies can be verified EXACTLY.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//     * ATOMIC SCORING into shared histograms: many threads add to the SAME
+//       lineal-energy bins and the same DNA-damage counters, so the tallies use
+//       atomicAdd. Because every per-track quantity is an INTEGER count (energy
+//       quanta, SSB/DSB counts, histogram increments), the atomic adds are
+//       order-independent -> the GPU result is deterministic AND equals the CPU
+//       tally to the bit. Floating-point tallies would not have this property
+//       (PATTERNS.md §3); that is precisely why we quantise energy.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+//   The catalog's fuller vision (one warp per track, cross-section tables in
+//   constant/shared memory, sorting tracks by interaction type to cut warp
+//   divergence) is described in THEORY.md "Where this sits in the real world".
+//   Here we ship the readable one-thread-per-track version.
+//
+//   kernels.cu implements the kernel; main.cu calls track_gpu().
+//
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, ts_physics.h, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
-#include <vector>
+#include "reference_cpu.h"   // TrackProblem, TrackParams, TrackTally (pure C++)
 
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Each thread simulates one or more primary tracks (grid-stride) and scores its
+// integer results into the shared device tallies via atomicAdd.
+//   tp        : simulation parameters, passed by value (lives in each thread's regs)
+//   n_tracks  : total primary tracks to simulate
+//   seed      : base RNG seed; track i uses the reproducible stream (seed, i)
+//   d_quanta  : [1] total energy-quanta accumulator (device)
+//   d_ssb     : [1] total single-strand-break accumulator (device)
+//   d_dsb     : [1] total double-strand-break accumulator (device)
+//   d_yhist   : [n_y_bins] lineal-energy histogram (device)
+__global__ void track_kernel(TrackParams tp, unsigned long long n_tracks,
+                             unsigned long long seed,
+                             unsigned long long* __restrict__ d_quanta,
+                             unsigned long long* __restrict__ d_ssb,
+                             unsigned long long* __restrict__ d_dsb,
+                             unsigned long long* __restrict__ d_yhist);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
+// track_gpu: allocate + zero the device tallies, launch all tracks, copy the
+//   results back into `tally`, and report the measured KERNEL time (CUDA events)
+//   via *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden.
+//   tally     : filled with the aggregated integer results (output parameter)
 //   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+void track_gpu(const TrackProblem& prob, TrackTally& tally, float* kernel_ms);

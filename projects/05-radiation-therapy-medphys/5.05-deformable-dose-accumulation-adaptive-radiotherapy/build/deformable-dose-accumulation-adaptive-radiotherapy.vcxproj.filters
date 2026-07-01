@@ -32,6 +32,12 @@
     <ClInclude Include="..\src\reference_cpu.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\demons.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\dose.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\util\cuda_check.cuh">
       <Filter>Header Files\util</Filter>
     </ClInclude>

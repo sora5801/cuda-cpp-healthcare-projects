@@ -1,122 +1,120 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: integrate the FLASH ensemble, verify, report
 // ---------------------------------------------------------------------------
-// Project 5.12 -- FLASH Radiotherapy GPU Modeling   (template skeleton)
+// Project 5.12 : FLASH Radiotherapy GPU Modeling
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// WHAT THIS FILE DOES  (the 5-step shape every project in this repo follows)
+//   1. Load the ensemble config (a pO2 sweep x {conventional, FLASH} delivery).
+//   2. CPU reference: integrate every member serially (reference_cpu.cpp).
+//   3. GPU: one thread per member, full pulse-train RK4 each (kernels.cu).
+//   4. VERIFY: per-member results match (shared integrate_voxel -> same numbers).
+//   5. REPORT: deterministic FLASH-vs-conventional table + summary to stdout;
+//      timing and run-varying detail to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is kept byte-for-byte deterministic (fixed-width, fixed-precision) so
+//   demo/run_demo can diff it against demo/expected_output.txt. Timings (which
+//   vary run to run) go to STDERR, which the demo shows but does not diff.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+//   THE TEACHING PAYOFF: the printed table shows, per oxygen level, the oxygen-
+//   fixed damage under conventional vs FLASH delivery and the resulting SPARING
+//   factor. FLASH spares oxygenated (normal-tissue) voxels the most and hypoxic
+//   (tumour-core) voxels the least -- the qualitative FLASH signature, emergent
+//   from the shared ODE, not hard-coded. (See ../THEORY.md; educational model.)
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then flash.h (the ODE core), kernels.cu (GPU twin),
+// reference_cpu.cpp (baseline). See ../THEORY.md for the "why".
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // integrate_gpu, EnsembleConfig, VoxelResult
+#include "reference_cpu.h"    // load_ensemble, integrate_cpu, member_job, member_axes
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
+// Program identity (kept in sync with demo/expected_output.txt).
 static const char* PROJECT_ID   = "5.12";
 static const char* PROJECT_NAME = "FLASH Radiotherapy GPU Modeling";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Correctness tolerance. Both sides run the SAME double-precision RK4 via
+// flash.h (integrate_voxel), so the only differences are the GPU's fused
+// multiply-add rounding vs the host compiler's. Over these short integrations
+// that stays deep below 1e-9; we verify to 1e-9 and say so honestly.
+static constexpr double TOLERANCE = 1.0e-9;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/flash_ensemble.txt";
+    EnsembleConfig c;
+    try {
+        c = load_ensemble(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const int M = ensemble_size(c);
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<VoxelResult> res_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    integrate_cpu(c, res_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU ensemble (kernel timed) -----------------------------------
+    std::vector<VoxelResult> res_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    integrate_gpu(c, res_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify ---------------------------------------------------------
+    // Worst absolute difference across every scalar of every member.
+    double worst = 0.0;
+    for (int i = 0; i < M; ++i) {
+        worst = std::fmax(worst, std::fabs(res_cpu[i].fixed_damage - res_gpu[i].fixed_damage));
+        worst = std::fmax(worst, std::fabs(res_cpu[i].min_O2       - res_gpu[i].min_O2));
+        worst = std::fmax(worst, std::fabs(res_cpu[i].eff_O2       - res_gpu[i].eff_O2));
+    }
+    const bool pass = worst <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT --------------------------------
+    // Header: what the ensemble is.
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("[educational reduced-scope model -- not for clinical use]\n");
+    std::printf("ensemble: %d pO2 levels x 2 delivery modes = %d members\n", c.n_po2, M);
+    std::printf("dose = %.1f Gy in %d pulses; conv gap = %.5f s, FLASH gap = %.5f s\n",
+                c.total_dose, c.n_pulses,
+                c.conv_steps_per_gap * c.dt, c.flash_steps_per_gap * c.dt);
+
+    // The comparison table: for each pO2, show conventional vs FLASH oxygen-fixed
+    // damage, the minimum O2 reached under FLASH (the depletion depth), and the
+    // sparing factor = conv_damage / flash_damage (>1 means FLASH did less damage).
+    std::printf("pO2[mmHg]  conv_damage  flash_damage  flash_minO2[uM]  sparing\n");
+    double sum_sparing = 0.0; int counted = 0;
+    for (int p = 0; p < c.n_po2; ++p) {
+        const int idx_conv  = p * N_MODES + MODE_CONVENTIONAL;
+        const int idx_flash = p * N_MODES + MODE_FLASH;
+        const VoxelJob jc = member_job(c, idx_conv);      // to read this level's pO2
+        const double dconv  = res_gpu[idx_conv ].fixed_damage;
+        const double dflash = res_gpu[idx_flash].fixed_damage;
+        const double sparing = (dflash > 0.0) ? dconv / dflash : 0.0;
+        sum_sparing += sparing; ++counted;
+        std::printf("%9.2f  %11.5f  %12.5f  %15.5f  %7.4f\n",
+                    jc.po2_mmHg, dconv, dflash, res_gpu[idx_flash].min_O2, sparing);
+    }
+
+    // Summary line: mean sparing, and where sparing is largest (most oxygenated).
+    const double mean_sparing = counted ? sum_sparing / counted : 0.0;
+    std::printf("mean FLASH sparing factor = %.4f (conv damage / FLASH damage)\n", mean_sparing);
+    std::printf("RESULT: %s (GPU ensemble matches CPU within tol=1.0e-09)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR --------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d members)\n", path.c_str(), M);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernel: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact only -- a real FLASH map sweeps millions of "
+                         "voxels; the GPU's edge grows with member count.\n");
+    std::fprintf(stderr, "[verify] worst per-member diff = %.3e  (tolerance %.1e)\n", worst, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

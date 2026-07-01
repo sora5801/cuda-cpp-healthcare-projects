@@ -1,5 +1,15 @@
 5.12 -- FLASH Radiotherapy GPU Modeling
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+[educational reduced-scope model -- not for clinical use]
+ensemble: 8 pO2 levels x 2 delivery modes = 16 members
+dose = 10.0 Gy in 10 pulses; conv gap = 0.04000 s, FLASH gap = 0.00001 s
+pO2[mmHg]  conv_damage  flash_damage  flash_minO2[uM]  sparing
+     2.00     16.05474      13.96166          0.67558   1.1499
+     7.43     23.02866      19.76140          2.55334   1.1653
+    12.86     25.54617      22.61183          4.49699   1.1298
+    18.29     26.74486      24.27952          6.50841   1.1015
+    23.71     27.43473      25.35509          8.58945   1.0820
+    29.14     27.88303      26.09567         10.74185   1.0685
+    34.57     28.19849      26.63278         12.96728   1.0588
+    40.00     28.43297      27.04015         15.26729   1.0515
+mean FLASH sparing factor = 1.1009 (conv damage / FLASH damage)
+RESULT: PASS (GPU ensemble matches CPU within tol=1.0e-09)

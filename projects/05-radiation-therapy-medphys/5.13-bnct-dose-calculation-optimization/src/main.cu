@@ -1,122 +1,143 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry: run BNCT MC on CPU + GPU, verify, report dose
 // ---------------------------------------------------------------------------
-// Project 5.13 -- BNCT Dose Calculation & Optimization   (template skeleton)
+// Project 5.13 : BNCT Dose Calculation & Optimization (reduced-scope teaching MC)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the shape EVERY project in this repo follows):
+//   1. Load the BNCT problem (data/sample or the path given as argv[1]).
+//   2. CPU reference Monte Carlo (reference_cpu.cpp)  -> trusted answer.
+//   3. GPU Monte Carlo (kernels.cu) -- IDENTICAL histories (shared RNG+physics).
+//   4. VERIFY: per-component integer dose tallies match EXACTLY (atomics commute
+//      on integers), so the tolerance is ZERO.
+//   5. REPORT: deterministic per-component depth-dose + CBE/RBE-weighted
+//      biological dose to stdout; timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Run-varying detail (timings) goes to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then bnct_physics.h (RNG + neutron transport),
+// kernels.cu (GPU twin), reference_cpu.cpp (serial baseline). The science and
+// GPU mapping are in ../THEORY.md.
 // ===========================================================================
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // dose_gpu, BnctProblem, DoseTally
+#include "reference_cpu.h"    // load_bnct_problem, dose_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "5.13";
 static const char* PROJECT_NAME = "BNCT Dose Calculation & Optimization";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Human-readable component names, indexed by DoseComponent (fixed order).
+static const char* COMP_NAME[DC_COUNT] = {
+    "boron  (10B(n,a)7Li)",
+    "nitro  (14N(n,p)14C)",
+    "gamma  (1H(n,g)2H)  ",
+    "fast   (recoil p)   ",
+};
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// Sum a component's integer keV tally over all depth bins.
+static unsigned long long sum_component(const DoseTally& t, int c) {
+    unsigned long long s = 0;
+    for (unsigned long long v : t.dose[c]) s += v;
+    return s;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/bnct_params.txt";
+    BnctProblem prob;
+    try {
+        prob = load_bnct_problem(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    DoseTally tally_c;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    dose_cpu(prob, tally_c);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU Monte Carlo (kernel timed) --------------------------------
+    DoseTally tally_g;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    dose_gpu(prob, tally_g, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify: EXACT per-component, per-bin integer match ------------
+    unsigned long long mismatches = 0;
+    for (int c = 0; c < DC_COUNT; ++c)
+        for (int b = 0; b < prob.sp.n_bins; ++b)
+            if (tally_c.dose[c][b] != tally_g.dose[c][b]) ++mismatches;
+    const bool pass = (mismatches == 0);
+
+    // ---- Derived quantities (computed from the GPU tally) ------------------
+    // Per-component total keV, total physical dose, and the CBE/RBE-weighted
+    // biological dose D_bio = sum_c w_c * D_c (weights are integer x1000).
+    unsigned long long comp_keV[DC_COUNT];
+    unsigned long long total_keV = 0;
+    // Weighted biological "energy" in milli-keV-eq (integer, exact): sum of
+    // keV * bio_weight_milli(c). We report it scaled to keV-Eq.
+    unsigned long long bio_milli = 0;
+    for (int c = 0; c < DC_COUNT; ++c) {
+        comp_keV[c] = sum_component(tally_g, c);
+        total_keV  += comp_keV[c];
+        bio_milli  += comp_keV[c] * bio_weight_milli(c);
+    }
+
+    // Physical -> Gy scale (documented constant gray_per_keV from the sample).
+    // These are teaching-scale numbers, NOT clinical dose. We print with fixed
+    // precision so stdout is deterministic.
+    const double phys_Gy = total_keV * prob.gray_per_keV;
+    const double bio_GyEq = (bio_milli / 1000.0) * prob.gray_per_keV;
 
     // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("REDUCED-SCOPE TEACHING MODEL (synthetic 1-D two-group MC; not clinical)\n");
+    std::printf("slab L=%.1f cm, %d depth bins, histories=%llu\n",
+                prob.sp.L, prob.sp.n_bins, prob.n_histories);
+    std::printf("thermal Sigma_a (1/cm): B=%.4f N=%.4f H=%.4f  Sig_s_th=%.3f\n",
+                prob.sp.Sig_a_B, prob.sp.Sig_a_N, prob.sp.Sig_a_H, prob.sp.Sig_s_th);
+    std::printf("fast: Sig_s=%.3f /cm  p_thermalize=%.2f\n",
+                prob.sp.Sig_s_fast, prob.sp.p_thermalize);
+
+    // Per-component totals and their share of the physical dose (percent x10,
+    // integer, so it is deterministic and rounding is explicit).
+    std::printf("component totals (keV quanta and %% of physical dose):\n");
+    for (int c = 0; c < DC_COUNT; ++c) {
+        // tenths-of-percent via integer math: (comp*1000 + total/2) / total
+        unsigned long long pct10 = total_keV
+            ? (comp_keV[c] * 1000ULL + total_keV / 2) / total_keV : 0ULL;
+        std::printf("  %s : %12llu  (%3llu.%llu%%)\n",
+                    COMP_NAME[c], comp_keV[c], pct10 / 10, pct10 % 10);
+    }
+    std::printf("physical dose total = %.4f Gy (scale %.3e Gy/keV)\n",
+                phys_Gy, prob.gray_per_keV);
+    std::printf("CBE/RBE-weighted biological dose = %.4f Gy-Eq\n", bio_GyEq);
+
+    // Boron depth-dose profile (the therapeutic component) -- the headline
+    // curve. Integer keV per bin, so it is byte-deterministic.
+    std::printf("boron depth-dose (keV per bin):\n ");
+    for (int b = 0; b < prob.sp.n_bins; ++b) std::printf(" %llu", tally_g.dose[DC_BORON][b]);
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+
+    std::printf("RESULT: %s (GPU per-component dose tally matches CPU exactly)\n",
                 pass ? "PASS" : "FAIL");
 
     // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[data]   source: %s\n", path.c_str());
+    std::fprintf(stderr, "[timing] CPU MC: %.3f ms   GPU MC: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- speed-up grows with history count; "
+                         "clinical BNCT plans run 1e8-1e10 histories.\n");
+    std::fprintf(stderr, "[verify] tally mismatches = %llu (integer keV => atomics commute; tol=0)\n",
+                 mismatches);
+    std::fprintf(stderr, "[note]   boron dose fraction = %.1f%% -- BNCT selectivity comes from "
+                         "loading 10B into tumor cells (here Sigma_a_B is uniform for teaching).\n",
+                 total_keV ? 100.0 * comp_keV[DC_BORON] / total_keV : 0.0);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

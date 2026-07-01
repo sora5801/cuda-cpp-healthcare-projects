@@ -1,31 +1,50 @@
 // ===========================================================================
-// src/reference_cpu.h  --  Prototype of the CPU reference computation
+// src/reference_cpu.h  --  Problem definition + CPU Monte Carlo reference
 // ---------------------------------------------------------------------------
-// Project 5.10 -- Secondary Cancer Risk & Stray-Dose Monte Carlo   (template skeleton)
+// Project 5.10 : Secondary Cancer Risk & Stray-Dose Monte Carlo
 //
-// WHY A SEPARATE HEADER
-//   The CPU reference (reference_cpu.cpp) is compiled by the plain C++ compiler
-//   and must NOT see any CUDA/__global__ syntax, so its prototype cannot live in
-//   kernels.cuh. Both main.cu and reference_cpu.cpp include THIS pure-C++ header
-//   so they agree on the function signature.
+// The CPU reference runs the SAME histories as the GPU (same RNG + transport from
+// stray_physics.h), so the two dose tallies must be identical to the last bit.
+// This header is pure C++ (no CUDA constructs), so kernels.cu can reuse
+// StrayProblem directly and both build cleanly.
 //
-// THE CONTRACT (this template's placeholder computation):
-//   SAXPY -- "Single-precision A*X Plus Y":  out[i] = a * x[i] + y[i].
-//   This is the canonical first GPU kernel; here it stands in as a buildable
-//   placeholder. TODO(impl): replace saxpy_cpu with this project's real
-//   reference computation, and update the prototype + callers accordingly.
-//
-//   The CPU reference exists for two reasons (CLAUDE.md section 5):
-//     (a) it is the readable baseline that makes the GPU speed-up legible, and
-//     (b) the demo runs BOTH and asserts they agree within tolerance.
+// READ THIS AFTER: stray_physics.h, risk_model.h.  READ NEXT: reference_cpu.cpp,
+// kernels.cuh, main.cu.
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
+#include <string>
 #include <vector>
 
-// Compute out = a*x + y on the CPU, element by element.
-//   x, y : input vectors of equal length n
-//   a    : the scalar multiplier
-//   out  : resized to n and filled with the result (output parameter)
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out);
+#include "stray_physics.h"   // SimParams, Rng, simulate_history (host+device safe)
+#include "risk_model.h"      // organ_lar, fixed_to_dose
+
+// One organ slab's metadata: a human-readable name (for the report) and its
+// BEIR-VII-style risk coefficient (cases per 10^4 persons per unit dose). The
+// physics only needs counts and indices; these travel alongside for the risk
+// convolution and the labelled output.
+struct Organ {
+    std::string name;    // e.g. "Target", "Lung", "Thyroid", ...
+    double risk_coeff;   // relative cancer-risk sensitivity (illustrative units)
+};
+
+// A complete simulation job: the phantom/beam/VR physics (SimParams), the per-
+// organ metadata, and the number of histories. Loaded from the sample file.
+struct StrayProblem {
+    SimParams sp{};             // phantom + beam + variance-reduction parameters
+    std::vector<Organ> organs;  // n_organs entries (names + risk coefficients)
+};
+
+// Load a StrayProblem from the committed text format (see data/README.md):
+//   line 1 : field_end mu organ_cm scatter_frac sidescatter leakage_frac
+//            neutron_frac roulette_floor roulette_survive n_histories seed
+//   then one line per organ: "<name> <risk_coeff>"
+// n_organs is inferred from the number of organ lines.
+StrayProblem load_stray_problem(const std::string& path);
+
+// CPU reference: simulate all n_histories serially, tallying fixed-point stray
+// dose per organ. `dose` is sized to n_organs. Because deposits are integer
+// (fixed-point), the tally is exact and order-independent -- it must equal the
+// GPU's byte-for-byte. Mirrors dose_gpu() in kernels.cu.
+void stray_cpu(const StrayProblem& prob, std::vector<unsigned long long>& dose);

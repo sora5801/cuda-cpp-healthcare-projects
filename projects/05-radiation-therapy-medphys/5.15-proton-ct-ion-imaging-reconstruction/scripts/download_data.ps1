@@ -1,12 +1,12 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  How to get REAL proton-CT data (Windows)
 # ---------------------------------------------------------------------------
-# Project 5.15 -- Proton CT & Ion Imaging Reconstruction   (template skeleton)
+# Project 5.15 : Proton CT & Ion Imaging Reconstruction
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): prints the source pointers; downloads NOTHING and
+# NEVER bypasses credentials/registration. The committed synthetic sample is
+# enough to run the demo offline; for a bigger synthetic problem use
+# scripts/make_synthetic.py.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,21 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 5.15 -- Proton CT & Ion Imaging Reconstruction"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    PRaVDA proton CT datasets (verify URL); PRIMA proton CT consortium data (verify URL); TOPAS-generated pCT simulation data; ACE collaboration proton CT phantom datasets."
+Write-Host "Real / standard proton-CT list-mode data:"
+Write-Host "  * TOPAS (https://github.com/OpenTOPAS/OpenTOPAS) or GATE -- simulate a"
+Write-Host "    pCT scan and export per-proton entry/exit tracks + residual range,"
+Write-Host "    then convert to this project's list-mode format (see data/README.md)."
+Write-Host "  * PRaVDA / PRIMA proton-CT consortia -- prototype-scanner datasets"
+Write-Host "    (verify current URLs; registration may be required -- this script"
+Write-Host "    does NOT bypass it)."
+Write-Host "  * ACE collaboration proton-CT phantom datasets (verify URL)."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Offline stand-in (no download, reproducible, SYNTHETIC):"
+Write-Host "  python scripts/make_synthetic.py                       # the committed sample"
+Write-Host "  python scripts/make_synthetic.py --n 48 --angles 90 --rays 48   # larger"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "When wiring a real dataset, keep it idempotent:"
+Write-Host "  1) skip the download if the file already exists with the right SHA256"
+Write-Host "  2) print source URL + expected size + checksum"
+Write-Host "  3) for credentialed sets, print registration instructions ONLY"

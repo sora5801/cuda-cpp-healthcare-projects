@@ -1,52 +1,61 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU Monte Carlo interface for BNCT dose
 // ---------------------------------------------------------------------------
-// Project 5.13 -- BNCT Dose Calculation & Optimization   (template skeleton)
+// Project 5.13 : BNCT Dose Calculation & Optimization (reduced-scope teaching MC)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (docs/PATTERNS.md §1: "stochastic / Monte-Carlo histories ->
+// per-thread RNG + atomic scoring"; exemplified by flagship 5.01)
+//   Neutron histories are INDEPENDENT, so each GPU thread tracks one neutron
+//   (grid-stride over millions of them). Two MC-specific lessons carry over
+//   directly from photon MC to neutron MC:
+//     * PER-THREAD RNG: each thread seeds its own reproducible stream from its
+//       history index (rng_seed in bnct_physics.h). Because that header is
+//       shared with the CPU, the reference reproduces the identical histories,
+//       so verification is EXACT, not statistical.
+//     * ATOMIC SCORING: many threads deposit into the SAME (component, depth-bin)
+//       tally cells, so the tally uses atomicAdd. Because energy is INTEGER keV
+//       quanta, the atomic adds are order-independent -> the GPU result is
+//       deterministic and equals the CPU tally exactly (a float dose tally would
+//       NOT have this property -- float addition is not associative).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   A BNCT-specific wrinkle beyond 5.01: warp divergence. Different neutrons
+//   take different numbers of fast/thermal steps and hit different branches
+//   (leak / scatter / capture-by-B/N/H), so threads in a warp finish at
+//   different times. Production BNCT codes sort particles by material/energy
+//   into batches to shrink this divergence; we keep the simple version and
+//   explain the optimization in THEORY.md §GPU-mapping.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   This header is included only by .cu units (it declares a __global__). The
+//   CPU-only problem definition lives in reference_cpu.h.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, bnct_physics.h,
+// reference_cpu.h. Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // BnctProblem, SimParams, DoseTally (pure C++)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ---------------------------------------------------------------------------
+// dose_kernel: grid-stride over neutron histories. Each iteration simulates one
+// neutron with its own reproducible RNG stream and atomically adds its deposits
+// into the flattened tally. Layout of `tally`: DC_COUNT rows of n_bins columns,
+// row-major, so component c depth-bin b lives at tally[c * n_bins + b].
+//   grid  : a fixed large grid; the grid-stride loop covers any n_histories
+//   block : 256 threads (good occupancy on sm_75..sm_89)
+//   thread: history index = blockIdx.x*blockDim.x + threadIdx.x, then + stride
+// ---------------------------------------------------------------------------
+__global__ void dose_kernel(SimParams sp, unsigned long long n_histories,
+                            unsigned long long seed, int n_bins,
+                            unsigned long long* __restrict__ tally);
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// ---------------------------------------------------------------------------
+// dose_gpu: host wrapper. Allocates + zeros the device tally, launches all
+// histories, copies the flattened tally back, and unpacks it into `t` (a
+// DoseTally of DC_COUNT x n_bins). Reports the measured KERNEL time via
+// *kernel_ms (CUDA events, not host clock).
+//   prob      : the BNCT problem (slab + cross sections + history count + seed)
+//   t         : output tally, filled to match the CPU reference exactly
+//   kernel_ms : out-param, milliseconds spent in the kernel itself
+// ---------------------------------------------------------------------------
+void dose_gpu(const BnctProblem& prob, DoseTally& t, float* kernel_ms);

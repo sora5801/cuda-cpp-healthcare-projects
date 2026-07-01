@@ -1,5 +1,16 @@
 5.10 -- Secondary Cancer Risk & Stray-Dose Monte Carlo
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+phantom: 9 organs, field ends at organ 1, mu=0.070 /cm, organ=8.0 cm
+histories = 200000, VR = survival-biasing + forced-detection + roulette
+scatter_frac=0.90 sidescatter=0.0008 leakage=6.00e-05 neutron=2.00e-05
+organ                 dose_fixed   stray/target   LAR(per1e4)
+Target              8598699914013    1.000e+00   0.0000e+00
+RedMarrow             50806673490    5.909e-03   6.0968e+01
+Colon                 35163352027    4.089e-03   3.5163e+01
+Lung                  26088909543    3.034e-03   2.2176e+01
+Stomach               20786103550    2.417e-03   1.4550e+01
+Bladder               17654168821    2.053e-03   9.7098e+00
+Breast                15776648883    1.835e-03   1.2621e+01
+Thyroid               14627924295    1.701e-03   5.8512e+00
+Skin                  13906253920    1.617e-03   1.3906e+00
+total out-of-field secondary-cancer LAR = 1.6243e+02 per 10^4 persons
+RESULT: PASS (GPU dose tally matches CPU exactly)

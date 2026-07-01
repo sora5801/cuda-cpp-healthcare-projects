@@ -1,108 +1,182 @@
 # 5.11 — Microdosimetry & Track-Structure Simulation
 
-![difficulty](https://img.shields.io/badge/difficulty-Advanced-blue) ![maturity](https://img.shields.io/badge/maturity-Frontier%2FTheoretical-informational) ![domain](https://img.shields.io/badge/domain-Radiation%20Therapy%20%26%20Medical%20Physics-lightgrey)
+![difficulty](https://img.shields.io/badge/difficulty-Advanced-red)
+![maturity](https://img.shields.io/badge/maturity-Frontier%2FTheoretical-blueviolet)
+![domain](https://img.shields.io/badge/domain-Radiation%20Therapy%20%26%20Medical%20Physics-blue)
 
-> **🔴 Advanced · Frontier/Theoretical** — Domain 5: Radiation Therapy & Medical Physics · Catalog ID `5.11`
->
-> _Educational only — not for clinical use (see CLAUDE.md §8)._
-
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
+> **Educational study material — not for clinical use.** The physics here is a
+> deliberately **reduced teaching model** and the data is **synthetic**. Nothing
+> in this project is validated radiobiology or a basis for any medical decision.
 
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Radiation kills or mutates cells by depositing energy in tiny, microscopic
+volumes — the scale of the cell nucleus (µm) and of the DNA double helix (nm).
+At that scale energy deposition is intensely **stochastic**: two "identical"
+particles leave completely different patterns of ionizations. **Microdosimetry**
+studies the statistics of that energy deposition, and **track-structure**
+simulation reproduces it event by event. This project simulates many charged-
+particle **tracks** through a nanometre box of liquid water, scores the resulting
+**DNA strand breaks** (SSB / DSB) and the **lineal-energy spectrum** f(y), and
+runs the whole Monte Carlo **on the GPU with one thread per track**, verified
+against a serial CPU reference that produces bit-identical tallies.
 
 ## What this computes & why the GPU helps
 
-Microdosimetry and nanodosimetry characterize the stochastic distribution of energy deposition events in microscopic volumes (µm–nm scale), relevant for predicting DNA damage and biological effectiveness. Track-structure codes (Geant4-DNA, MPEXS-DNA) simulate every electron interaction step-by-step, requiring liquid water cross-sections down to sub-eV energies; a single proton track produces ~10⁵ secondary interactions. GPU parallelization across simultaneous primary particle tracks (one thread per track) achieves 50–70× speedup. Applications include carbon-ion RBE calculation, targeted radionuclide dosimetry (alpha emitters), and predicting clustered DNA damage yields from mixed radiation fields.
+The catalog deep-dive: *track-structure codes (Geant4-DNA, MPEXS-DNA) simulate
+every electron interaction step-by-step; a single proton track produces ~10⁵
+secondary interactions. GPU parallelization across simultaneous primary particle
+tracks (one thread per track) achieves 50–70× speedup.*
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+The bottleneck is **statistics**: to get a smooth y-spectrum or a converged DNA
+damage yield you must simulate a huge number of independent tracks. Because
+tracks never interact, the problem is **embarrassingly parallel** — each GPU
+thread runs one primary particle's random walk with its own RNG stream. The only
+shared state is the set of tallies (energy, SSB, DSB, the y-histogram), which we
+accumulate with `atomicAdd`. Keeping every tallied quantity an **integer** makes
+those atomics order-independent, so the GPU result is deterministic *and* matches
+the CPU exactly.
 
 ## The algorithm in brief
 
-Event-by-event track structure (Geant4-DNA cross-sections), step-by-step condensed random walk, DNA damage scoring (DSB, SSB, base damage), diffusion-reaction chemistry simulation (radiolysis), nanodosimeter simulation, LET spectrum calculation, biological effectiveness prediction.
+- **Free-flight sampling.** Between ionizations the primary travels an
+  exponentially distributed step `s = -ln(ξ)/Σ`, where Σ (ionizations/nm) is the
+  particle's LET class. This is the same free-path law as any Monte Carlo
+  transport code.
+- **Mixed field / LET straggling.** Each track samples its own local ionization
+  density from a lognormal around the mean, so the y-spectrum gets a realistic
+  high-y tail instead of a single spike.
+- **Delta rays.** Each ionization may launch a short secondary-electron cluster
+  nearby — the microscopic origin of *clustered* damage.
+- **DNA damage scoring.** An ionization within a capture radius of the DNA axis
+  is a candidate strand break. Two breaks in the same segment, on opposite
+  strands, within ~10 base pairs (3.4 nm) form a **DSB**; the rest are **SSBs**
+  (the classic combinatorial damage model).
+- **Microdosimetry.** Each track's energy imparted ÷ the box's mean chord length
+  gives its **lineal energy** y (keV/µm); binning y over all tracks yields f(y),
+  whose dose-mean **yD** is the headline microdosimetric summary.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU mapping.
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Prerequisites: **Visual Studio 2026** (v145 toolset, *Desktop development with
+C++*) and **CUDA Toolkit 13.3** — see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md).
 
 1. Open `build/microdosimetry-track-structure-simulation.sln` in Visual Studio 2026.
 2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/microdosimetry-track-structure-simulation.exe`.
+3. **Build → Build Solution** (Ctrl+Shift+B). The `.exe` lands in
+   `build/x64/Release/`.
 
-Command-line alternative (Developer PowerShell):
+Command line (Developer PowerShell):
 
 ```powershell
-msbuild build\microdosimetry-track-structure-simulation.sln /p:Configuration=Release /p:Platform=x64
+& "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" `
+  build\microdosimetry-track-structure-simulation.sln /p:Configuration=Release /p:Platform=x64
 ```
+
+Linux/CI (optional CMake path): `cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release && cmake --build build/cmake`.
 
 ## Run the demo
 
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+powershell -ExecutionPolicy Bypass -File demo\run_demo.ps1
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+(Linux/macOS: `./demo/run_demo.sh`.) The script builds if needed, runs the
+program on the committed synthetic sample, prints the result, and diffs stdout
+against `demo/expected_output.txt`. See [demo/README.md](demo/README.md).
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: Geant4-DNA physics validation data (https://geant4-dna.in2p3.fr/); NIST electron stopping powers (https://www.nist.gov/pml/estar); AAPM/NCRP microdosimetry benchmark datasets; published DNA damage yield datasets from radiobiology experiments.
+The committed sample `data/sample/track_params.txt` is a **tiny, synthetic**
+one-line parameter file describing one microdosimetry scenario (a moderately
+high-LET, mixed field in a 100 nm water box, 4000 tracks). It is generated by
+`scripts/make_synthetic.py` and is **labelled synthetic** — it is not measured
+data. There is no full dataset to download; `scripts/download_data.ps1`/`.sh`
+print pointers to the real-world resources (Geant4-DNA validation data, NIST
+ESTAR stopping powers, AAPM/NCRP microdosimetry benchmarks) and never bypass any
+registration. See [data/README.md](data/README.md) for the field-by-field format
+and provenance.
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Running on the sample prints a deterministic report to **stdout**:
+
+```
+5.11 -- Microdosimetry & Track-Structure Simulation
+water box 100.0 nm, sigma_ion=1.000 /nm (LET spread 0.50), dna_radius=3.00 nm, 25 DNA segments
+tracks = 4000, quantum = 30.0 eV
+energy imparted = 1599001 quanta (47970.030 keV total)
+DNA damage: SSB = 1032, DSB = 457  (SSB/DSB = 2.258)
+DSB per track = 0.1143
+dose-mean lineal energy yD = 225.677 keV/um
+lineal-energy spectrum f(y) (counts per bin):
+  15 373 808 861 630 465 302 201 136 80 40 89
+RESULT: PASS (GPU tallies match CPU exactly)
+```
+
+**How correctness is checked.** The CPU reference and the GPU kernel replay the
+*same* tracks (same shared RNG + transport in `src/ts_physics.h`). Every tallied
+quantity is an integer, so the demo asserts the GPU and CPU tallies are
+**bit-identical** (tolerance = 0). Timing goes to **stderr** (it varies run to
+run) and is a teaching artifact, not a benchmark claim.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. **`src/main.cu`** — the 5-step shape: load → CPU reference → GPU → verify →
+   report. Also computes the derived summaries (yD, SSB/DSB ratio).
+2. **`src/ts_physics.h`** — the heart: the shared `__host__ __device__` RNG,
+   the track random walk, and the DNA-damage classifier. Included by *both* the
+   CPU reference and the GPU kernel so they run identical histories.
+3. **`src/kernels.cu`** / **`src/kernels.cuh`** — the GPU twin: one thread per
+   track (grid-stride), integer `atomicAdd` scoring.
+4. **`src/reference_cpu.cpp`** / **`.h`** — the serial baseline + the file loader.
+5. **`src/util/`** — CUDA error-checking (`cuda_check.cuh`), event timing
+   (`timer.cuh`), host helpers (`io.hpp`).
 
 ## Prior art & further reading
 
-Geant4-DNA (https://geant4-dna.in2p3.fr/ — part of Geant4, https://github.com/Geant4/geant4) — standard track-structure code; MPEXS-DNA (CUDA GPU version, https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6850505/ — verify GitHub) — GPU microdosimetry and radiolysis; TOPAS-nBio (https://github.com/topas-nbio/TOPAS-nBio) — nano-biological extension of TOPAS; PARTRAC (verify URL) — track structure specialized for DNA damage.
-
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
-
-## CUDA pattern used here
-
-Custom CUDA per-track simulation (one warp per track, reaction lookup in constant memory); divergence minimized by sorting tracks by interaction type before step; cuRAND Philox generator for per-track random sequences; atomic adds to DNA damage histogram; shared memory for cross-section table of current material step. --
+- **Geant4-DNA** (<https://geant4-dna.in2p3.fr/>, part of Geant4) — the standard
+  open-source event-by-event track-structure toolkit for liquid water. Study how
+  it uses tabulated cross-sections down to sub-eV energies; we replace those with
+  a single `sigma_ion` LET parameter for teaching.
+- **MPEXS-DNA** (<https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6850505/>) — a CUDA
+  GPU implementation of Geant4-DNA physics + radiolysis chemistry; the direct
+  inspiration for the "one thread/warp per track + atomic scoring" pattern here.
+- **TOPAS-nBio** (<https://github.com/topas-nbio/TOPAS-nBio>) — a nano-biology
+  extension of TOPAS with realistic DNA geometry; study its DSB scoring rules.
+- **PARTRAC** — track structure specialised for DNA damage; the origin of much of
+  the clustered-damage terminology (SSB/DSB/complex lesions) we use.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Change the LET.** Regenerate the sample with `--sigma-ion 0.3 --let-spread 0`
+   (a sparse, low-LET, mono-energetic beam). Watch the SSB/DSB ratio rise and yD
+   fall — the fingerprint of low-LET radiation.
+2. **Sweep the DSB window.** Make `dsb_window_nm` a parameter and plot DSB yield
+   vs. the window (3–20 bp). This is a real modelling choice in the literature.
+3. **Add "complex" lesions.** Extend the classifier to flag clusters of ≥3 breaks
+   as *complex* DSBs (harder to repair) and report their yield.
+4. **Warp-coherent tracks.** Sort tracks by LET class before the kernel and
+   measure the effect on runtime — a taste of the divergence problem production
+   codes solve (THEORY §GPU mapping).
+5. **Converge the spectrum.** Increase `--n-tracks` by 10× and 100× and watch
+   f(y) smooth out; note where the GPU begins to beat the CPU.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced-scope teaching model.** Real track-structure codes track every
+  elastic/inelastic interaction with tabulated cross-sections from sub-eV to MeV,
+  model each secondary electron explicitly, and simulate radiolysis chemistry
+  (H₂O⁺, ·OH, e⁻aq) with diffusion-reaction. We compress all of that into a few
+  scalar parameters. The numbers are **interpretable, not predictive**.
+- **DNA geometry is a stand-in.** Real DNA is a specific helical/chromatin
+  structure; here it is a line of segments with a capture radius and random strand
+  assignment. Absolute SSB/DSB yields should not be compared to experiment.
+- **Synthetic data.** Every input is synthetic and labelled as such. The demo
+  proves the *software* (GPU == CPU), not the *biology*.
+- **Timing is a teaching artifact.** On 4000 tiny tracks the GPU is launch/branch
+  bound and roughly ties the CPU; the GPU's advantage grows with track count.
