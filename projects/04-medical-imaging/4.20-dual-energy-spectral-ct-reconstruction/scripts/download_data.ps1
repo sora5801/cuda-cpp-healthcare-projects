@@ -1,33 +1,32 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  How to get REAL spectral-CT data (Windows)
 # ---------------------------------------------------------------------------
-# Project 4.20 -- Dual-Energy / Spectral CT Reconstruction   (template skeleton)
+# Project 4.20 : Dual-Energy / Spectral CT Reconstruction
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
-#
-# Usage:  ./scripts/download_data.ps1
+# This project's committed sample is synthetic. Real dual-energy / photon-
+# counting CT datasets require registration and are large, so this script only
+# PRINTS pointers and instructions -- it downloads nothing and never bypasses any
+# credential or license gate (CLAUDE.md section 8). Use make_synthetic.py for an
+# offline, reproducible stand-in.
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.20 -- Dual-Energy / Spectral CT Reconstruction"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    AAPM Spectral CT challenge datasets (verify URL at aapm.org); MARS photon-counting CT datasets (https://www.marsbioimaging.com/); TCIA DECT collections; simulated DECT from published XCAT phantom."
+Write-Host "Real spectral-CT data (register / accept the license on each site):"
+Write-Host "  * AAPM Spectral CT challenge data -- verify URL at https://www.aapm.org/"
+Write-Host "  * MARS photon-counting CT datasets -- https://www.marsbioimaging.com/"
+Write-Host "  * TCIA DECT collections           -- https://www.cancerimagingarchive.net/"
+Write-Host "  * XCAT phantom simulated DECT     -- license from Duke"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Realistic physics inputs (to replace the analytic curves in the code):"
+Write-Host "  * NIST XCOM attenuation cross-sections -- https://physics.nist.gov/PhysRefData/Xcom/"
+Write-Host "  * SpekPy tube spectra                  -- https://bitbucket.org/spekpy/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Offline stand-in (no download, fully reproducible):"
+Write-Host "  python scripts/make_synthetic.py --n 100000   # many synthetic bins"
+Write-Host ""
+Write-Host "Note: convert real sinograms to the simple text format in data/README.md,"
+Write-Host "or extend src/reference_cpu.cpp::load_sinogram to read your format."
+Write-Host "Target data dir: $ProjectRoot\data"

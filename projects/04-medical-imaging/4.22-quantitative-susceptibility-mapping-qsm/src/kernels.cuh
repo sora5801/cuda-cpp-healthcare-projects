@@ -1,52 +1,69 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface (cuFFT dipole inversion)
 // ---------------------------------------------------------------------------
-// Project 4.22 -- Quantitative Susceptibility Mapping (QSM)   (template skeleton)
+// Project 4.22 : Quantitative Susceptibility Mapping (QSM)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (this project's pattern: USE cuFFT FOR A 3-D SPECTRAL INVERSION)
+//   QSM dipole inversion lives entirely in k-space. The forward physics is a
+//   pointwise multiply by the dipole kernel D(k); the inverse is a pointwise
+//   division (regularized) by D(k). The ONLY thing standing between the field
+//   map (real space) and that per-bin arithmetic is a 3-D Fourier transform --
+//   forward to get into k-space and inverse to get back:
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//       chi  =  IFFT3( weight(k) .* FFT3(field) )
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   The 3-D FFT is a solved problem with a world-class GPU library -- cuFFT. The
+//   lesson here, like flagship 8.03, is to use that library WITHOUT it being a
+//   black box: kernels.cu documents exactly what each cufftExec call computes,
+//   the double-precision complex layout it uses, and cuFFT's UNNORMALIZED
+//   convention (a forward+inverse round trip scales by N, which we divide out).
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+//   The only CUSTOM kernels we write are trivial element-wise maps over the
+//   k-space bins:
+//     * apply a REAL per-bin weight (TKD 1/D_thr, or the Tikhonov Wiener weight),
+//     * one Tikhonov GRADIENT step per bin (the iterative-solver structure).
+//   Each is "one GPU thread per k-space bin" -- the most basic CUDA mapping. The
+//   per-bin math itself is SHARED with the CPU via qsm_core.h, so GPU and CPU
+//   agree to round-off (PATTERNS.md section 2 + 4).
+//
+//   kernels.cu defines the kernels + the three host wrappers below. main.cu
+//   calls them. Included only by .cu translation units (it pulls in reference_cpu.h
+//   for the Volume struct, which is pure C++ and safe inside a .cu).
+//
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, reference_cpu.h,
+//   qsm_core.h. Then read kernels.cu for the cuFFT mechanics.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // Volume (pure C++ struct, safe inside a .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
-
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// ---- Host wrappers (declared here, defined in kernels.cu) ------------------
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// All three take a real field-map Volume and return a reconstructed chi Volume,
+// doing the 3-D FFTs on the GPU with cuFFT and the per-bin weighting/iteration in
+// small custom kernels. `kernel_ms` returns the GPU time for the transform +
+// weighting work (CUDA-event measured), so main.cu can print an honest timing.
+
+// reconstruct_tkd_gpu: Threshold-based K-space Division on the GPU.
+//   field     : measured field-shift volume (host; copied to device once)
+//   thr       : TKD threshold (same value as the CPU reference)
+//   out       : host output, filled with the reconstructed susceptibility volume
+//   kernel_ms : out-param, GPU milliseconds for FFT + weight + IFFT
+void reconstruct_tkd_gpu(const Volume& field, double thr,
+                         Volume& out, float* kernel_ms);
+
+// reconstruct_tikhonov_iter_gpu: ITERATIVE Tikhonov gradient descent on the GPU.
+//   Runs the SAME per-bin gradient step as reconstruct_tikhonov_iter_cpu(), one
+//   thread per k-space bin, for `iters` iterations, all on the device (the data
+//   spectrum is transformed once and stays resident). This is the pattern the
+//   catalog highlights: O(100) iterations of 3-D FFT + gradient updates.
+//   field     : measured field-shift volume (host)
+//   alpha     : Tikhonov weight (same as the CPU reference)
+//   step      : gradient-descent step size (same as the CPU reference)
+//   iters     : number of gradient iterations (same as the CPU reference)
+//   out       : host output, reconstructed susceptibility volume
+//   kernel_ms : out-param, GPU milliseconds for the whole iterative solve
+void reconstruct_tikhonov_iter_gpu(const Volume& field, double alpha,
+                                   double step, int iters,
+                                   Volume& out, float* kernel_ms);

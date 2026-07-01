@@ -1,5 +1,8 @@
 4.19 -- Motion-Compensated 4D-CT Reconstruction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+2-D 4D-CT: 8 phases x 10 angles/phase = 80 projections, 129 detectors -> 96x96 image
+breathing DVF amplitude = 0.5000 world units (phase 0 = reference)
+naive 4D-FBP  peak = 0.8966 at (46,43)   sharpness = 0.003017
+motion-comp   peak = 1.0413 at (46,36)   sharpness = 0.003392
+peak recovery (MCR / naive) = 1.1615x   (true nodule density = 1.0)
+motion-comp column profile at peak x (8 samples top->bottom): -0.0096 -0.0447 0.9958 -0.0939 -0.0099 -0.0244 0.0189 -0.0067
+RESULT: PASS (GPU matches CPU within tol=1.0e-03; MCR recovers the moving nodule)

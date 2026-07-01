@@ -1,94 +1,104 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Per-pixel motion-compensated reconstruction kernel
 // ---------------------------------------------------------------------------
-// Project 4.19 -- Motion-Compensated 4D-CT Reconstruction   (template skeleton)
+// Project 4.19 : Motion-Compensated 4D-CT Reconstruction (2-D teaching version)
 //
 // WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
+//   Implements the device kernel (reconstruct_kernel) and the host glue
+//   (reconstruct_gpu) that allocates GPU memory, moves data, launches the
+//   kernel, times it, and brings the image back. The GPU twin of
+//   reconstruct_cpu() in reference_cpu.cpp -- and it produces a BIT-IDENTICAL
+//   image because both call the same mc_pixel() from mc4dct.h.
 //
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
+//   The kernel body is deliberately tiny: all the reconstruction physics (pixel
+//   -> world, DVF warp, project onto detector, interpolate, accumulate) is in
+//   the shared header. The kernel's only job is the thread-to-pixel MAPPING.
 //
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// READ THIS AFTER: kernels.cuh, mc4dct.h.
 // ===========================================================================
 #include "kernels.cuh"
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// 16x16 = 256 threads/block: a square tile that matches the 2-D image and gives
+// good occupancy (8 warps) on sm_75..sm_89. Same choice as flagship 4.01.
+static constexpr int TILE = 16;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// reconstruct_kernel: thread (px,py) owns output pixel (px,py).
+//   Launch config (set in reconstruct_gpu):
+//     grid  = ceil(img/TILE) x ceil(img/TILE) blocks
+//     block = TILE x TILE threads
+//   Thread-to-data map:
+//     px = blockIdx.x*blockDim.x + threadIdx.x
+//     py = blockIdx.y*blockDim.y + threadIdx.y
+//   Memory: each thread reads cosv/sinv/filtered from GLOBAL memory and writes
+//   ONE output pixel. No shared memory or atomics: pixels are independent, and
+//   the whole reduction (sum over phases and angles) is private to the thread.
+//   This is the canonical CT reconstruction GPU pattern (a per-pixel GATHER).
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void reconstruct_kernel(Geom g,
+                                   const float* __restrict__ cosv,
+                                   const float* __restrict__ sinv,
+                                   const float* __restrict__ filtered,
+                                   int motion_comp,
+                                   float* __restrict__ image) {
+    const int px = blockIdx.x * blockDim.x + threadIdx.x;
+    const int py = blockIdx.y * blockDim.y + threadIdx.y;
+    if (px >= g.img || py >= g.img) return;   // guard the ragged edge tiles
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+    // ALL the work is the shared __host__ __device__ routine -- identical to the
+    // CPU reference's inner call. That identity is what makes verification exact.
+    image[(long long)py * g.img + px] =
+        mc_pixel(px, py, g, cosv, sinv, filtered, motion_comp);
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
+// reconstruct_gpu: host wrapper. The five canonical steps of a CUDA computation:
+//   (1) allocate device memory   (2) copy inputs host->device
+//   (3) launch the kernel         (4) copy result device->host
 //   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+//   We time ONLY step (3) with CUDA events so the reported figure is the kernel
+//   cost, not the PCIe transfer cost (discussed separately in THEORY.md).
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void reconstruct_gpu(const FourDCTProblem& prob, const std::vector<float>& filtered,
+                     const std::vector<float>& cosv, const std::vector<float>& sinv,
+                     int motion_comp, std::vector<float>& image, float* kernel_ms) {
+    const Geom& g = prob.geom;
+    const std::size_t img_cells = static_cast<std::size_t>(g.img) * g.img;
+    image.assign(img_cells, 0.0f);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // (1) Device buffers (d_ prefix marks DEVICE pointers -- CLAUDE.md section 12).
+    float *d_filtered = nullptr, *d_cos = nullptr, *d_sin = nullptr, *d_image = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_filtered, filtered.size() * sizeof(float)));  // may fail: OOM
+    CUDA_CHECK(cudaMalloc(&d_cos, cosv.size() * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_sin, sinv.size() * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_image, img_cells * sizeof(float)));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // (2) Copy inputs H2D. .data() is the contiguous backing array of the vector.
+    CUDA_CHECK(cudaMemcpy(d_filtered, filtered.data(), filtered.size() * sizeof(float),
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_cos, cosv.data(), cosv.size() * sizeof(float),
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_sin, sinv.data(), sinv.size() * sizeof(float),
+                          cudaMemcpyHostToDevice));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // (3) Launch a 2-D grid of TILE x TILE blocks covering the img x img image.
+    dim3 block(TILE, TILE);
+    dim3 grid((g.img + TILE - 1) / TILE, (g.img + TILE - 1) / TILE);
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
+    reconstruct_kernel<<<grid, block>>>(g, d_cos, d_sin, d_filtered, motion_comp, d_image);
     *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    CUDA_CHECK_LAST("reconstruct_kernel"); // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // (4) Bring the reconstructed image back to the host vector.
+    CUDA_CHECK(cudaMemcpy(image.data(), d_image, img_cells * sizeof(float),
+                          cudaMemcpyDeviceToHost));
 
     // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    CUDA_CHECK(cudaFree(d_filtered));
+    CUDA_CHECK(cudaFree(d_cos));
+    CUDA_CHECK(cudaFree(d_sin));
+    CUDA_CHECK(cudaFree(d_image));
 }

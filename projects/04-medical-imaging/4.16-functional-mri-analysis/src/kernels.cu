@@ -1,94 +1,100 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Per-voxel fMRI GLM kernel + host wrapper
 // ---------------------------------------------------------------------------
-// Project 4.16 -- Functional MRI Analysis   (template skeleton)
+// Project 4.16 : Functional MRI Analysis
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// This is the GPU twin of glm_cpu() in reference_cpu.cpp. Both loop over voxels
+// calling the SAME fit_voxel() from glm.h -- only the "loop" differs: a serial
+// for-loop on the CPU, one-thread-per-voxel here. main.cu runs both and asserts
+// they agree. See ../THEORY.md §"GPU mapping" for the reasoning.
 // ===========================================================================
 #include "kernels.cuh"
+#include "glm.h"                 // GlmDesign, VoxelStat, fit_voxel  (HD core)
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
-#include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
+#include "util/timer.cuh"        // GpuTimer
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
+// ---------------------------------------------------------------------------
+// Voxel-independent data in CONSTANT memory.
+//   * c_design   : the GlmDesign (T, TR, block_scans) -- identical for every
+//                  voxel, read by every thread, never written during the launch.
+//   * c_XtX_inv  : the precomputed 3x3 (X^T X)^-1 (9 doubles = 72 bytes).
+//   Constant memory's broadcast cache serves one address to a whole warp in a
+//   single transaction, so these tiny shared operands cost ~nothing to read.
+//   (Contrast: passing them as kernel args also works and lives in constant
+//   memory too, but a named __constant__ symbol makes the "shared, read-only"
+//   intent explicit and mirrors flagship 1.12's constant-memory query.)
+// ---------------------------------------------------------------------------
+__constant__ GlmDesign c_design;
+__constant__ double    c_XtX_inv[9];
+
+// 256 threads/block: a multiple of the 32-lane warp with good occupancy on
+// sm_75..sm_89. Each thread does an FP64-heavy per-voxel fit; 256 keeps enough
+// warps resident to hide the global-memory latency of streaming its y-row.
 static constexpr int THREADS_PER_BLOCK = 256;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// glm_kernel: one logical thread per voxel, via a grid-stride loop so a fixed
+//   grid covers any V. Thread (blockIdx.x, threadIdx.x) starts at
+//   v = block*blockDim + thread and strides by the total thread count.
+//   Memory: c_design/c_XtX_inv from the constant cache; voxel v's y-row from
+//   global memory (T contiguous doubles). No shared memory or atomics -- the
+//   outputs are fully independent, so this is pure map-style parallelism.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
+__global__ void glm_kernel(const double* __restrict__ d_bold, int V, int T,
+                           double* __restrict__ d_t, double* __restrict__ d_beta) {
+    const int stride = blockDim.x * gridDim.x;                 // total threads
+    for (int v = blockIdx.x * blockDim.x + threadIdx.x; v < V; v += stride) {
+        // Pointer to this voxel's contiguous time-series (voxel-major layout).
+        const double* y = d_bold + static_cast<std::size_t>(v) * T;
+        // The ENTIRE fit is the shared HD core -> identical math to the CPU.
+        const VoxelStat s = fit_voxel(y, c_design, c_XtX_inv);
+        d_t[v]    = s.tstat;
+        d_beta[v] = s.beta_task;
     }
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// glm_gpu: the canonical CUDA steps. Design + inverse go to constant memory;
+//   BOLD goes to global memory. We time ONLY the kernel (CUDA events), not the
+//   H2D/D2H copies (discussed separately in THEORY §"honest timing").
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void glm_gpu(const FmriDataset& ds, const double XtX_inv[9],
+             std::vector<double>& tstat, std::vector<double>& beta, float* kernel_ms) {
+    const int V = ds.V;
+    const int T = ds.design.T;
+    tstat.assign(static_cast<std::size_t>(V), 0.0);
+    beta.assign(static_cast<std::size_t>(V), 0.0);
+    const std::size_t bold_bytes = static_cast<std::size_t>(V) * T * sizeof(double);
+    const std::size_t out_bytes  = static_cast<std::size_t>(V) * sizeof(double);
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // (a) Upload the voxel-independent operands to the __constant__ symbols.
+    CUDA_CHECK(cudaMemcpyToSymbol(c_design,  &ds.design, sizeof(GlmDesign)));
+    CUDA_CHECK(cudaMemcpyToSymbol(c_XtX_inv, XtX_inv,    9 * sizeof(double)));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // (b) Allocate + upload the BOLD data, and allocate the two output buffers.
+    double* d_bold = nullptr;   // [V*T] device, voxel-major
+    double* d_t    = nullptr;   // [V]   device, t-statistics
+    double* d_beta = nullptr;   // [V]   device, task betas
+    CUDA_CHECK(cudaMalloc(&d_bold, bold_bytes));
+    CUDA_CHECK(cudaMalloc(&d_t,    out_bytes));
+    CUDA_CHECK(cudaMalloc(&d_beta, out_bytes));
+    CUDA_CHECK(cudaMemcpy(d_bold, ds.bold.data(), bold_bytes, cudaMemcpyHostToDevice));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // (c) Launch. Enough blocks to cover V one-thread-per-voxel, capped so the
+    //     grid stays modest; the grid-stride loop covers any larger V.
+    int blocks = (V + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    if (blocks < 1)    blocks = 1;
+    if (blocks > 4096) blocks = 4096;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    glm_kernel<<<blocks, THREADS_PER_BLOCK>>>(d_bold, V, T, d_t, d_beta);
+    *kernel_ms = timer.stop_ms();
+    CUDA_CHECK_LAST("glm_kernel");
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
-
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+    // (d) Copy results back, then (e) free device memory.
+    CUDA_CHECK(cudaMemcpy(tstat.data(), d_t,    out_bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(beta.data(),  d_beta, out_bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_bold));
+    CUDA_CHECK(cudaFree(d_t));
+    CUDA_CHECK(cudaFree(d_beta));
 }

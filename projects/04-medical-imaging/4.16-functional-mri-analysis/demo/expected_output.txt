@@ -1,5 +1,12 @@
 4.16 -- Functional MRI Analysis
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+mass-univariate GLM: 48 voxels x 80 scans (TR=2.0s, block=10 scans)
+design: [task(HRF), linear-drift, intercept]   contrast = task
+top-6 voxels by task t-statistic (tie -> lower index):
+  #1  voxel[  0]  t =  17.7342   beta_task =   6.3126   [active]
+  #2  voxel[ 36]  t =  17.4347   beta_task =   6.0117   [active]
+  #3  voxel[ 18]  t =  16.1324   beta_task =   5.6646   [active]
+  #4  voxel[ 24]  t =  15.4637   beta_task =   5.6590   [active]
+  #5  voxel[ 12]  t =  15.2087   beta_task =   6.2369   [active]
+  #6  voxel[ 30]  t =  15.0395   beta_task =   5.7055   [active]
+recovered 6/6 top voxels that are truly task-active (of 8 active total)
+RESULT: PASS (GPU matches CPU within tol=1.0e-09)

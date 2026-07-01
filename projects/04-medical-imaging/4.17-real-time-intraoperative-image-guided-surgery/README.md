@@ -6,29 +6,51 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Image-guided surgery (IGS) overlays a surgeon's **pre-operative plan** (a tumour
+or organ surface extracted from the planning MRI/CT) onto the **live patient** as
+they operate. For that overlay to land in the right place, the two coordinate
+frames must be **registered**: we need the rigid motion — a rotation `R` and a
+translation `t` — that maps the pre-op surface onto points measured *during*
+surgery (from a tracked pointer, ultrasound, or depth camera). This project
+computes exactly that registration with the classic **Iterative Closest Point
+(ICP)** algorithm, accelerated on the GPU. It aligns a *moving* point cloud to a
+*fixed* one, verifies the GPU result against a CPU reference bit-for-bit, and
+reports the shrinking alignment error in millimetres. It is a self-contained,
+reduced-scope teaching slice of the much larger IGS pipeline.
 
 ## What this computes & why the GPU helps
 
-Image-guided surgery (IGS) fuses preoperative MRI/CT with intraoperative imaging (ultrasound, CBCT, fluorescence) to track surgical instruments and tumor margins in real time. The latency budget is <100 ms for tool tracking and <1 s for image update. GPU acceleration is required at every stage: intraoperative CBCT reconstruction (FDK in <1 s), deformable registration of pre/intra-operative volumes (<5 s), instrument segmentation from camera or US feed (<50 ms/frame), and DRR generation for X-ray/CT registration (<20 ms). Brain shift correction requires deformable surface registration incorporating intraoperative US and biomechanical models, solvable via GPU finite-element methods.
+Image-guided surgery fuses pre-operative MRI/CT with intra-operative imaging
+(ultrasound, CBCT, fluorescence) to track instruments and tumour margins in real
+time, under a hard latency budget (< ~1 s for an image/registration update). The
+full pipeline has many GPU-accelerated stages — CBCT reconstruction, deformable
+registration, instrument segmentation, DRR generation. **This project builds the
+surface-registration stage: rigid ICP.**
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** ICP's cost is dominated by the **correspondence
+step** — for each of the `|P|` moving points, find its nearest neighbour among
+the `|Q|` fixed points. Brute force that is `O(|P|·|Q|)` per iteration, and real
+surfaces have 10⁴–10⁶ points. Every point's search is **independent**, so we give
+each moving point its own GPU thread. The follow-on step that turns those pairs
+into a transform is a **reduction** (accumulate a 3×3 cross-covariance matrix),
+which we also do on the GPU, in integer fixed-point for determinism. The tiny
+3×3 SVD that extracts `R` from the covariance runs once per iteration on the host.
 
 ## The algorithm in brief
 
-GPU FDK (CBCT intraoperative), Iterated closest point (ICP) for surface registration, GPU Demons for deformable brain-shift correction, CNN-based instrument segmentation (U-Net, YOLOv8), neural radiance fields (NeRF) for surgical scene reconstruction, Kalman filtering for tool tracking.
+- **Coarse pre-alignment** — translate the moving cloud so its centroid matches
+  the fixed cloud's. This puts ICP inside its convergence basin (a real,
+  load-bearing step — without it ICP stalls at a poor local minimum).
+- **ICP iteration** (repeat to convergence):
+  1. **Correspond** — nearest fixed point for every (transformed) moving point.
+  2. **Reduce** — accumulate centroids and the 3×3 cross-covariance `H` over all
+     pairs (integer fixed-point atomics → deterministic).
+  3. **Align** — SVD `H = U S Vᵀ`; `R = V·diag(1,1,det)·Uᵀ`; `t = mean(Q) − R·mean(P)`
+     (the Kabsch/Arun/Horn closed form), with a reflection guard.
+  4. **Compose** the increment onto the running transform.
+- **Metric** — RMS nearest-neighbour distance (mm), which falls each iteration.
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
 derivation.
@@ -53,56 +75,114 @@ msbuild build\real-time-intraoperative-image-guided-surgery.sln /p:Configuration
 
 ```powershell
 ./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.sh           # Linux/macOS (CMake build)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+The demo builds if needed, runs on `data/sample/surface_pair.txt`, prints the
+per-iteration RMS error and the recovered transform, shows the GPU-vs-CPU
+agreement check, and prints a timing line on stderr.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
+- **Sample (committed):** `data/sample/surface_pair.txt` — a tiny **synthetic**
+  pair of 3-D surfaces (36 moving + 36 fixed points) so the demo runs with zero
+  downloads. Built by `scripts/make_synthetic.py`.
+- **Full datasets:** `scripts/download_data.ps1` / `.sh` print pointers to real
+  IGS corpora (they never bypass any registration).
 - **Provenance & license:** see [data/README.md](data/README.md).
 
-Catalog dataset notes: Cholec80 laparoscopic video dataset (https://camma.u-strasbg.fr/datasets); ReMIND2Reg 2025 brain resection multimodal dataset (https://arxiv.org/abs/2508.09649); EndoVis MICCAI challenge datasets (https://endovis.grand-challenge.org/); SurgT benchmark for surgical tool tracking.
+Catalog dataset notes: Cholec80 laparoscopic video dataset; ReMIND2Reg 2025 brain
+resection multimodal dataset; EndoVis MICCAI challenge datasets; SurgT tool-tracking
+benchmark. (All require registration/challenge sign-up; the demo uses synthetic
+data instead.)
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt): the RMS
+alignment error drops from ~3.2 mm to **~0.24 mm** (the injected noise floor) in
+one ICP iteration and holds flat, and the run ends with
+`RESULT: PASS (GPU transform matches CPU reference)`. The program computes the
+registration on both the **GPU** (`src/kernels.cu`) and a **CPU reference**
+(`src/reference_cpu.cpp`) and asserts the two recovered transforms are identical
+to ~1e-9 — in fact **bit-for-bit**, because the covariance reduction is integer
+fixed-point (see THEORY §verification). That agreement is the correctness guarantee.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — loads the two clouds, runs CPU + GPU ICP,
+   verifies, and prints the deterministic report.
+2. [`src/icp.h`](src/icp.h) — **the shared `__host__ __device__` core**: nearest
+   neighbour, the fixed-point covariance accumulators, the 3×3 SVD, `solve_rigid`,
+   and `centroid_prealign`. Read this to understand the math both paths share.
+3. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the two-pattern idea.
+4. [`src/kernels.cu`](src/kernels.cu) — the correspondence/reduction kernel and
+   the host ICP driver (constant-memory transform, fixed-point atomics).
+5. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial ICP.
+6. [`src/util/`](src/util/) — shared `CUDA_CHECK`, CUDA-event timer, I/O helpers.
 
 ## Prior art & further reading
 
-PLUS (Public Software Library for Ultrasound Imaging Research, https://github.com/PlusToolkit/PlusLib) — real-time US acquisition/reconstruction; 3D Slicer (https://github.com/Slicer/Slicer) — OpenIGTLink for intraoperative GPU-accelerated 3D rendering; NVIDIA Clara Holoscan (https://github.com/nvidia-holoscan/holoscan-sdk) — real-time medical imaging SDK with GPU pipeline; RTK (https://github.com/RTKConsortium/RTK) — intraoperative CBCT reconstruction.
+- **PLUS** (Public software Library for UltraSound imaging) —
+  <https://github.com/PlusToolkit/PlusLib>. Study its real-time US acquisition and
+  reconstruction, and how it streams tracked geometry.
+- **3D Slicer** — <https://github.com/Slicer/Slicer>. The reference open IGS
+  platform; study **OpenIGTLink** (the protocol that carries tracker/transform
+  data) and its GPU-accelerated rendering.
+- **NVIDIA Clara Holoscan** — <https://github.com/nvidia-holoscan/holoscan-sdk>.
+  Study its low-latency GPU streaming pipeline for surgical video.
+- **RTK** — <https://github.com/RTKConsortium/RTK>. Study intra-operative CBCT
+  (FDK) reconstruction (see also this repo's flagship **4.01**).
+- Classic ICP papers: Besl & McKay 1992 (ICP), Arun/Horn 1987 (the SVD rigid fit),
+  Rusinkiewicz & Levoy 2001 ("Efficient variants of the ICP algorithm").
 
 Study these to learn the production approach; **do not copy code wholesale** —
 reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-cuFFT + custom CUDA FDK for sub-second CBCT; cuBLAS for ICP normal-equation solve; cuDNN for instrument seg CNN inference; CUDA OpenGL interop for real-time 3D visualization overlay; NVIDIA Holoscan pipeline for <10 ms latency. --
+**Independent per-item jobs + an atomic reduction** — the same pattern as flagship
+**11.09** (k-means): one thread per moving point does an independent nearest-
+neighbour search, then `atomicAdd`s its contribution into shared fixed-point
+accumulators (the 3×3 covariance + two centroids). The running transform lives in
+**constant memory** (read by every thread, never changing during a launch — the
+same idea as the constant-memory query in flagship **1.12**). Determinism comes
+from **integer fixed-point atomics** (docs/PATTERNS.md §2–3). The catalog also
+lists cuBLAS for the align solve; here the solve is a 3×3 SVD, small enough to
+hand-roll clearly on the host (a full-size version would call cuSOLVER/cuBLAS —
+see THEORY §real-world and flagship 2.06 for the cuSOLVER pattern).
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **k-d tree correspondence.** Replace the brute-force `nearest_index` with a
+   k-d tree (or a uniform voxel grid) to cut the search from `O(|Q|)` to
+   `O(log|Q|)` per query. Measure the crossover point vs. brute force as `|Q|` grows.
+2. **Point-to-plane ICP.** Swap the point-to-point error for point-to-plane
+   (minimize distance to the local tangent plane using per-point normals). It
+   converges in far fewer iterations on smooth surfaces — implement it and compare
+   the RMS curves.
+3. **Outlier rejection.** Add a distance threshold (or trimmed ICP) so spurious
+   correspondences (occlusion, partial overlap) do not drag the fit. Regenerate
+   the sample with `--noise 1.0` and a few gross outliers to see the effect.
+4. **Scale the cloud.** Run `python scripts/make_synthetic.py --grid 60` (3600
+   points) and watch the GPU/CPU timing gap widen — the point where the GPU's
+   `O(|P||Q|)` parallelism pays off.
+5. **FP64 everywhere.** The covariance is already double; try an all-double point
+   type and quantify how much the fixed-point quantization actually cost.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced scope.** Real IGS is a *pipeline* (CBCT reconstruction, deformable
+  registration, instrument segmentation, tracking, rendering). This project builds
+  only the **rigid surface-registration** stage — the cleanest, most self-contained
+  piece — and describes the rest in THEORY §real-world.
+- **Rigid only.** Tissue deforms (brain shift, breathing). Production systems add
+  **deformable** registration (e.g. Demons, or biomechanical FEM). ICP here assumes
+  the surfaces differ by a rigid motion plus noise.
+- **Brute-force correspondence.** `O(|P||Q|)` is chosen for clarity, not speed; a
+  real system uses a k-d tree / GPU spatial hash (Exercise 1).
+- **Synthetic data.** The sample is generated, labeled synthetic everywhere, and
+  models no real patient. The recovered transform is a teaching artifact.
+- **Not for clinical use.** Nothing here is validated for diagnosis, treatment, or
+  navigation.

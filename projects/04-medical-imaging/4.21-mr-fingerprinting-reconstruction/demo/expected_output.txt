@@ -1,5 +1,12 @@
 4.21 -- MR Fingerprinting Reconstruction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+problem: T=120 frames, D=22 dictionary atoms, V=64 voxels (synthetic)
+match accuracy: 64/64 voxels matched their ground-truth atom
+median |T1 error| = 0.000 ms ; median |T2 error| = 0.000 ms
+recovered T1 map range: [250.0, 2800.0] ms ; T2 map range: [25.0, 160.0] ms
+first 5 voxels (voxel: truth_atom -> matched_atom  T1  T2  cos  PD):
+  v00: truth=  3 -> atom=  3  T1= 250.0  T2= 100.0  cos=0.9996  PD=1.7314
+  v01: truth=  7 -> atom=  7  T1= 350.0  T2= 100.0  cos=0.9995  PD=1.3794
+  v02: truth= 20 -> atom= 20  T1=2000.0  T2= 100.0  cos=0.9996  PD=1.3222
+  v03: truth= 19 -> atom= 19  T1=1400.0  T2=  40.0  cos=0.9982  PD=0.4822
+  v04: truth= 10 -> atom= 10  T1= 500.0  T2=  40.0  cos=0.9995  PD=1.0457
+RESULT: PASS (GPU dictionary + argmax match CPU; indices exact)

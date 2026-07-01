@@ -1,52 +1,46 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for DECT material decomposition
 // ---------------------------------------------------------------------------
-// Project 4.20 -- Dual-Energy / Spectral CT Reconstruction   (template skeleton)
+// Project 4.20 : Dual-Energy / Spectral CT Reconstruction
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   Decomposing a dual-energy sinogram is n INDEPENDENT 2x2 nonlinear solves
+//   (one per bin), so we give each sinogram bin its own GPU thread. This is the
+//   same "independent jobs" pattern as project 1.12 (PATTERNS.md §1), but the
+//   per-item work is a full NEWTON ITERATION instead of a popcount. Two design
+//   choices are the teaching points:
+//     * the SpectralModel (both spectra + both attenuation curves) is read by
+//       EVERY thread and never modified during the launch -> it lives in
+//       __constant__ memory, whose hardware cache broadcasts one address to a
+//       whole warp in a single transaction (ideal for uniform, read-only data);
+//     * the per-bin math (forward model, Jacobian, Newton step) is the SHARED
+//       __host__ __device__ core in dect.h, so the kernel and the CPU reference
+//       run bit-identical arithmetic and verify EXACTLY.
+//   A grid-stride loop lets one modest grid cover an arbitrarily large sinogram
+//   (a real scan has ~10^8 bins).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Included only by .cu units. main.cu calls decompose_gpu().
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: dect.h, reference_cpu.h, util/cuda_check.cuh, util/timer.cuh.
+// Then read kernels.cu. The GPU mapping is in ../THEORY.md.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // DectSinogram, SpectralModel, solver constants
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// ---------------------------------------------------------------------------
+// decompose_gpu: host wrapper around the decomposition kernel.
+//   Uploads the spectral model to constant memory and the measurements to global
+//   memory, launches one-thread-per-bin, times ONLY the kernel (CUDA events),
+//   and copies back the recovered path lengths + per-bin iteration counts.
+//     sino      : the loaded dual-energy sinogram (n bins of m_lo, m_hi)
+//     sm        : the shared scanner physics (spectra + attenuation curves)
+//     t1,t2     : resized to n; filled with recovered basis-material path lengths
+//     iters     : resized to n; per-bin Newton iteration counts
+//     kernel_ms : out-param, GPU-measured kernel time in milliseconds
+// ---------------------------------------------------------------------------
+void decompose_gpu(const DectSinogram& sino, const SpectralModel& sm,
+                   std::vector<double>& t1, std::vector<double>& t2,
+                   std::vector<int>& iters, float* kernel_ms);

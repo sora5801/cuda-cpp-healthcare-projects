@@ -1,52 +1,55 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for the per-voxel fMRI GLM
 // ---------------------------------------------------------------------------
-// Project 4.16 -- Functional MRI Analysis   (template skeleton)
+// Project 4.16 : Functional MRI Analysis
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA
+//   Fitting the GLM at V voxels is V INDEPENDENT least-squares solves against
+//   the SAME design matrix X (docs/PATTERNS.md §1, the "many identical small
+//   solves" pattern, cf. the 9.02 SEIR ensemble). So we give each voxel its own
+//   GPU thread; a grid-stride loop lets one modest grid cover an arbitrarily
+//   large brain. Each thread:
+//     * reads its voxel's time-series row y (length T) from global memory,
+//     * calls fit_voxel() -- the SHARED __host__ __device__ core in glm.h, the
+//       exact same code the CPU reference runs -- so results match to ~1e-9,
+//     * writes one t-statistic and one task-beta.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Two things are voxel-INDEPENDENT and identical for the whole launch: the
+//   design parameters (GlmDesign) and the precomputed (X^T X)^-1. Those go into
+//   CONSTANT memory: read by every thread, never written during the launch, so
+//   the constant cache broadcasts them warp-wide in one transaction (exactly
+//   the role the query fingerprint played in flagship 1.12).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   This header is included only by .cu units. main.cu calls glm_gpu().
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: glm.h (the science), reference_cpu.h (the data model),
+//   util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu. GPU-mapping
+//   reasoning (occupancy, coalescing, the constant-memory choice) is in
+//   ../THEORY.md §"GPU mapping".
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // FmriDataset, GlmDesign (pure C++, safe in .cu)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Device kernel: one thread per voxel computes its GLM t-statistic and task-beta.
+//   d_bold : [V * T] device array, voxel-major (row v = voxel v's time-series)
+//   V, T   : dimensions
+//   d_t    : [V] device output, per-voxel t-statistic (output)
+//   d_beta : [V] device output, per-voxel task regression weight (output)
+// The design params and (X^T X)^-1 are read from __constant__ symbols set up by
+// glm_gpu(), NOT passed as parameters.
+__global__ void glm_kernel(const double* __restrict__ d_bold, int V, int T,
+                           double* __restrict__ d_t, double* __restrict__ d_beta);
+
+// Host wrapper: uploads the design + inverse to constant memory and the BOLD
+// data to global memory, launches the kernel, times ONLY the kernel (CUDA
+// events), and returns the per-voxel t-stats and task-betas.
+//   ds        : the loaded dataset (V voxels x T scans + design params)
+//   XtX_inv   : the precomputed row-major 3x3 (X^T X)^-1 (from compute_XtX_inv)
+//   tstat     : resized to V; filled with per-voxel t-statistics
+//   beta      : resized to V; filled with per-voxel task weights
+//   kernel_ms : out-param, GPU-measured kernel time in milliseconds
+void glm_gpu(const FmriDataset& ds, const double XtX_inv[9],
+             std::vector<double>& tstat, std::vector<double>& beta, float* kernel_ms);

@@ -1,12 +1,13 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Fetch/point-to the FULL datasets (Windows)
 # ---------------------------------------------------------------------------
-# Project 4.17 -- Real-Time Intraoperative / Image-Guided Surgery   (template skeleton)
+# Project 4.17 : Real-Time Intraoperative / Image-Guided Surgery
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and
+# NEVER bypasses credentials/registration. The real IGS datasets below are
+# video/volume corpora behind registration or challenge sign-ups, so this
+# script only prints instructions + links. The committed synthetic sample in
+# data/sample/ is all the demo needs; make_synthetic.py can scale it up.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,19 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.17 -- Real-Time Intraoperative / Image-Guided Surgery"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Cholec80 laparoscopic video dataset (https://camma.u-strasbg.fr/datasets); ReMIND2Reg 2025 brain resection multimodal dataset (https://arxiv.org/abs/2508.09649); EndoVis MICCAI challenge datasets (https://endovis.grand-challenge.org/); SurgT benchmark for surgical tool tracking."
+Write-Host "This project runs on a SYNTHETIC point-cloud pair (data/sample/surface_pair.txt)."
+Write-Host "No download is required to build, run, or verify the demo."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "For a LARGER synthetic problem (deterministic), run:"
+Write-Host "    python scripts/make_synthetic.py --grid 40 --noise 0.3"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Real image-guided-surgery datasets (registration / credentials required --"
+Write-Host "this script does NOT bypass any login; it only points you to the source):"
+Write-Host "  * Cholec80 laparoscopic videos : https://camma.u-strasbg.fr/datasets"
+Write-Host "  * ReMIND2Reg 2025 (brain)      : https://arxiv.org/abs/2508.09649"
+Write-Host "  * EndoVis (MICCAI) challenges  : https://endovis.grand-challenge.org/"
+Write-Host "  * SurgT tool-tracking benchmark"
+Write-Host ""
+Write-Host "To use a real surface: sample 3-D points from the two surfaces and write"
+Write-Host "them in data/sample/surface_pair.txt's format (see data/README.md)."

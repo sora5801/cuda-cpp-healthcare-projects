@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Fetch/point-to the FULL datasets (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 4.17 -- Real-Time Intraoperative / Image-Guided Surgery   (template skeleton)
+# Project 4.17 : Real-Time Intraoperative / Image-Guided Surgery
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and
+# NEVER bypasses credentials/registration. The real IGS datasets below are
+# video/volume corpora behind registration or challenge sign-ups, so this
+# script only prints instructions + links. The committed synthetic sample in
+# data/sample/ is all the demo needs; make_synthetic.py can scale it up.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,18 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 4.17 -- Real-Time Intraoperative / Image-Guided Surgery"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    Cholec80 laparoscopic video dataset (https://camma.u-strasbg.fr/datasets); ReMIND2Reg 2025 brain resection multimodal dataset (https://arxiv.org/abs/2508.09649); EndoVis MICCAI challenge datasets (https://endovis.grand-challenge.org/); SurgT benchmark for surgical tool tracking."
+echo "This project runs on a SYNTHETIC point-cloud pair (data/sample/surface_pair.txt)."
+echo "No download is required to build, run, or verify the demo."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "For a LARGER synthetic problem (deterministic), run:"
+echo "    python scripts/make_synthetic.py --grid 40 --noise 0.3"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Real image-guided-surgery datasets (registration / credentials required --"
+echo "this script does NOT bypass any login; it only points you to the source):"
+echo "  * Cholec80 laparoscopic videos : https://camma.u-strasbg.fr/datasets"
+echo "  * ReMIND2Reg 2025 (brain)      : https://arxiv.org/abs/2508.09649"
+echo "  * EndoVis (MICCAI) challenges  : https://endovis.grand-challenge.org/"
+echo "  * SurgT tool-tracking benchmark"
+echo
+echo "To use a real surface: sample 3-D points from the two surfaces and write"
+echo "them in data/sample/surface_pair.txt's format (see data/README.md)."

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Fetch / locate the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 4.22 -- Quantitative Susceptibility Mapping (QSM)   (template skeleton)
+# Project 4.22 : Quantitative Susceptibility Mapping (QSM)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs +
+# licensing, and NEVER bypasses credentials/registration. Every real QSM dataset
+# below requires registration or carries redistribution limits, so this script
+# only PRINTS instructions and links; the committed synthetic sample
+# (data/sample/field_map.txt) lets the demo run offline.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,25 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 4.22 -- Quantitative Susceptibility Mapping (QSM)"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    QSM Reconstruction Challenge 2.0 (https://doi.org/10.1101/2020.11.25.397695 — data on Zenodo); HCP 7T multiecho GRE data (https://db.humanconnectome.org/); AHEAD dataset (Amsterdam Ultra-high field Adult lifespan Database); BioBank UKB (https://www.ukbiobank.ac.uk/)."
+echo "The demo runs on the committed SYNTHETIC sample (data/sample/field_map.txt)."
+echo "No download is required to build, run, or study this project."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "To study REAL QSM data, use one of these sources (each has its own license"
+echo "and most require registration -- respect them; we do not redistribute any):"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "  * QSM Reconstruction Challenge 2.0 (benchmark data + reference recons):"
+echo "      https://doi.org/10.1101/2020.11.25.397695   (data on Zenodo)"
+echo "  * HCP 7T multi-echo GRE (Human Connectome Project):"
+echo "      https://db.humanconnectome.org/              (registration required)"
+echo "  * AHEAD ultra-high-field 7T lifespan database (Amsterdam)."
+echo "  * UK Biobank (credentialed):"
+echo "      https://www.ukbiobank.ac.uk/                 (application required)"
+echo
+echo "After obtaining a LOCAL FIELD MAP (phase unwrapped + background removed),"
+echo "export the 3-D volume to this project's text format:"
+echo "    line 1: 'nx ny nz'"
+echo "    then nx*ny*nz field-shift values, x fastest then y then z"
+echo "and pass its path to the executable. See data/README.md for details."
+echo
+echo "For a larger SYNTHETIC field map instead, run:"
+echo "    python scripts/make_synthetic.py --nx 24 --ny 24 --nz 16"

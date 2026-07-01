@@ -31,3 +31,9 @@ add_executable(quantitative-susceptibility-mapping-qsm
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(quantitative-susceptibility-mapping-qsm PRIVATE src)
+
+# Link cuFFT: this project runs its 3-D dipole-inversion Fourier transforms with
+# the CUDA FFT library (see src/kernels.cu). CUDA::cufft is the imported target
+# from find_package(CUDAToolkit); it mirrors the cufft.lib added to the .vcxproj.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(quantitative-susceptibility-mapping-qsm PRIVATE CUDA::cufft)

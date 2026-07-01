@@ -1,48 +1,116 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate the synthetic DECT sinogram sample
 # ---------------------------------------------------------------------------
-# Project 4.20 -- Dual-Energy / Spectral CT Reconstruction   (template skeleton)
+# Project 4.20 : Dual-Energy / Spectral CT Reconstruction
 #
-# WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+# WHAT THIS DOES
+#   Produces the tiny committed dataset data/sample/dect_sinogram_sample.txt: a
+#   set of dual-energy sinogram bins with KNOWN ground-truth basis-material path
+#   lengths (t1 = water-equivalent cm, t2 = iodine-equivalent cm). For each bin
+#   we apply the SAME polychromatic forward model the C++ code inverts:
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
+#       m_e = -ln( sum_k w_e[k] * exp( -(t1*mu1[k] + t2*mu2[k]) ) )
 #
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+#   so the data is self-consistent: the C++ decomposition should recover
+#   (t1,t2) back to Newton's residual floor. That embedded known answer is what
+#   makes the demo interpretable (PATTERNS.md §6): the program reports its
+#   recovery error against these truths.
+#
+#   The spectra and attenuation curves here MIRROR reference_cpu.cpp::
+#   build_spectral_model() exactly (same formulae, same constants, same 24-point
+#   energy grid). If you change the physics in the C++, change it here too, then
+#   regenerate the sample and recapture demo/expected_output.txt.
+#
+#   ALL DATA IS SYNTHETIC (no patient data). See data/README.md.
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py                # writes the committed sample
+#   python scripts/make_synthetic.py --n 64 --out other.txt
 # ===========================================================================
 import argparse
-from pathlib import Path
+import math
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+NUM_ENERGIES = 24          # must match dect.h NUM_ENERGIES
+E_MIN, E_MAX = 30.0, 140.0 # keV, must match build_spectral_model()
+
+
+def build_spectral_model():
+    """Rebuild the exact spectra + attenuation curves used by the C++ side.
+    Returns parallel lists (energy, w_lo, w_hi, mu1, mu2), each length NUM_ENERGIES."""
+    dE = (E_MAX - E_MIN) / (NUM_ENERGIES - 1)
+
+    def bump(E, peak, width):
+        z = (E - peak) / width
+        return math.exp(-0.5 * z * z)
+
+    energy, w_lo, w_hi, mu1, mu2 = [], [], [], [], []
+    for k in range(NUM_ENERGIES):
+        E = E_MIN + dE * k
+        energy.append(E)
+        w_lo.append(bump(E, 50.0, 14.0))   # ~80 kVp: peaks low
+        w_hi.append(bump(E, 78.0, 24.0))   # ~140 kVp: peaks high, broader
+        E3 = (E / 60.0) ** 3
+        mu1.append(0.020 / E3 + 0.18)      # water-like: gentle energy slope
+        mu2.append(1.900 / E3 + 0.32)      # iodine-like: steep (high-Z) slope
+
+    # Normalise each spectrum so its weights sum to 1 (matches the C++).
+    s_lo, s_hi = sum(w_lo), sum(w_hi)
+    w_lo = [w / s_lo for w in w_lo]
+    w_hi = [w / s_hi for w in w_hi]
+    return energy, w_lo, w_hi, mu1, mu2
+
+
+def forward(t1, t2, w, mu1, mu2):
+    """Polychromatic forward model: measured log-attenuation for one spectrum."""
+    T = 0.0
+    for k in range(NUM_ENERGIES):
+        p = t1 * mu1[k] + t2 * mu2[k]
+        T += w[k] * math.exp(-p)
+    return -math.log(T)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
+    ap = argparse.ArgumentParser(description="Generate a synthetic DECT sinogram sample.")
+    ap.add_argument("--n", type=int, default=24, help="number of sinogram bins")
+    ap.add_argument("--out", default=None, help="output path (default: the committed sample)")
+    ap.add_argument("--seed", type=int, default=4200, help="RNG seed (determinism)")
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    out = args.out or os.path.join(here, "..", "data", "sample", "dect_sinogram_sample.txt")
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    _, w_lo, w_hi, mu1, mu2 = build_spectral_model()
+
+    # A deterministic sweep of (t1,t2) truths spanning a clinically plausible
+    # range: soft-tissue path 2..30 cm, iodine-equivalent path 0..3 cm. We use a
+    # fixed low-discrepancy-ish grid (no randomness needed) so the file is stable.
+    import random
+    rng = random.Random(args.seed)
+    truths = []
+    for i in range(args.n):
+        # Spread t1 across the body-size range; give t2 a few representative
+        # contrast levels (including 0 = no contrast) plus small jitter.
+        t1 = 2.0 + 28.0 * (i / max(1, args.n - 1))
+        t2 = [0.0, 0.3, 0.8, 1.5, 2.5][i % 5] + 0.05 * rng.random()
+        truths.append((t1, t2))
+
+    lines = []
+    lines.append("# Synthetic dual-energy CT sinogram (Project 4.20). NOT patient data.")
+    lines.append("# Generated by scripts/make_synthetic.py using the same forward")
+    lines.append("# model the C++ inverts, so recovered (t1,t2) match the truth below.")
+    lines.append("# header: <n> <has_truth>   then per bin: <m_lo> <m_hi> <true_t1> <true_t2>")
+    lines.append(f"{args.n} 1")
+    for (t1, t2) in truths:
+        m_lo = forward(t1, t2, w_lo, mu1, mu2)
+        m_hi = forward(t1, t2, w_hi, mu1, mu2)
+        # 6 decimals is enough to seed Newton; the truth columns are exact.
+        lines.append(f"{m_lo:.6f} {m_hi:.6f} {t1:.6f} {t2:.6f}")
+
+    with open(out, "w", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"wrote {args.n} synthetic bins -> {os.path.normpath(out)}")
 
 
 if __name__ == "__main__":

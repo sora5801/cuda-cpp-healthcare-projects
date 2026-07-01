@@ -1,12 +1,12 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 4.16 -- Functional MRI Analysis   (template skeleton)
+# Project 4.16 : Functional MRI Analysis
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# expected size + checksum, and NEVER bypasses credentials/registration. Real
+# fMRI is credentialed and/or huge, so this project ships a SYNTHETIC sample and
+# this script only prints where to get real data + defers to make_synthetic.py.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -14,20 +14,22 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $DataDir = Join-Path $ProjectRoot "data"
 
-Write-Host "[download_data] Project 4.16 -- Functional MRI Analysis"
+Write-Host "[download_data] Project 4.16 : Functional MRI Analysis"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    HCP fMRI (https://db.humanconnectome.org/) — resting-state and task fMRI, 7T/3T; OpenFMRI / OpenNeuro (https://openneuro.org/) — thousands of fMRI datasets in BIDS; ABIDE autism fMRI (http://fcon_1000.projects.nitrc.org/indi/abide/); UK Biobank fMRI (https://www.ukbiobank.ac.uk/)."
+Write-Host "This project runs on a SYNTHETIC sample (data/sample/fmri_sample.txt),"
+Write-Host "so no download is required for the demo. Real public fMRI sources:"
+Write-Host "  * HCP        https://db.humanconnectome.org/   (registration required)"
+Write-Host "  * OpenNeuro  https://openneuro.org/            (BIDS; many open datasets)"
+Write-Host "  * ABIDE      http://fcon_1000.projects.nitrc.org/indi/abide/"
+Write-Host "  * UK Biobank https://www.ukbiobank.ac.uk/      (application + approval)"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Respect every dataset license; credentialed sets are NOT redistributed here."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
+Write-Host "For a larger SYNTHETIC problem (no download, fully reproducible):"
+Write-Host "    python scripts/make_synthetic.py --V 200 --T 240"
+Write-Host ""
+Write-Host "To wire a REAL dataset later, follow this idempotent pattern:"
 Write-Host "    1) skip download if the file already exists with the right checksum"
 Write-Host "    2) print source URL + expected size + SHA256"
 Write-Host "    3) for credentialed sets, print registration instructions ONLY"

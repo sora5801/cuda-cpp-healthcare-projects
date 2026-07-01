@@ -1,122 +1,155 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load clouds, run CPU + GPU ICP, verify, report
 // ---------------------------------------------------------------------------
-// Project 4.17 -- Real-Time Intraoperative / Image-Guided Surgery   (template skeleton)
+// Project 4.17 : Real-Time Intraoperative / Image-Guided Surgery
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load the two point clouds (moving pre-op P, fixed intra-op Q) from
+//      data/sample, or fall back to a built-in synthetic pair.
+//   2. Run the CPU reference ICP (reference_cpu.cpp)   -> trusted transform.
+//   3. Run the GPU ICP        (kernels.cu)             -> the thing being taught.
+//   4. VERIFY: the GPU transform equals the CPU transform (bit-for-bit, thanks
+//      to the fixed-point reduction) and both convergence curves match.
+//   5. REPORT: deterministic result to STDOUT; timing to STDERR.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Timings (which vary run to run) go to STDERR,
+//   which the demo shows but does not diff.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// CODE TOUR: read this first, then icp.h (the shared math), kernels.cuh ->
+//   kernels.cu (the GPU twin), and reference_cpu.cpp (the serial baseline).
+//   See ../THEORY.md for the science, the math, and the GPU mapping.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // icp_gpu (GPU path), Vec3, Rigid
+#include "reference_cpu.h"    // load_clouds, icp_cpu, rms_error, Clouds
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "4.17";
 static const char* PROJECT_NAME = "Real-Time Intraoperative / Image-Guided Surgery";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Number of ICP iterations. FIXED (no early stopping) so the run is perfectly
+// deterministic and the CPU/GPU comparison is apples-to-apples. Twelve is plenty
+// for the well-conditioned synthetic sample to converge to sub-micron RMS.
+static constexpr int ICP_ITERS = 12;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
+// Verification tolerances (documented; see ../THEORY.md "verification"):
+//   * The recovered TRANSFORMS are built from an INTEGER fixed-point reduction
+//     plus the identical host 3x3 SVD, so CPU and GPU agree to the last bit.
+//     We still allow a whisper of slack (1e-9) purely as defensive slack.
+//   * The RMS convergence curves are computed by the same shared rms_error(),
+//     so they also match to ~1e-9.
+static constexpr double TRANSFORM_TOL = 1.0e-9;   // max |R,t| difference CPU vs GPU
+static constexpr double HISTORY_TOL   = 1.0e-9;   // max per-iteration RMS difference
+
+// ---------------------------------------------------------------------------
+// make_synthetic: a built-in fallback pair used when no data file is given.
+//   Q = a small fixed "surface": 20 points on a tilted plane patch (a stand-in
+//       for a digitized organ surface). P = a rigid-transformed copy of Q by a
+//       known small rotation+translation (the "misalignment" ICP must undo).
+//   Deterministic and self-checking: ICP should drive RMS to ~0.
+// ---------------------------------------------------------------------------
+static Clouds make_synthetic() {
+    Clouds c;
+    // Build Q: a 5x4 grid of points on a gently tilted plane, spacing 10 mm.
+    for (int iy = 0; iy < 4; ++iy) {
+        for (int ix = 0; ix < 5; ++ix) {
+            const float X = static_cast<float>(ix) * 10.0f - 20.0f;   // mm, centred
+            const float Y = static_cast<float>(iy) * 10.0f - 15.0f;   // mm, centred
+            const float Z = 0.05f * X + 0.03f * Y;                    // gentle tilt
+            c.Q.push_back(Vec3{ X, Y, Z });
+        }
     }
+    // Ground-truth misalignment: rotate ~10 deg about Z, translate a few mm.
+    const double ang = 10.0 * 3.14159265358979323846 / 180.0;
+    Rigid gt = rigid_identity();
+    gt.R[0][0] =  std::cos(ang); gt.R[0][1] = -std::sin(ang);
+    gt.R[1][0] =  std::sin(ang); gt.R[1][1] =  std::cos(ang);
+    gt.t[0] = 5.0; gt.t[1] = -3.0; gt.t[2] = 2.0;
+    c.gt = gt; c.has_gt = true;
+    // P = gt applied to Q (so P is Q, misaligned; ICP recovers gt^{-1}).
+    for (const Vec3& q : c.Q) c.P.push_back(rigid_apply(gt, q));
+    return c;
 }
 
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// Pretty-print a 3x4 rigid transform [R | t] to stdout at fixed precision so the
+// output is deterministic and diffable.
+static void print_transform(const char* label, const Rigid& g) {
+    std::printf("%s:\n", label);
+    for (int r = 0; r < 3; ++r)
+        std::printf("  [ %8.5f %8.5f %8.5f | %9.5f ]\n",
+                    g.R[r][0], g.R[r][1], g.R[r][2], g.t[r]);
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
+    // ---- 1. Load ------------------------------------------------------------
+    Clouds c;
     const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
+    if (argc > 1) {
+        try {
+            c = load_clouds(argv[1]);
+            source = argv[1];
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[error] %s\n", e.what());
+            return 2;
+        }
     } else {
-        make_synthetic(n, a, x, y);
+        c = make_synthetic();
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference ICP (timed) --------------------------------------
+    std::vector<double> hist_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    const Rigid g_cpu = icp_cpu(c, ICP_ITERS, hist_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU ICP (kernels timed inside the driver) ----------------------
+    std::vector<double> hist_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    const Rigid g_gpu = icp_gpu(c.P, c.Q, ICP_ITERS, hist_gpu, &gpu_kernel_ms);
 
     // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // Max absolute difference between the CPU and GPU transforms (R entries + t).
+    double transform_diff = 0.0;
+    for (int r = 0; r < 3; ++r) {
+        for (int col = 0; col < 3; ++col)
+            transform_diff = std::fmax(transform_diff, std::fabs(g_cpu.R[r][col] - g_gpu.R[r][col]));
+        transform_diff = std::fmax(transform_diff, std::fabs(g_cpu.t[r] - g_gpu.t[r]));
+    }
+    // Max difference between the two convergence curves.
+    double history_diff = 0.0;
+    for (int i = 0; i < ICP_ITERS; ++i)
+        history_diff = std::fmax(history_diff, std::fabs(hist_cpu[i] - hist_gpu[i]));
+    const bool pass = (transform_diff <= TRANSFORM_TOL) && (history_diff <= HISTORY_TOL);
+
+    // Final alignment quality (from the GPU transform; identical to the CPU's).
+    const double final_rms = rms_error(c.P, c.Q, g_gpu);
 
     // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("ICP rigid registration: %zu moving pts -> %zu fixed pts, %d iterations\n",
+                c.P.size(), c.Q.size(), ICP_ITERS);
+    std::printf("RMS alignment error per iteration (mm):\n");
+    for (int i = 0; i < ICP_ITERS; ++i)
+        std::printf("  iter %2d: %10.6f\n", i + 1, hist_gpu[i]);
+    print_transform("recovered transform [R | t] (maps pre-op onto intra-op)", g_gpu);
+    std::printf("final RMS error = %.6f mm\n", final_rms);
+    std::printf("RESULT: %s (GPU transform matches CPU reference)\n", pass ? "PASS" : "FAIL");
 
     // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[data]   source: %s  (%zu moving, %zu fixed points)\n",
+                 source, c.P.size(), c.Q.size());
+    std::fprintf(stderr, "[timing] CPU ICP: %.3f ms   GPU kernels (sum over %d iters): %.3f ms\n",
+                 cpu_ms, ICP_ITERS, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact only -- on this tiny cloud the GPU is "
+                         "launch-bound; the O(|P||Q|) search wins as clouds grow to 10^4-10^6 pts.\n");
+    std::fprintf(stderr, "[verify] max transform diff = %.3e (tol %.1e), max history diff = %.3e (tol %.1e)\n",
+                 transform_diff, TRANSFORM_TOL, history_diff, HISTORY_TOL);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

@@ -1,5 +1,16 @@
 4.20 -- Dual-Energy / Spectral CT Reconstruction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Projection-domain material decomposition: 24 sinogram bins, 2x2 Newton per bin
+basis 1 = water-equivalent, basis 2 = iodine-equivalent (path lengths in cm)
+first 8 bins (recovered on GPU):
+  bin   m_lo     m_hi     t1_water  t2_iodine  iters
+    0   0.6326   0.4689    2.0000     0.0443     3
+    1   1.7431   1.0760    3.2174     0.3100     4
+    2   3.1411   1.8572    4.4348     0.8027     4
+    3   4.7195   2.7732    5.6522     1.5275     4
+    4   6.5238   3.8546    6.8696     2.5494     5
+    5   1.8705   1.6126    8.0870     0.0231     3
+    6   3.0057   2.2376    9.3043     0.3165     4
+    7   4.3707   3.0094   10.5217     0.8144     4
+virtual monoenergetic (bin 0) at 87.4 keV: mu*L = 0.4144
+max recovery error vs known truth: 6.80e-06 cm
+RESULT: PASS (GPU matches CPU within tol=1.0e-09 cm)

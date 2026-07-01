@@ -1,33 +1,31 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  How to get REAL spectral-CT data (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 4.20 -- Dual-Energy / Spectral CT Reconstruction   (template skeleton)
+# Project 4.20 : Dual-Energy / Spectral CT Reconstruction
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
-#
-# Usage:  ./scripts/download_data.sh
+# Prints pointers to real dual-energy / photon-counting CT datasets; downloads
+# nothing and never bypasses registration/license gates (CLAUDE.md section 8).
+# Use make_synthetic.py for an offline, reproducible stand-in.
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
 echo "[download_data] Project 4.20 -- Dual-Energy / Spectral CT Reconstruction"
-echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    AAPM Spectral CT challenge datasets (verify URL at aapm.org); MARS photon-counting CT datasets (https://www.marsbioimaging.com/); TCIA DECT collections; simulated DECT from published XCAT phantom."
+echo "Real spectral-CT data (register / accept the license on each site):"
+echo "  * AAPM Spectral CT challenge data -- verify URL at https://www.aapm.org/"
+echo "  * MARS photon-counting CT datasets -- https://www.marsbioimaging.com/"
+echo "  * TCIA DECT collections           -- https://www.cancerimagingarchive.net/"
+echo "  * XCAT phantom simulated DECT     -- license from Duke"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Realistic physics inputs (to replace the analytic curves in the code):"
+echo "  * NIST XCOM attenuation cross-sections -- https://physics.nist.gov/PhysRefData/Xcom/"
+echo "  * SpekPy tube spectra                  -- https://bitbucket.org/spekpy/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Offline stand-in (no download, fully reproducible):"
+echo "  python scripts/make_synthetic.py --n 100000   # many synthetic bins"
+echo
+echo "Note: convert real sinograms to the simple text format in data/README.md,"
+echo "or extend src/reference_cpu.cpp::load_sinogram to read your format."
+echo "Target data dir: $PROJECT_ROOT/data"

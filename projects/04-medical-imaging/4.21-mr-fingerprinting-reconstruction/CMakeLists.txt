@@ -29,5 +29,11 @@ add_executable(mr-fingerprinting-reconstruction
   src/reference_cpu.cpp
 )
 
-# So #include "kernels.cuh" and "util/..." resolve from src/.
+# So #include "kernels.cuh", "mrf_core.h" and "util/..." resolve from src/.
 target_include_directories(mr-fingerprinting-reconstruction PRIVATE src)
+
+# Link cuBLAS: gpu_reconstruct forms the entire V-by-D MRF match matrix
+# S = Sig_norm * Dict_norm^T with cublasSgemm (kernels.cu). CUDA::cublas is the
+# modern CMake target that pulls in the right include + lib paths automatically.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(mr-fingerprinting-reconstruction PRIVATE CUDA::cublas)
