@@ -1,5 +1,8 @@
 5.7 -- Brachytherapy Dose & Source Modeling
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+[TG-43 analytic dose | SYNTHETIC teaching source, not clinical]
+source: line L=0.35 cm  Lambda=1.1090 cGy/(h*U)  dwells=3
+grid: 41 x 41 x 1 voxels @ 0.10 cm  (1681 voxels)
+max dose = 98511.132812 cGy/h at voxel (20,20,0)
+dose @ ~1cm transverse probe = 2.818497 cGy/h
+center-row profile (8 samples): 0.766199 1.339740 3.383707 16.877193 29.011187 4.121541 1.526351 0.766199
+RESULT: PASS (GPU matches CPU within rel-tol=1.0e-05)

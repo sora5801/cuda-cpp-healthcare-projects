@@ -1,5 +1,8 @@
 5.9 -- Gamma-Index Dose Comparison
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+grid: 32 x 32 voxels @ 2.0 mm   criterion: 3%/3 mm   low-dose cutoff: 10%
+analyzed points : 888
+passing (g<=1)  : 885
+gamma pass-rate : 99.7 %
+gamma min / max : 0.051 / 1.141
+gamma[row 16, cols 12..19] (x1000): 455 477 492 500 500 492 477 455
+RESULT: PASS (GPU gamma map matches CPU within tol=1e-06)

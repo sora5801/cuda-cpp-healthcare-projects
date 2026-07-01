@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 5.7 -- Brachytherapy Dose & Source Modeling   (template skeleton)
+# Project 5.7 : Brachytherapy Dose & Source Modeling
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL, and
+# NEVER bypasses credentials/registration. The real TG-43 consensus source
+# datasets live in published journal tables (below); we do not redistribute
+# them. The committed synthetic sample runs the demo offline; this script only
+# prints where to obtain the real datasets.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -14,20 +15,20 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $DataDir = Join-Path $ProjectRoot "data"
 
-Write-Host "[download_data] Project 5.7 -- Brachytherapy Dose & Source Modeling"
+Write-Host "[download_data] Project 5.7 : Brachytherapy Dose & Source Modeling"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    AAPM TG-43 consensus datasets (radial/anisotropy tables — https://www.aapm.org/pubs/reports/); TCIA prostate BT CT datasets; ESTRO ACROP BT guideline test cases; BrachyView QA data (verify URL)."
+Write-Host "This project ships a SYNTHETIC plan in data/sample/plan_sample.txt;"
+Write-Host "no download is required to run the demo. Real TG-43 datasets:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  * AAPM TG-43U1 consensus source data (radial dose g_L(r) and"
+Write-Host "    anisotropy F(r,theta) tables per source model, e.g. Ir-192 HDR,"
+Write-Host "    Pd-103, I-125): https://www.aapm.org/pubs/reports/"
+Write-Host "  * ESTRO ACROP brachytherapy guideline test cases (planning geometry)."
+Write-Host "  * TCIA prostate brachytherapy CT datasets (imaging; free registration):"
+Write-Host "    https://www.cancerimagingarchive.net/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "To transcribe a real source's tables into this project's plan format,"
+Write-Host "edit data/sample/plan_sample.txt (format documented in data/README.md)."
+Write-Host "For a larger SYNTHETIC grid, run:"
+Write-Host "    python scripts/make_synthetic.py --grid 81"

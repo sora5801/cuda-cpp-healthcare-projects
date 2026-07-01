@@ -1,48 +1,83 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Generate the synthetic phantom for 5.4
 # ---------------------------------------------------------------------------
-# Project 5.4 -- Collapsed-Cone / Superposition-Convolution Dose   (template skeleton)
+# Project 5.4 : Collapsed-Cone / Superposition-Convolution Dose  (2-D teaching model)
 #
 # WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+#   Real dose-engine benchmark data (AAPM TG-105, IROC lung phantom, TCIA clinical
+#   plans) either require registration or forbid redistribution, so we cannot
+#   commit them. This script deterministically builds a TINY, clearly-SYNTHETIC
+#   2-D density phantom that still exercises the whole algorithm -- including the
+#   one feature that makes SC dose worth the trouble: HETEROGENEITY CORRECTION.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
+#   The phantom is a horizontal-slab stack (the beam enters the TOP, y=0, and
+#   travels DOWN). Densities are water-relative (water = 1.0):
+#       rows  0.. 3 : water   (rho = 1.0)   -- soft tissue build-up region
+#       rows  4.. 7 : LUNG    (rho = 0.25)  -- low density: dose spreads FARTHER
+#       rows  8..11 : water   (rho = 1.0)   -- soft tissue again
+#       rows 12..13 : BONE    (rho = 1.85)  -- high density: dose spreads LESS
+#       rows 14..15 : water   (rho = 1.0)
+#   Watching the central-axis depth-dose curve, the learner SEES the kernel reach
+#   deeper through the lung and pile up at the bone interface -- exactly the effect
+#   a naive "scale by depth in water" model gets wrong and SC dose gets right.
 #
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+#   Everything here is SYNTHETIC and for TEACHING ONLY -- not clinical data.
+#
+# OUTPUT FORMAT (whitespace-separated; see data/README.md):
+#   line 1 : nx ny voxel_cm mu_over_rho psi0 n_cones kernel_a dose_scale beam_x0 beam_x1
+#   then   : nx*ny density values, row-major (y=0 first), one row per text line.
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py                 # writes data/sample/phantom.txt
+#   python scripts/make_synthetic.py --out other.txt
 # ===========================================================================
 import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+OUT = ROOT / "data" / "sample" / "phantom.txt"
+
+# --- Geometry / physics constants (documented, deliberately small) ------------
+NX, NY        = 16, 16          # 16 x 16 voxels: tiny, so the demo is instant + readable
+VOXEL_CM      = 0.5             # 0.5 cm voxels -> an 8 x 8 cm field of view
+MU_OVER_RHO   = 0.06            # cm^2/g: near water's mass-attenuation for ~1-2 MeV photons
+PSI0          = 100.0           # incident primary fluence at the surface (arbitrary units)
+N_CONES       = 8               # collapsed-cone directions (this model's max; see ccc_physics.h)
+KERNEL_A      = 1.2             # cone kernel decay (1 / (g/cm^2)): dose-spread range
+DOSE_SCALE    = 1.0e6           # fixed-point: 1 dose unit = 1e-6 dose (exact integer atomics)
+BEAM_X0, BEAM_X1 = 6, 9         # a 4-voxel-wide central beam (columns 6..9 -> 2 cm wide)
+
+
+def build_density():
+    """Return the nx*ny row-major density map described in the header."""
+    rho = [[1.0] * NX for _ in range(NY)]   # start everything as water
+    for y in range(NY):
+        if 4 <= y <= 7:
+            band = 0.25     # lung
+        elif 12 <= y <= 13:
+            band = 1.85     # bone
+        else:
+            band = 1.0      # water
+        for x in range(NX):
+            rho[y][x] = band
+    return rho
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
+    ap = argparse.ArgumentParser(description="Generate the synthetic 5.4 phantom.")
     ap.add_argument("--out", default=str(OUT), help="output path")
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    rho = build_density()
+    header = (f"{NX} {NY} {VOXEL_CM} {MU_OVER_RHO} {PSI0} "
+              f"{N_CONES} {KERNEL_A} {DOSE_SCALE:.0f} {BEAM_X0} {BEAM_X1}")
+    body = "\n".join(" ".join(f"{v:g}" for v in row) for row in rho)
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    Path(args.out).write_text(header + "\n" + body + "\n", encoding="utf-8")
+    print(f"[make_synthetic] wrote {args.out}  "
+          f"({NX}x{NY} phantom: water/lung/water/bone/water; SYNTHETIC)")
 
 
 if __name__ == "__main__":

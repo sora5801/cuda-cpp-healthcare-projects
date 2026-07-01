@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 5.4 -- Collapsed-Cone / Superposition-Convolution Dose   (template skeleton)
+# Project 5.4 : Collapsed-Cone / Superposition-Convolution Dose
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The real dose-engine benchmark sets
+# below all require registration or forbid redistribution, so this script only
+# prints instructions + links and defers to scripts/make_synthetic.py for the
+# offline stand-in that the demo actually uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,24 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 5.4 -- Collapsed-Cone / Superposition-Convolution Dose"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    AAPM TG-105 test cases (heterogeneous media dose benchmarks); IROC lung phantom CT + dosimetry data; TCIA clinical photon planning datasets; CIRS IMRT verification phantom data."
+Write-Host "This project ships a TINY SYNTHETIC phantom (data/sample/phantom.txt) that is"
+Write-Host "enough to run the demo offline. The reference benchmark datasets below are for"
+Write-Host "going further; each requires registration or has redistribution limits, so we"
+Write-Host "do NOT download them automatically -- follow the links and accept each license."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  * AAPM TG-105 report + heterogeneous-media dose test cases:"
+Write-Host "      https://www.aapm.org/pubs/reports/  (search 'TG-105')"
+Write-Host "  * IROC Houston phantom credentialing (lung phantom CT + dosimetry):"
+Write-Host "      https://www.mdanderson.org/  (IROC Houston Quality Assurance Center)"
+Write-Host "  * TCIA clinical photon planning datasets (CT + RTDOSE/RTPLAN DICOM):"
+Write-Host "      https://www.cancerimagingarchive.net/  (register, then browse RT collections)"
+Write-Host "  * CIRS IMRT verification phantom data: https://www.cirsinc.com/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
+Write-Host "To regenerate the committed SYNTHETIC phantom instead:"
+Write-Host "    python scripts/make_synthetic.py"
+Write-Host ""
+Write-Host "When wiring a real dataset later, keep this idempotent pattern:"
+Write-Host "    1) skip the download if the file already exists with the right SHA256"
+Write-Host "    2) print source URL + expected size + checksum before fetching"
 Write-Host "    3) for credentialed sets, print registration instructions ONLY"

@@ -1,5 +1,9 @@
 4.32 -- GPU-Accelerated Landmark Detection
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+heatmap decode: 5 landmarks over a 20x20x16 voxel grid (argmax + soft-argmax, radius 2)
+  L00: peak(  6,  6,  4) val=0.9439  ->  coord=(  5.7477,  6.1897,  4.0635)  err=0.1879
+  L01: peak( 12, 10,  8) val=0.9376  ->  coord=( 12.2523,  9.8732,  7.8103)  err=0.1984
+  L02: peak(  8, 13, 10) val=0.9190  ->  coord=(  8.1268, 13.3142, 10.1897)  err=0.2282
+  L03: peak( 15,  4, 12) val=0.9629  ->  coord=( 14.9365,  4.2523, 12.0000)  err=0.1522
+  L04: peak( 10, 10,  5) val=0.9418  ->  coord=( 10.0635, 10.0635,  5.3142)  err=0.1929
+worst recovery error = 0.2282 voxels
+RESULT: PASS (GPU landmarks match CPU: peaks exact, coords within tol=1.0e-09)

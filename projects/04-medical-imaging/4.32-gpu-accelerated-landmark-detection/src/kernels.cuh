@@ -1,52 +1,77 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU decode interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 4.32 -- GPU-Accelerated Landmark Detection   (template skeleton)
+// Project 4.32 : GPU-Accelerated Landmark Detection
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   The "what the GPU offers" header. main.cu calls decode_gpu(); kernels.cu
+//   implements the host wrapper and the device kernel. Included only by .cu
+//   translation units (it declares a __global__ kernel, so the plain C++
+//   compiler must never see it -- that is why the CPU reference lives behind the
+//   CUDA-free reference_cpu.h instead).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+// THE BIG IDEA  (docs/PATTERNS.md: "score one query vs N items, each independent"
+// + "clustering / atomic reduce" -- here it is one INDEPENDENT REDUCTION PER
+// LANDMARK)
+//   A network predicts L heatmaps; decoding landmark l depends only on volume l.
+//   So the landmarks are perfectly independent -> we give each landmark its own
+//   THREAD BLOCK. Within a block, the many threads cooperate on that one volume:
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//     grid  : L blocks               (blockIdx.x = which landmark)
+//     block : 256 threads            (threadIdx.x = which voxel-stride lane)
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+//   Each block runs a two-phase, fully on-device decode of its heatmap:
+//     PHASE 1 -- PARALLEL ARGMAX. Threads stride over the V voxels; each keeps
+//        the best (value, flat-index) it sees. A shared-memory tree reduction
+//        then collapses the 256 partial winners to ONE. Ties break by LOWEST
+//        flat index, matching the CPU's "first in row-major order" so the two
+//        agree exactly even when several voxels share the max value.
+//     PHASE 2 -- PARALLEL SOFT-ARGMAX. Threads cooperatively sweep the small
+//        window around the winning voxel and atomicAdd their fixed-point
+//        (integer) weight contributions into shared 64-bit accumulators. Integer
+//        atomics COMMUTE, so the totals are order-independent -> deterministic
+//        AND bit-identical to the CPU's serial integer sums. Thread 0 divides
+//        (shared finalize_softargmax) and writes the landmark out.
+//
+//   Why block-scoped shared-memory atomics (not global)? All contributors for a
+//   landmark live in one block, so the accumulators can sit in __shared__ memory
+//   -- atomicAdd on shared memory is far cheaper than on global, and no other
+//   block ever touches them.
+//
+// READ THIS AFTER: landmark.h, util/cuda_check.cuh, util/timer.cuh. Then kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "landmark.h"        // VolumeDims, Landmark (shared with the CPU side)
+#include "reference_cpu.h"   // HeatmapSet (the input container)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// ---- Device kernel ---------------------------------------------------------
+// decode_kernel: decode ALL L heatmaps, one landmark per block.
+//   data : device pointer to the L*V float intensities (landmark-major).
+//   dims : the grid geometry (nx,ny,nz), passed by value (small POD -> registers).
+//   L    : number of landmarks (== number of blocks launched).
+//   out  : device pointer to L GpuLandmark records (one per block).
+// The launch config lives in decode_gpu(); the thread-to-data mapping is
+// documented in kernels.cu at the kernel body.
+struct GpuLandmark {   // POD mirror of Landmark for a flat device array
+    double x, y, z;    // sub-voxel coordinate
+    float  peak;       // intensity at the integer argmax voxel
+    int    px, py, pz; // integer argmax voxel
+};
+
+__global__ void decode_kernel(const float* __restrict__ data,
+                              VolumeDims dims, int L,
+                              GpuLandmark* __restrict__ out);
+
+// ---- Host wrapper ----------------------------------------------------------
+// decode_gpu: the host-callable "do the whole GPU decode" function.
+//   Uploads the heatmap set, launches decode_kernel with L blocks, copies the L
+//   decoded landmarks back, and reports the measured KERNEL time (CUDA events)
+//   via *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   hs        : the heatmap set (host).
+//   out       : host output, resized to hs.num_landmarks (output parameter).
+//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies).
+void decode_gpu(const HeatmapSet& hs, std::vector<Landmark>& out, float* kernel_ms);

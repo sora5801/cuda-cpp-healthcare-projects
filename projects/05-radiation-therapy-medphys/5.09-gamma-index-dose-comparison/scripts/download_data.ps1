@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 5.9 -- Gamma-Index Dose Comparison   (template skeleton)
+# Project 5.9 -- Gamma-Index Dose Comparison
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, and NEVER bypasses
+# credentials/registration. Real gamma-index inputs are plan+measurement dose
+# pairs that are patient-derived and NOT redistributable, so this script only
+# prints guidance and defers to scripts/make_synthetic.py for an offline
+# stand-in. There is nothing to download automatically.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,20 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 5.9 -- Gamma-Index Dose Comparison"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    AAPM TG-218 patient-specific IMRT QA reference data; plan+measurement DICOM pairs from departmental QA systems; IROC-Houston phantom dose datasets; linac EPID measurement datasets."
+Write-Host "No auto-download: gamma-index inputs are patient-derived plan+measurement"
+Write-Host "dose pairs and are not redistributable. Obtain them from your own clinic:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  * AAPM TG-218  -- methodology + example criteria for IMRT/VMAT QA"
+Write-Host "                    (Med Phys 45(4), 2018)."
+Write-Host "  * Plan+measurement DICOM-RTDOSE pairs -- from your TPS + QA system"
+Write-Host "                    (film / EPID / diode array). Local access + ethics only."
+Write-Host "  * IROC-Houston phantom datasets -- request through IROC."
+Write-Host "  * Linac EPID measurement datasets -- from your machine's QA archive."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Respect every source license and patient-privacy rule. Do NOT commit"
+Write-Host "patient-derived data to this public repo."
+Write-Host ""
+Write-Host "The committed SYNTHETIC sample in data/sample/dose_pair.txt is enough to"
+Write-Host "run the demo. For a larger synthetic problem, run:"
+Write-Host "    python scripts/make_synthetic.py --n 128"

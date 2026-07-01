@@ -1,121 +1,139 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load heatmaps, decode on CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 4.32 -- GPU-Accelerated Landmark Detection   (template skeleton)
+// Project 4.32 : GPU-Accelerated Landmark Detection
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// THE 5-STEP SHAPE (every project in this repo follows it)
+//   1. Load the predicted heatmaps (data/sample), or fail loudly.
+//   2. CPU reference decode (reference_cpu.cpp)        -> trusted landmarks.
+//   3. GPU decode           (kernels.cu)               -> the thing taught.
+//   4. VERIFY: the GPU landmarks match the CPU ones (integer peaks EXACTLY;
+//      sub-voxel centroids within a tiny tolerance from one double division).
+//   5. REPORT: deterministic recovered coordinates -> stdout; timing -> stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Timings (which vary run-to-run) go to STDERR,
+//   which the demo shows but does not diff.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+// WHAT THE NUMBERS MEAN
+//   Each heatmap was BUILT around a known ground-truth point (a Gaussian blob,
+//   see scripts/make_synthetic.py). So besides "does the GPU match the CPU?" we
+//   can also ask "did the decoder recover the planted point?" -- the reported
+//   decode error validates the SCIENCE, not just CPU==GPU agreement.
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: read this first, then landmark.h (the shared math), kernels.cuh ->
+// kernels.cu (the GPU decode), and reference_cpu.cpp (the baseline).
 // ===========================================================================
-#include <cstdio>
+#include <cmath>     // std::fabs, std::sqrt
+#include <cstdio>    // std::printf, std::fprintf
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // decode_gpu, GpuLandmark
+#include "reference_cpu.h"    // load_heatmaps, decode_cpu, HeatmapSet
+#include "landmark.h"         // Landmark, VolumeDims
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
+// Identify the program. Kept in sync with demo/expected_output.txt.
 static const char* PROJECT_ID   = "4.32";
 static const char* PROJECT_NAME = "GPU-Accelerated Landmark Detection";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Verification tolerance for the SUB-VOXEL centroid. The integer argmax and the
+// integer weight sums are bit-identical CPU vs GPU; only the final
+// double-precision division (num/den) can differ, and only in its last ulps.
+// 1e-9 is far tighter than any voxel spacing yet safely above that ulp noise.
+// (docs/PATTERNS.md section 4: honest, documented tolerance.)
+static constexpr double TOLERANCE = 1.0e-9;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load ----------------------------------------------------------
+    const std::string path =
+        (argc > 1) ? argv[1] : "data/sample/heatmaps_sample.txt";
+    HeatmapSet hs;
+    try {
+        hs = load_heatmaps(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference decode (timed) ----------------------------------
+    std::vector<Landmark> lm_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    decode_cpu(hs, lm_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU decode (kernel timed inside the wrapper) ------------------
+    std::vector<Landmark> lm_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    decode_gpu(hs, lm_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify --------------------------------------------------------
+    // (a) integer argmax peaks must match EXACTLY (same tie-break both sides).
+    // (b) sub-voxel centroids must match within TOLERANCE.
+    int   peak_mismatch = 0;
+    double max_coord_diff = 0.0;
+    for (int l = 0; l < hs.num_landmarks; ++l) {
+        if (lm_cpu[l].px != lm_gpu[l].px ||
+            lm_cpu[l].py != lm_gpu[l].py ||
+            lm_cpu[l].pz != lm_gpu[l].pz) ++peak_mismatch;
+        max_coord_diff = std::fmax(max_coord_diff, std::fabs(lm_cpu[l].x - lm_gpu[l].x));
+        max_coord_diff = std::fmax(max_coord_diff, std::fabs(lm_cpu[l].y - lm_gpu[l].y));
+        max_coord_diff = std::fmax(max_coord_diff, std::fabs(lm_cpu[l].z - lm_gpu[l].z));
+    }
+    const bool pass = (peak_mismatch == 0) && (max_coord_diff <= TOLERANCE);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // Recovery error vs the planted ground truth (science check, from the GPU
+    // result). We report the WORST landmark's Euclidean error, in voxels.
+    double worst_recovery = 0.0;
+    const bool have_truth = !hs.truth_x.empty();
+    if (have_truth) {
+        for (int l = 0; l < hs.num_landmarks; ++l) {
+            double dx = lm_gpu[l].x - hs.truth_x[l];
+            double dy = lm_gpu[l].y - hs.truth_y[l];
+            double dz = lm_gpu[l].z - hs.truth_z[l];
+            worst_recovery = std::fmax(worst_recovery, std::sqrt(dx*dx + dy*dy + dz*dz));
+        }
+    }
+
+    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) ----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("heatmap decode: %d landmarks over a %dx%dx%d voxel grid "
+                "(argmax + soft-argmax, radius %d)\n",
+                hs.num_landmarks, hs.dims.nx, hs.dims.ny, hs.dims.nz,
+                SOFTARGMAX_RADIUS);
+    for (int l = 0; l < hs.num_landmarks; ++l) {
+        // Print the GPU landmark: integer peak voxel, sub-voxel coordinate, and
+        // (if known) the recovery error vs the planted point. %.4f is stable
+        // across platforms for these small magnitudes.
+        std::printf("  L%02d: peak(%3d,%3d,%3d) val=%.4f  ->  coord=(%8.4f,%8.4f,%8.4f)",
+                    l, lm_gpu[l].px, lm_gpu[l].py, lm_gpu[l].pz, lm_gpu[l].peak,
+                    lm_gpu[l].x, lm_gpu[l].y, lm_gpu[l].z);
+        if (have_truth) {
+            double dx = lm_gpu[l].x - hs.truth_x[l];
+            double dy = lm_gpu[l].y - hs.truth_y[l];
+            double dz = lm_gpu[l].z - hs.truth_z[l];
+            std::printf("  err=%.4f", std::sqrt(dx*dx + dy*dy + dz*dz));
+        }
+        std::printf("\n");
+    }
+    if (have_truth)
+        std::printf("worst recovery error = %.4f voxels\n", worst_recovery);
+    std::printf("RESULT: %s (GPU landmarks match CPU: peaks exact, "
+                "coords within tol=1.0e-09)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
+    std::fprintf(stderr, "[data]   source: %s  (%d landmarks, %dx%dx%d grid, "
+                         "%lld voxels/heatmap)\n",
+                 path.c_str(), hs.num_landmarks, hs.dims.nx, hs.dims.ny, hs.dims.nz,
+                 static_cast<long long>(volume_voxels(hs.dims)));
+    std::fprintf(stderr, "[timing] CPU decode: %.3f ms   GPU kernel: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- this sample is tiny; the "
+                         "GPU's edge grows with voxels/heatmap (real 512^3 ~ 1.3e8 each).\n");
+    std::fprintf(stderr, "[verify] peak mismatches = %d, max coord diff = %.3e "
+                         "(tolerance %.1e)\n", peak_mismatch, max_coord_diff, TOLERANCE);
 
     // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;

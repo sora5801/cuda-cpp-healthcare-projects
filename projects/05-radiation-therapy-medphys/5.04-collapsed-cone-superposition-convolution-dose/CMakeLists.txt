@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 5.4 -- Collapsed-Cone / Superposition-Convolution Dose   (template skeleton)
+# Project 5.4 -- Collapsed-Cone / Superposition-Convolution Dose
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/collapsed-cone-superposition-convolution-dose.sln (CLAUDE.md §5). Both

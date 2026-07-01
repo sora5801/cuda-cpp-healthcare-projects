@@ -95,9 +95,12 @@
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Console</SubSystem>
-      <!-- cudart_static.lib = the CUDA runtime; its folder is on the search
-           path thanks to the CUDA .props import above. -->
-      <AdditionalDependencies>cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- cufft.lib     = NVIDIA's FFT library; each sliding-window frame's inverse
+                           2D FFT (the dominant cost after gridding) runs on it via
+                           cufftPlan2d/cufftExecC2C (see src/kernels.cu).
+           cudart_static.lib = the CUDA runtime; both folders are on the search path
+                           thanks to the CUDA .props import above. -->
+      <AdditionalDependencies>cufft.lib;cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
@@ -133,7 +136,9 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- cufft.lib links NVIDIA's FFT library (used by src/kernels.cu for each
+           frame's inverse 2D FFT); see the Debug section for the per-library note. -->
+      <AdditionalDependencies>cufft.lib;cudart_static.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
@@ -153,6 +158,7 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <ClInclude Include="..\src\grid_core.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

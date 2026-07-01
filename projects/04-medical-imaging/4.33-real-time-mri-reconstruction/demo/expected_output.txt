@@ -1,5 +1,14 @@
 4.33 -- Real-Time MRI Reconstruction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+golden-angle radial NUFFT recon (single slice, single coil), gridding + cuFFT
+grid: 32x32   spokes: 64 x 64 readout   KB width: 4
+sliding window: 21 spokes/frame, stride 8, 6 frames
+recon movie: normalized to peak=1.000 (raw peak 1.837e-04, arbitrary MR units)
+per-frame peak (normalized) @ (row,col):
+  frame 0: 0.9796 @ (14,13)
+  frame 1: 0.9933 @ (14,13)
+  frame 2: 0.9210 @ (14,13)
+  frame 3: 0.9331 @ (13,13)
+  frame 4: 0.9881 @ (12,13)
+  frame 5: 1.0000 @ (12,13)
+last-frame vs truth: normalized correlation = 0.9613
+RESULT: PASS (GPU gridding+cuFFT matches CPU within tol; recon recovers truth)

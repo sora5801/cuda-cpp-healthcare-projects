@@ -153,6 +153,9 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- gamma.h: the shared __host__ __device__ per-pixel gamma math (included
+         by BOTH kernels.cu via nvcc and reference_cpu.cpp via cl.exe). -->
+    <ClInclude Include="..\src\gamma.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

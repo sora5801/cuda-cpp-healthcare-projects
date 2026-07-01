@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 4.32 -- GPU-Accelerated Landmark Detection   (template skeleton)
+# Project 4.32 : GPU-Accelerated Landmark Detection
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# expected size, and NEVER bypasses credentials/registration. The real landmark
+# datasets require registration (challenge accounts / data-use agreements), so
+# this script only prints where to get them and how they map onto our loader,
+# and defers to scripts/make_synthetic.py for the offline stand-in the demo uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,21 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.32 -- GPU-Accelerated Landmark Detection"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    VerSe vertebral challenge (https://github.com/anjany/verse) — 374 CT scans with 26 vertebral landmarks; RSNA Vertebral Fracture Detection (https://rsna-vertebral-labeling-level-detection.grand-challenge.org/); CephaloNet cephalometric landmark dataset; MICCAI 2015 prostate challenge landmark dataset."
+Write-Host "This project decodes landmark HEATMAPS (a network's output tensors)."
+Write-Host "Real annotated landmark datasets require registration / a data-use"
+Write-Host "agreement, so we do NOT auto-download them. Sources (register first):"
+Write-Host "  * VerSe vertebral challenge  https://github.com/anjany/verse"
+Write-Host "        374 CT scans, 26 vertebral landmarks each."
+Write-Host "  * RSNA Vertebral Fracture Detection"
+Write-Host "        https://rsna-vertebral-labeling-level-detection.grand-challenge.org/"
+Write-Host "  * CephaloNet cephalometric landmark dataset (2D)."
+Write-Host "  * MICCAI 2015 prostate challenge landmark dataset."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "To turn a real volume + a network's prediction into our input format,"
+Write-Host "export each landmark's heatmap tensor [Z,Y,X] to the layout documented"
+Write-Host "in data/README.md (nx ny nz L, then per-landmark: cx cy cz + voxels)."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "The committed tiny sample in data/sample/ runs the demo offline. For a"
+Write-Host "larger SYNTHETIC problem (no registration needed), run:"
+Write-Host "    python scripts/make_synthetic.py --nx 64 --ny 64 --nz 64 --landmarks 26"

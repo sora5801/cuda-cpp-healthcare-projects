@@ -2,32 +2,67 @@
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+One command reconstructs a **6-frame real-time MRI movie** from a synthetic
+**golden-angle radial** k-space acquisition, on both the CPU and the GPU, and proves
+they agree. It shows the whole non-Cartesian reconstruction pipeline the catalog asks
+for — density compensation → **Kaiser-Bessel gridding** → **cuFFT** inverse FFT →
+deapodization — inside a **sliding window** that slides over the streamed spokes to
+produce successive frames.
 
-1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+## Run it
 
-The program splits its output deliberately:
+```powershell
+# Windows (PowerShell) — builds Release if needed, runs, diffs stdout vs expected
+./demo/run_demo.ps1
+```
+```bash
+# Linux/macOS — uses the optional CMake build
+./demo/run_demo.sh
+```
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
-
-## Expected result
+## What you should see (annotated)
 
 ```
 4.33 -- Real-Time MRI Reconstruction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+golden-angle radial NUFFT recon (single slice, single coil), gridding + cuFFT
+grid: 32x32   spokes: 64 x 64 readout   KB width: 4          <- the acquisition
+sliding window: 21 spokes/frame, stride 8, 6 frames          <- the real-time plan
+recon movie: normalized to peak=1.000 (raw peak 1.837e-04, arbitrary MR units)
+per-frame peak (normalized) @ (row,col):
+  frame 0: 0.9796 @ (14,13)                                   <- the moving blob...
+  frame 1: 0.9933 @ (14,13)
+  frame 2: 0.9210 @ (14,13)
+  frame 3: 0.9331 @ (13,13)
+  frame 4: 0.9881 @ (12,13)
+  frame 5: 1.0000 @ (12,13)                                   <- ...drifts up 2 pixels
+last-frame vs truth: normalized correlation = 0.9613          <- the anatomy is recovered
+RESULT: PASS (GPU gridding+cuFFT matches CPU within tol; recon recovers truth)
 ```
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+- **The peak LOCATION moves** from row 14 → 13 → 12 across the frames. That is the
+  synthetic "heartbeat" (one blob slowly bobs), reconstructed by the sliding window —
+  the whole point of *real-time* MRI. The brightness is normalized so the numbers are
+  easy to read (the raw MR-unit scale is arbitrary after gridding).
+- **`correlation = 0.9613`** is the science check: the last frame's image matches the
+  known synthetic phantom, i.e. gridding genuinely recovered the anatomy from only 21
+  sparse radial spokes.
+- **`RESULT: PASS`** requires *both* that the GPU movie matches the CPU movie within
+  tolerance *and* that the reconstruction recovers the truth.
+
+## stdout vs stderr
+
+`stdout` (above) is **deterministic** and is what `run_demo` diffs against
+[`expected_output.txt`](expected_output.txt). Timing and the exact GPU-vs-CPU error go
+to **stderr** (shown but not diffed) because they vary run to run:
+
+```
+[timing] CPU movie: 6.0 ms   GPU movie (gridding+cuFFT): 4.7 ms
+[verify] GPU-vs-CPU movie RMS diff = 1.65e-11  (tolerance 1.00e-04)
+```
+
+The GPU-vs-CPU difference is ~`1e-11` (essentially exact): the gridding scatter uses
+**fixed-point integer atomics**, so it is bit-identical on both sides, leaving only the
+cuFFT-vs-radix-2-FFT rounding. The timing is a **teaching artifact, not a benchmark** —
+on a 32×32 slice the per-frame kernels are launch-bound; the GPU's advantage grows with
+grid size, spoke count, and receive coils, and a production system overlaps
+reconstruction with acquisition using CUDA streams.

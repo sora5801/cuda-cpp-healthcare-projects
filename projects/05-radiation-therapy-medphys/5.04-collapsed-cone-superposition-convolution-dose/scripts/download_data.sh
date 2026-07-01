@@ -2,11 +2,13 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 5.4 -- Collapsed-Cone / Superposition-Convolution Dose   (template skeleton)
+# Project 5.4 : Collapsed-Cone / Superposition-Convolution Dose
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The real dose-engine benchmark sets
+# below all require registration or forbid redistribution, so this script only
+# prints instructions + links and defers to scripts/make_synthetic.py for the
+# offline stand-in that the demo actually uses.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,23 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 5.4 -- Collapsed-Cone / Superposition-Convolution Dose"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    AAPM TG-105 test cases (heterogeneous media dose benchmarks); IROC lung phantom CT + dosimetry data; TCIA clinical photon planning datasets; CIRS IMRT verification phantom data."
+echo "This project ships a TINY SYNTHETIC phantom (data/sample/phantom.txt) that is"
+echo "enough to run the demo offline. The reference benchmark datasets below are for"
+echo "going further; each requires registration or has redistribution limits, so we"
+echo "do NOT download them automatically -- follow the links and accept each license."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  * AAPM TG-105 report + heterogeneous-media dose test cases:"
+echo "      https://www.aapm.org/pubs/reports/  (search 'TG-105')"
+echo "  * IROC Houston phantom credentialing (lung phantom CT + dosimetry):"
+echo "      https://www.mdanderson.org/  (IROC Houston Quality Assurance Center)"
+echo "  * TCIA clinical photon planning datasets (CT + RTDOSE/RTPLAN DICOM):"
+echo "      https://www.cancerimagingarchive.net/  (register, then browse RT collections)"
+echo "  * CIRS IMRT verification phantom data: https://www.cirsinc.com/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
+echo "To regenerate the committed SYNTHETIC phantom instead:"
+echo "    python scripts/make_synthetic.py"
+echo
+echo "When wiring a real dataset later, keep this idempotent pattern:"
+echo "    1) skip the download if the file already exists with the right SHA256"
+echo "    2) print source URL + expected size + checksum before fetching"
 echo "    3) for credentialed sets, print registration instructions ONLY"

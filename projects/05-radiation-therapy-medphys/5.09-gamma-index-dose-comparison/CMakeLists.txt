@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 5.9 -- Gamma-Index Dose Comparison   (template skeleton)
+# Project 5.9 -- Gamma-Index Dose Comparison
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/gamma-index-dose-comparison.sln (CLAUDE.md §5). Both

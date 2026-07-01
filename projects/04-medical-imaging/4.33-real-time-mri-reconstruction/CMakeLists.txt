@@ -29,5 +29,12 @@ add_executable(real-time-mri-reconstruction
   src/reference_cpu.cpp
 )
 
-# So #include "kernels.cuh" and "util/..." resolve from src/.
+# So #include "kernels.cuh", "grid_core.h", and "util/..." resolve from src/.
 target_include_directories(real-time-mri-reconstruction PRIVATE src)
+
+# Link NVIDIA's cuFFT: src/kernels.cu uses cufftPlan2d/cufftExecC2C for each
+# sliding-window frame's inverse 2D FFT (the dominant cost after gridding).
+# CUDA::cufft is the imported target CUDAToolkit exposes (mirrors cufft.lib in the
+# .vcxproj). See docs/BUILD_GUIDE.md section 7b on linking a CUDA library.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(real-time-mri-reconstruction PRIVATE CUDA::cufft)

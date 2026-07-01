@@ -1,52 +1,52 @@
 // ===========================================================================
 // src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 5.9 -- Gamma-Index Dose Comparison   (template skeleton)
+// Project 5.9 -- Gamma-Index Dose Comparison
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
+//   The "what the GPU offers" header. main.cu calls gamma_map_gpu(); kernels.cu
 //   implements both the host wrapper and the device kernel. Included only by
 //   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   C++ compiler must never see it -- that is why the CPU reference lives behind
+//   the pure-C++ reference_cpu.h instead).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+// THE BIG IDEA (the core CUDA mapping for this project)
+//   The gamma index at each reference voxel is an INDEPENDENT search: voxel i's
+//   answer depends only on reading nearby evaluated doses, never on another
+//   voxel's answer. That independence is the whole reason the GPU wins -- we
+//   assign ONE THREAD PER REFERENCE VOXEL. Each thread scans the evaluated
+//   voxels inside a fixed physical window, keeps a running MINIMUM of the
+//   squared gamma term (gamma_core.h) in a register, and writes one sqrt at the
+//   end. This is the "gather + per-thread min-reduction" pattern (PATTERNS.md
+//   §1, closest flagship 4.01 CT backprojection, which also gathers per output
+//   pixel over a set of inputs).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   The reference voxel grid is 2-D, so we launch a 2-D grid of 2-D blocks --
+//   thread (gx, gy) owns reference voxel (rx=gx, ry=gy). See kernels.cu for the
+//   launch-config reasoning and ../THEORY.md §4 for the full mapping.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, gamma_core.h. Then
+// read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
-
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "dose_problem.h"   // DoseProblem (inputs) -- pure C++, safe here
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// gamma_map_gpu: the host-callable "do the whole GPU gamma computation".
+//   Allocates device buffers for both dose maps and the output, copies the
+//   inputs H2D, launches the gamma kernel over a 2-D grid, copies the gamma map
+//   D2H, and reports the measured KERNEL time (CUDA events) via *kernel_ms.
+//   main.cu calls exactly this; all CUDA bookkeeping is hidden inside.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   prob      : the two dose maps, grid geometry, and acceptance criteria.
+//   gamma_out : host output, resized to prob.size(); gamma_out[i] is the gamma
+//               index at reference voxel i (dimensionless; <= 1 == passes).
+//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies).
+//
+//   Postcondition: gamma_out is bit-identical to gamma_map_cpu(prob, .) because
+//   both call gamma_sq_term() from gamma_core.h over the same fixed candidate
+//   set (THEORY §6).
+void gamma_map_gpu(const DoseProblem& prob, std::vector<float>& gamma_out,
+                   float* kernel_ms);

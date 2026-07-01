@@ -1,11 +1,12 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 5.8 -- Linac QA & Machine Performance Assessment   (template skeleton)
+# Project 5.8 -- Linac QA & Machine Performance Assessment  (catalog ID 5.8)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/linac-qa-machine-performance-assessment.sln (CLAUDE.md §5). Both
-# compile the SAME src/ files, so they stay in lockstep.
+# compile the SAME src/ files, so they stay in lockstep. The shared per-pixel
+# gamma math lives in src/gamma.h (header-only), reachable via the include dir.
 #
 #   cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build/cmake

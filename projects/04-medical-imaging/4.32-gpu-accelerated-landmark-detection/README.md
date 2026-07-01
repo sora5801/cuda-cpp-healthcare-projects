@@ -6,29 +6,44 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+A landmark-detection network does not emit coordinates directly — it emits, for
+each anatomical landmark, a whole 3D **heatmap** (a "probability blob" that peaks
+at the landmark). This project implements the **decode step** that turns those
+heatmaps into coordinates: a GPU kernel that, for each landmark, finds the peak
+voxel (**argmax**) and refines it to a **sub-voxel** position (**soft-argmax**,
+an intensity-weighted centroid). It runs the decode on both the GPU and a plain
+CPU reference and proves they agree exactly, then reports how well the decoded
+points recover a known synthetic ground truth. It teaches two core CUDA idioms —
+a block-level **reduction** and **deterministic fixed-point atomics** — on a real
+medical-imaging task.
 
 ## What this computes & why the GPU helps
 
 Anatomical landmark detection localizes clinically relevant points (vertebral endplates, femoral head centers, dental cusps) in 3D medical images for registration initialization, measurement, and surgical planning. Deep learning heatmap regression (stacked hourglass, U-Net with Gaussian target maps) predicts a 3D heatmap per landmark; for 100 landmarks in a 512³ CT, the output tensor is 100 × 512³ ~ 13 GB requiring GPU. Reinforcement learning landmark detection (DQN, MARL — multi-agent RL) has each agent navigate the volume independently, with GPU parallelizing all agents simultaneously. GPU is essential for training on large 3D datasets and for achieving clinical inference speeds.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** decoding a landmark means scanning its *entire*
+heatmap volume for the peak — `O(V)` voxel reads per landmark, `V = 1.3 × 10⁸`
+for a 512³ grid, times up to 100+ landmarks. This full-volume **argmax reduction**
+is memory-bandwidth bound and embarrassingly parallel, both across landmarks and
+across voxels. We map **one thread block per landmark**, and its 256 threads
+stream the volume and reduce to the peak; a short soft-argmax window then refines
+it. (Training the network that *produces* the heatmaps is the other GPU-heavy
+half — out of scope here; see THEORY §7.)
 
 ## The algorithm in brief
 
-Stacked hourglass heatmap regression, 3D U-Net landmark heatmap, coordinate regression CNN, multi-agent RL landmark detection (MARL-DQN), iterative PatchMatch landmark search, cascade coarse-to-fine detection, anatomy-guided priors.
+- **Argmax** — per landmark, the integer voxel with the maximum heatmap value
+  (coarse localization); deterministic tie-break by lowest row-major index.
+- **Soft-argmax** — the intensity-weighted centroid over a `(2R+1)³` window around
+  the peak, giving a **sub-voxel** coordinate the integer grid cannot represent.
+- **Fixed-point reduction** — the centroid's weight sums are accumulated in
+  integers so the parallel `atomicAdd`s are order-independent → deterministic and
+  bit-exact against the CPU.
+- (Context: these decode the output of a stacked-hourglass / 3D U-Net heatmap
+  regressor; cascade coarse-to-fine and anatomy-guided priors sit on top in
+  production — see THEORY.)
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
 derivation.
@@ -70,20 +85,30 @@ Catalog dataset notes: VerSe vertebral challenge (https://github.com/anjany/vers
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt): one
+line per landmark giving the integer peak voxel, the sub-voxel coordinate, and
+the recovery error vs the planted ground truth, ending in `RESULT: PASS`. The
+program decodes on both the **GPU** (`src/kernels.cu`) and a **CPU reference**
+(`src/reference_cpu.cpp`) and asserts they agree — integer peaks *exactly*, sub-
+voxel coordinates within `1e-9` (only the final division can differ; see THEORY
+§5–6). That agreement is the correctness guarantee. Timing goes to **stderr** (a
+teaching artifact, not a benchmark) and is not part of the diffed output.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/landmark.h`](src/landmark.h) — the shared `__host__ __device__` decode
+   math (grid indexing, fixed-point weights, the centroid division) used
+   identically by CPU and GPU. Start here — it defines the "physics".
+2. [`src/main.cu`](src/main.cu) — loads heatmaps, runs CPU + GPU, verifies, reports.
+3. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the one-block-per-
+   landmark, two-phase idea.
+4. [`src/kernels.cu`](src/kernels.cu) — the decode kernel (argmax tree-reduction +
+   fixed-point soft-argmax atomics) and the host wrapper.
+5. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline
+   and the sample loader.
+6. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
 
 ## Prior art & further reading
 
@@ -94,15 +119,50 @@ reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-cuDNN (3D hourglass/U-Net); Tensor Cores for heatmap regression training; cuBLAS for regression head; GPU-resident augmentation (elastic deformation, CUDA Gaussian blur); batched 3D convolution for multi-landmark parallel heatmap prediction. --
+**One independent reduction per landmark:** `grid = L` blocks (one landmark
+each), `block = 256` threads that cooperate on that landmark's heatmap. Phase 1
+is a shared-memory **tree reduction** for the argmax; phase 2 uses **block-scoped
+integer `atomicAdd`** into shared accumulators for a deterministic soft-argmax
+(see `docs/PATTERNS.md`, cross of the `1.12` per-item and `11.09` atomic-reduce
+patterns). No external CUDA library is needed for the decode. In the *full*
+pipeline the catalog's libraries apply to the parts we omit: **cuDNN** + **Tensor
+Cores** for the 3D hourglass/U-Net convolutions, **cuBLAS** for a regression
+head, and GPU-resident augmentation (elastic deformation, Gaussian blur) — all
+covered in [THEORY.md](THEORY.md) §7.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Bigger volumes.** Generate a 64³ set with 26 landmarks
+   (`python scripts/make_synthetic.py --nx 64 --ny 64 --nz 64 --landmarks 26`)
+   and watch the GPU/CPU timing gap widen as `V` grows.
+2. **Warp-shuffle reduction.** Replace the shared-memory tree reduction in
+   `argmax_reduce` with `__shfl_down_sync` within each warp, then a final
+   cross-warp step. Measure the difference; confirm the result is unchanged.
+3. **Parabolic sub-voxel fit.** Swap soft-argmax for a 1-D parabola fit through
+   the peak and its two neighbours per axis. Compare recovery error to the
+   centroid — which is more accurate for a Gaussian blob, and why?
+4. **Tune the window radius.** Sweep `SOFTARGMAX_RADIUS` (1, 2, 3). A larger
+   window captures more of the blob but also more background — plot recovery
+   error vs radius.
+5. **Non-maximum suppression.** Extend the decoder to return the *top-K* peaks
+   per heatmap (for multi-instance landmarks), suppressing peaks within a radius
+   of a stronger one.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced scope (decode only).** This project implements the inference-time
+  *decode*, not the network that produces the heatmaps. Training a 3D U-Net
+  (cuDNN, Tensor Cores, a data pipeline) is deliberately out of scope; THEORY §7
+  describes the full system.
+- **Synthetic data.** The heatmaps are Gaussian blobs at known centres, generated
+  by `scripts/make_synthetic.py` — labeled synthetic everywhere. Real network
+  outputs are noisier, can be multi-modal, and may miss landmarks entirely.
+- **Soft-argmax bias.** The centroid over a finite window with Gaussian tails is
+  slightly biased (the demo's ~0.2-voxel recovery error is honest, not a bug); a
+  parabolic fit or larger radius reduces it (Exercises 3–4).
+- **Timing is a teaching artifact.** On this tiny sample the GPU is *slower* than
+  the CPU — launch and copy overhead dominate. The GPU's edge appears only at
+  realistic volume sizes; the printed milliseconds are illustrative, never a
+  benchmark claim.
+- **Not for clinical use.** Educational only. No output here may inform diagnosis,
+  measurement, or treatment.

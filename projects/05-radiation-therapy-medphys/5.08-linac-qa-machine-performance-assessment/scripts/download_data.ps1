@@ -1,12 +1,13 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Pointers to the FULL/real data (Windows)
 # ---------------------------------------------------------------------------
-# Project 5.8 -- Linac QA & Machine Performance Assessment   (template skeleton)
+# Project 5.8 -- Linac QA & Machine Performance Assessment
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and
+# NEVER bypasses credentials/registration. There is no single downloadable file
+# this demo consumes directly -- real linac-QA data is machine/vendor-specific
+# and often site-restricted -- so this script prints authoritative pointers and
+# defers to scripts/make_synthetic.py for the offline stand-in the demo uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,16 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 5.8 -- Linac QA & Machine Performance Assessment"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    AAPM TG-119 IMRT QA test cases; AAPM TG-218 tolerance criteria datasets; TCIA linac log datasets (verify URL); Varian/Elekta log file datasets from published QA studies; OpenMedPhys (https://github.com/jrkerns/awesome-medphys) reference datasets."
+Write-Host "This demo runs on a SYNTHETIC sample (data/sample/qa_planes_sample.txt)."
+Write-Host "No real dataset is fetched. Authoritative reference material:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  AAPM TG-119  IMRT QA test plans   : https://www.aapm.org/pubs/reports/RPT_82.pdf"
+Write-Host "  AAPM TG-218  tolerance limits     : https://doi.org/10.1002/mp.12810"
+Write-Host "  OpenMedPhys / awesome-medphys     : https://github.com/jrkerns/awesome-medphys"
+Write-Host "  Pylinac (example EPID/log data)   : https://github.com/jrkerns/pylinac"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Respect every dataset license; credentialed sets require registration"
+Write-Host "(this script does NOT bypass it). Regenerate the offline sample with:"
+Write-Host "    python scripts/make_synthetic.py            # 24x24 planes"
+Write-Host "    python scripts/make_synthetic.py --nx 128 --ny 128   # larger synthetic"

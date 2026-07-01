@@ -1,52 +1,51 @@
 // ===========================================================================
 // src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 4.33 -- Real-Time MRI Reconstruction   (template skeleton)
+// Project 4.33 : Real-Time MRI Reconstruction
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// WHAT THE GPU DOES HERE
+//   reconstruct_frames_gpu() reconstructs the WHOLE sliding-window movie on the
+//   device: for each frame it grids that frame's window of radial samples onto a
+//   Cartesian grid, inverse-FFTs with cuFFT, and deapodizes -- the exact parallel
+//   twin of reconstruct_frame_cpu() in reference_cpu.cpp.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   THE KEY GPU IDEA (PATTERNS.md "scatter + atomic reduce", section 1 row
+//   "clustering / centroid accumulation"):
+//     * GRIDDING is a SCATTER: each of the window's (win * n_ro) k-space samples is
+//       independent and spreads onto ~(W+1)^2 nearby grid cells. We give each sample
+//       its OWN thread; the thread computes the sample's position + density weight
+//       and atomically adds its Kaiser-Bessel-weighted contribution into the grid.
+//     * Many threads hit the SAME grid cell, so we accumulate in FIXED-POINT
+//       INTEGERS with atomicAdd (grid_core.h to_fixed). Integer atomics are
+//       associative -> the result is DETERMINISTIC and bit-identical to the CPU loop,
+//       unlike a nondeterministic float atomicAdd (PATTERNS.md section 3).
+//     * The inverse FFT is a solved problem, so we use cuFFT (kernels.cu documents
+//       exactly what it computes -- "no black box", CLAUDE.md section 6.1.6).
+//     * The FFT-shift and deapodization are per-pixel maps -> one thread per pixel.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: reference_cpu.h (the data model + the CPU twin). The math is in
+// grid_core.h; the "why" is in ../THEORY.md.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // RadialData, GriddingParams (shared problem model)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// ---------------------------------------------------------------------------
+// reconstruct_frames_gpu: reconstruct every sliding-window frame on the GPU.
+//   For frame f (f = 0..n_frames-1) the window starts at spoke f*stride and spans
+//   `win` spokes. The output is the concatenation of all frames' magnitude images:
+//   out_frames has size n_frames * n * n, row-major per frame.
+//     * d          : the loaded radial acquisition (samples, geometry, window plan)
+//     * out_frames : filled with n_frames magnitude images (each n*n), back to back
+//     * kernel_ms  : OUT, GPU time (ms, CUDA-event measured) for the whole movie --
+//                    a teaching artifact, printed to stderr (CLAUDE.md section 12)
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   Mirrors reconstruct_frame_cpu() per frame; main.cu runs both and asserts they
+//   agree. Because the grid accumulator is fixed-point, the agreement is EXACT for
+//   the gridding step; the only residual difference is cuFFT vs our radix-2 FFT.
+// ---------------------------------------------------------------------------
+void reconstruct_frames_gpu(const RadialData& d,
+                            std::vector<float>& out_frames,
+                            float* kernel_ms);

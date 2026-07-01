@@ -1,0 +1,41 @@
+# =============================================================================
+# plan_sample.txt  --  SYNTHETIC TG-43 brachytherapy plan (Project 5.7)
+# -----------------------------------------------------------------------------
+# NOT a real clinical or AAPM consensus dataset. Hand-crafted teaching values
+# that mirror src/main.cu's make_synthetic_plan() EXACTLY, so running with or
+# without this file gives identical stdout. See data/README.md for the format.
+# Lengths in cm; angles in degrees; '#' and blank lines are ignored.
+# =============================================================================
+
+# --- source: active length L [cm]   dose-rate constant Lambda [cGy/(h*U)] ---
+0.35   1.109
+
+# --- radial dose function g_L(r): number of samples, then (r  g) per line ----
+7
+0.25   0.980
+0.50   1.010
+1.00   1.000
+2.00   0.965
+3.00   0.910
+5.00   0.780
+7.00   0.650
+
+# --- anisotropy F(r,theta): grid dims (n_Fr  n_Ft) -----------------------------
+3   5
+# the anisotropy radii [cm]
+0.5   1.0   3.0
+# the anisotropy angles [deg]
+0.0   45.0   90.0   135.0   180.0
+# F rows, one per radius (n_Ft values each): F(r=0.5), F(r=1.0), F(r=3.0)
+0.62   0.90   1.00   0.90   0.62
+0.68   0.93   1.00   0.93   0.68
+0.75   0.95   1.00   0.95   0.75
+
+# --- dose grid: nx ny nz  ox oy oz  spacing  (origin = voxel(0,0,0) center) ---
+41   41   1   -2.0   -2.0   0.0   0.1
+
+# --- dwell positions: count, then (x y z weight) per line ---------------------
+3
+0.0   0.0   -0.5   1.0
+0.0   0.0    0.0   1.0
+0.0   0.0    0.5   1.0

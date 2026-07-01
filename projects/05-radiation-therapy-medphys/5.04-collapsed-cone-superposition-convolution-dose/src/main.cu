@@ -1,122 +1,127 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load CT, run CPU + GPU SC dose, verify, report
 // ---------------------------------------------------------------------------
-// Project 5.4 -- Collapsed-Cone / Superposition-Convolution Dose   (template skeleton)
+// Project 5.4 : Collapsed-Cone / Superposition-Convolution Dose  (2-D teaching model)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// THE 5-STEP SHAPE (every project in this repo follows it)
+//   1. Load the density grid + beam/kernel parameters (data/sample).
+//   2. CPU reference: TERMA ray-trace (terma_cpu) then collapsed-cone
+//      superposition (dose_cpu) -> the trusted integer dose grid.
+//   3. GPU: both stages in kernels.cu (dose_gpu) -> the same grid, computed with
+//      one thread per column (stage 1) and one thread per source voxel (stage 2).
+//   4. VERIFY: assert the GPU integer dose grid EQUALS the CPU grid exactly (the
+//      integer/fixed-point trick makes this an exact ==, not a tolerance), and
+//      cross-check the double-precision TERMA within a tiny FP tolerance.
+//   5. REPORT: a deterministic central-axis depth-dose profile to stdout; timing
+//      to stderr. stdout is what demo/run_demo diffs against expected_output.txt.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
-//
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then ccc_physics.h (the shared physics), kernels.cuh ->
+// kernels.cu (the GPU twins), reference_cpu.cpp (the serial baseline). The "why"
+// lives in ../THEORY.md.
 // ===========================================================================
 #include <cstdio>
+#include <cmath>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // dose_gpu (GPU path), CccParams, DoseProblem
+#include "reference_cpu.h"    // load_dose_problem, terma_cpu, dose_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "5.4";
 static const char* PROJECT_NAME = "Collapsed-Cone / Superposition-Convolution Dose";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// TERMA is computed in double precision by the SAME code on both sides, so it is
+// expected to match to the last bit; we still verify it within a tiny tolerance
+// in case a compiler contracts an FMA differently. The DOSE grid is INTEGER, so
+// it must match EXACTLY (== 0 mismatches) -- that is the headline check.
+static constexpr double TERMA_TOL = 1.0e-9;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load the problem -----------------------------------------------
+    const std::string path =
+        (argc > 1) ? argv[1] : "data/sample/phantom.txt";
+    DoseProblem prob;
+    try {
+        prob = load_dose_problem(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const CccParams& P = prob.P;
+    const int total = P.nx * P.ny;
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (both stages, timed) -----------------------------
+    std::vector<double>    terma_cpu_v;
+    std::vector<long long> dose_cpu_v;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    terma_cpu(prob, terma_cpu_v);
+    dose_cpu(prob, terma_cpu_v, dose_cpu_v);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU (both stages, kernel-timed inside the wrapper) -------------
+    std::vector<double>    terma_gpu_v;
+    std::vector<long long> dose_gpu_v;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    dose_gpu(prob, dose_gpu_v, terma_gpu_v, &gpu_kernel_ms);
 
     // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // (a) DOSE: exact integer equality (the determinism payoff, PATTERNS.md §3).
+    long long dose_mismatches = 0;
+    unsigned long long total_units = 0ULL;
+    for (int i = 0; i < total; ++i) {
+        if (dose_cpu_v[i] != dose_gpu_v[i]) ++dose_mismatches;
+        total_units += static_cast<unsigned long long>(dose_gpu_v[i]);
+    }
+    // (b) TERMA: double-precision cross-check within a tiny tolerance.
+    double terma_max_abs = 0.0;
+    for (int i = 0; i < total; ++i) {
+        const double d = std::fabs(terma_cpu_v[i] - terma_gpu_v[i]);
+        if (d > terma_max_abs) terma_max_abs = d;
+    }
+    const bool pass = (dose_mismatches == 0) && (terma_max_abs <= TERMA_TOL);
+
+    // Central beam column (integer-defined, so deterministic) for the profile.
+    const int cx = (P.beam_x0 + P.beam_x1) / 2;
+
+    // Peak-dose voxel (first-wins scan => deterministic tie-break).
+    int peak_idx = 0;
+    for (int i = 1; i < total; ++i)
+        if (dose_gpu_v[i] > dose_gpu_v[peak_idx]) peak_idx = i;
+    const int peak_x = peak_idx % P.nx;
+    const int peak_y = peak_idx / P.nx;
 
     // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("grid %dx%d voxels @ %.2f cm, mu/rho=%.4f cm^2/g, %d cones, a=%.3f /(g/cm^2)\n",
+                P.nx, P.ny, P.voxel_cm, P.mu_over_rho, P.n_cones, P.kernel_a);
+    std::printf("beam columns [%d..%d], dose_scale=%.0f units/dose\n",
+                P.beam_x0, P.beam_x1, P.dose_scale);
+    std::printf("total deposited = %llu dose-units; peak voxel (x=%d,y=%d)\n",
+                total_units, peak_x, peak_y);
+    // Central-axis depth-dose: integer dose-units down column cx, one per row.
+    // This is the classic PDD (percent-depth-dose) curve every med-phys learner
+    // recognizes: build-up near the surface, then exponential-ish falloff, with a
+    // kink at any density interface (lung/bone) -- the whole point of SC dose.
+    std::printf("central-axis depth-dose (column x=%d), dose-units per row y=0..%d:\n ",
+                cx, P.ny - 1);
+    for (int y = 0; y < P.ny; ++y)
+        std::printf(" %lld", dose_gpu_v[static_cast<size_t>(y) * P.nx + cx]);
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("RESULT: %s (GPU dose grid matches CPU exactly; TERMA within %.0e)\n",
+                pass ? "PASS" : "FAIL", TERMA_TOL);
 
     // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    std::fprintf(stderr, "[data]   source: %s\n", path.c_str());
+    std::fprintf(stderr, "[timing] CPU (TERMA+CCC): %.3f ms   GPU (TERMA+CCC): %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- a tiny grid is launch-bound; "
+                         "the GPU's edge grows toward clinical 512^3 volumes x ~400 cones.\n");
+    std::fprintf(stderr, "[verify] dose-grid mismatches = %lld (integer => atomics commute)\n",
+                 dose_mismatches);
+    std::fprintf(stderr, "[verify] TERMA max_abs_err = %.3e (tol %.1e)\n",
+                 terma_max_abs, TERMA_TOL);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

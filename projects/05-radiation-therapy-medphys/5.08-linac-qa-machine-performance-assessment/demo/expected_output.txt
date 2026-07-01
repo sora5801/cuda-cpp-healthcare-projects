@@ -1,5 +1,12 @@
 5.8 -- Linac QA & Machine Performance Assessment
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+plane: 24 x 24 px  spacing=2.00 mm  norm_dose=100.00
+gamma criteria: 3.0% / 3.0 mm  (search radius=5 px, low-dose cut=10%)
+gamma pass rate = 100.00%  (396/396 evaluated points pass, gamma<=1.0)
+worst gamma = 0.3333 at pixel (4,4)
+TG-218 action limit (>=95%): MEETS
+machine QA (measured plane, central axis):
+  CAX output   = 100.98
+  field width  = 38.00 mm (FWHM)
+  flatness     = 0.990 %
+  symmetry     = 1.961 %
+RESULT: PASS (GPU gamma map matches CPU exactly, tol=0)

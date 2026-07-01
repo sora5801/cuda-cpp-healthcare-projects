@@ -1,52 +1,62 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU compute interface for collapsed-cone SC dose
 // ---------------------------------------------------------------------------
-// Project 5.4 -- Collapsed-Cone / Superposition-Convolution Dose   (template skeleton)
+// Project 5.4 : Collapsed-Cone / Superposition-Convolution Dose  (2-D teaching model)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (two independent, embarrassingly-parallel stages)
+//   STAGE 1  TERMA ray-trace: the beam columns are independent, so we give ONE
+//            THREAD PER COLUMN. Each thread marches its column top-to-bottom,
+//            accumulating radiological depth and writing TERMA per voxel. No two
+//            threads touch the same voxel -> no atomics.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   STAGE 2  Collapsed-cone superposition: every source voxel spreads its TERMA
+//            along the n_cones cone rays. We give ONE THREAD PER SOURCE VOXEL;
+//            each thread walks all its cones and DEPOSITS into the dose grid.
+//            Different source voxels' rays overlap, so deposits use atomicAdd.
+//            The trick that keeps it deterministic: we accumulate INTEGER
+//            dose-units (ccc_physics.h::dose_to_units), and integer atomicAdd is
+//            associative -> the GPU grid is bit-identical to the CPU grid AND
+//            reproducible run to run (PATTERNS.md §3). A float atomicAdd would
+//            give a different sum every launch.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Both kernels call the SAME per-voxel physics that the CPU reference calls
+//   (ccc_physics.h), which is exactly why main.cu can assert the two dose grids
+//   are equal to the last integer.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// This header contains a __global__ declaration, so ONLY .cu files may include
+// it. The pure-C++ CPU reference uses reference_cpu.h instead.
+//
+// READ THIS AFTER: ccc_physics.h, util/cuda_check.cuh, util/timer.cuh.
+// Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // DoseProblem, CccParams (pure C++, safe in a .cu)
+
+// ---- Device kernels (documented fully at their definitions in kernels.cu) ----
+
+// STAGE 1: one thread per irradiated beam column; writes TERMA per voxel.
+__global__ void terma_kernel(CccParams P,
+                             const float* __restrict__ rho,   // [nx*ny] density map
+                             double* __restrict__ terma);      // [nx*ny] output TERMA
+
+// STAGE 2: one thread per source voxel; scatters collapsed-cone dose as integer
+//   dose-units into `dose_units` via atomicAdd.
+__global__ void ccc_kernel(CccParams P,
+                          const float* __restrict__ rho,          // [nx*ny] density map
+                          const double* __restrict__ terma,        // [nx*ny] TERMA from stage 1
+                          long long* __restrict__ dose_units);      // [nx*ny] integer dose tally
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// dose_gpu: run BOTH stages on the device and return the integer dose grid.
+//   prob        : the loaded problem (geometry + density map)
+//   dose_units  : host output, resized to nx*ny (integer dose-units)
+//   terma_out   : host output, resized to nx*ny (the stage-1 TERMA, for reporting
+//                 and for the optional stage-1 CPU/GPU cross-check in main.cu)
+//   kernel_ms   : out-param, total GPU kernel time (both stages), milliseconds
+void dose_gpu(const DoseProblem& prob,
+              std::vector<long long>& dose_units,
+              std::vector<double>& terma_out,
+              float* kernel_ms);

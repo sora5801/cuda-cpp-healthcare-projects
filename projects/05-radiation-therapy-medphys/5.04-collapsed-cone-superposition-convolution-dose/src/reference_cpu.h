@@ -1,31 +1,46 @@
 // ===========================================================================
-// src/reference_cpu.h  --  Prototype of the CPU reference computation
+// src/reference_cpu.h  --  Problem definition + CPU (serial) SC dose reference
 // ---------------------------------------------------------------------------
-// Project 5.4 -- Collapsed-Cone / Superposition-Convolution Dose   (template skeleton)
+// Project 5.4 : Collapsed-Cone / Superposition-Convolution Dose  (2-D teaching model)
 //
-// WHY A SEPARATE HEADER
-//   The CPU reference (reference_cpu.cpp) is compiled by the plain C++ compiler
-//   and must NOT see any CUDA/__global__ syntax, so its prototype cannot live in
-//   kernels.cuh. Both main.cu and reference_cpu.cpp include THIS pure-C++ header
-//   so they agree on the function signature.
+// The CPU reference runs the SAME arithmetic as the GPU kernels (both call the
+// shared per-voxel physics in ccc_physics.h), so the two dose grids must be
+// IDENTICAL down to the last integer dose-unit. This header is pure C++ (no
+// CUDA); kernels.cu / main.cu reuse DoseProblem and the loader.
 //
-// THE CONTRACT (this template's placeholder computation):
-//   SAXPY -- "Single-precision A*X Plus Y":  out[i] = a * x[i] + y[i].
-//   This is the canonical first GPU kernel; here it stands in as a buildable
-//   placeholder. TODO(impl): replace saxpy_cpu with this project's real
-//   reference computation, and update the prototype + callers accordingly.
-//
-//   The CPU reference exists for two reasons (CLAUDE.md section 5):
-//     (a) it is the readable baseline that makes the GPU speed-up legible, and
-//     (b) the demo runs BOTH and asserts they agree within tolerance.
+// Read this AFTER ccc_physics.h (the physics) and BEFORE reference_cpu.cpp.
 // ===========================================================================
 #pragma once
 
+#include <cstdint>
+#include <string>
 #include <vector>
 
-// Compute out = a*x + y on the CPU, element by element.
-//   x, y : input vectors of equal length n
-//   a    : the scalar multiplier
-//   out  : resized to n and filled with the result (output parameter)
-void saxpy_cpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out);
+#include "ccc_physics.h"   // CccParams + all per-voxel formulas (host+device safe)
+
+// A complete dose-calculation job: the geometry/physics plus the per-voxel
+// density map (the "CT"). rho is row-major, length nx*ny, relative to water.
+struct DoseProblem {
+    CccParams          P{};    // geometry + beam + kernel parameters
+    std::vector<float> rho;    // density map rho[y*nx + x], water-relative (>=0)
+};
+
+// Load a DoseProblem from the committed text sample (layout documented in
+// data/README.md). Throws std::runtime_error on any malformed / missing field so
+// the demo fails loudly instead of silently computing garbage.
+DoseProblem load_dose_problem(const std::string& path);
+
+// ---- The two computation stages, exposed so main.cu can time them and so the
+//      GPU twins in kernels.cu can be checked stage-by-stage. -----------------
+
+// STAGE 1 (CPU): ray-trace TERMA down each beam column into `terma` (size nx*ny,
+//   0 outside the beam columns). One vertical Siddon march per irradiated column.
+void terma_cpu(const DoseProblem& prob, std::vector<double>& terma);
+
+// STAGE 2 (CPU): collapse-cone superpose `terma` into the integer dose grid
+//   `dose_units` (size nx*ny). Each source voxel spreads its TERMA along all
+//   n_cones cone rays with density-scaled exponential decay; every deposit is
+//   quantized to integer dose-units (dose_to_units) so the result is exact and
+//   order-independent -- identical to the GPU's atomicAdd tally.
+void dose_cpu(const DoseProblem& prob, const std::vector<double>& terma,
+              std::vector<long long>& dose_units);

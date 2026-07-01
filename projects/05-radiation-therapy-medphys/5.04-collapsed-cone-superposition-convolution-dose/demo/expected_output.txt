@@ -1,5 +1,7 @@
 5.4 -- Collapsed-Cone / Superposition-Convolution Dose
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+grid 16x16 voxels @ 0.50 cm, mu/rho=0.0600 cm^2/g, 8 cones, a=1.200 /(g/cm^2)
+beam columns [6..9], dose_scale=1000000 units/dose
+total deposited = 281592180 dose-units; peak voxel (x=7,y=3)
+central-axis depth-dose (column x=7), dose-units per row y=0..15:
+  2640504 3833134 4253406 4689390 1480281 1534496 1524208 1449695 4495404 3949322 3643425 3296351 4415469 3981154 2422857 1712640
+RESULT: PASS (GPU dose grid matches CPU exactly; TERMA within 1e-09)
