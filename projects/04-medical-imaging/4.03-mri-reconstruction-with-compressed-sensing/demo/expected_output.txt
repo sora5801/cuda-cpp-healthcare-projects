@@ -1,5 +1,7 @@
 4.3 -- MRI Reconstruction with Compressed Sensing
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+under-sampled Cartesian CS-MRI (single slice, single coil), FISTA + cuFFT
+image: 32x32   sampled k-space: 348/1024 (34.0%)   lambda=0.0100   iters=60
+recon image RMS (CPU): 0.130112   peak: 0.923697
+error vs truth (RMS): zero-filled=0.051109  CS-reconstructed=0.005779
+CS improvement: 8.84x lower error than zero-filling
+RESULT: PASS (GPU cuFFT recon matches CPU FISTA within tol; CS beats zero-fill)

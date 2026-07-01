@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 4.2 -- Iterative / Model-Based CT Reconstruction   (template skeleton)
+# Project 4.2 : Iterative / Model-Based CT Reconstruction
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/iterative-model-based-ct-reconstruction.sln (CLAUDE.md §5). Both

@@ -6,103 +6,168 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
+> **Scope note (read first).** The real project is an **end-to-end *trained*
+> network** (E2E-VarNet) with millions of learned weights, trained on TB of raw
+> multi-coil k-space using cuDNN + tensor cores. That needs a deep-learning
+> framework and a training pipeline — out of scope for one self-contained CUDA C++
+> demo. This is therefore a **reduced-scope teaching version** (CLAUDE.md §13): it
+> keeps the *architecture* that makes learned reconstruction work — the **unrolled
+> iteration** — but replaces the *learned* pieces with **fixed, transparent
+> operators** (a Gaussian denoiser prior + k-space data consistency) and a direct
+> DFT instead of cuFFT. Nothing is trained; every number is measured or a fixed
+> constant we can explain. The full version is described in
+> [`THEORY.md`](THEORY.md) → "Where this sits in the real world".
 
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Accelerated MRI **under-samples** k-space (skips measurements) to scan faster, but
+a naive inverse transform of the missing data gives a blurry, aliased image.
+Learned reconstruction fixes this by *unrolling* an iterative optimizer into a
+fixed number of "cascade stages", each alternating an **image-domain denoiser**
+with a **frequency-domain data-consistency** step. This project reconstructs a
+small synthetic phantom from a 39%-sampled k-space using exactly that unrolled
+loop on the GPU, verifies the GPU against a CPU reference, and shows the
+reconstruction beating the zero-filled baseline.
 
 ## What this computes & why the GPU helps
 
-Learned reconstruction networks replace hand-crafted priors with data-driven mappings from under-sampled/degraded k-space or sinogram to fully-sampled images. End-to-end variational networks (E2E-VarNet) unroll gradient descent iterations as network layers, each with trainable sensitivity maps and refinement modules; these run entirely on GPU during both training (batch gradient descent) and inference. Training on large multi-coil raw k-space datasets (fastMRI) requires TB-scale data loading with GPU-pinned memory and mixed-precision FP16/BF16 tensor cores. Inference at 256² × 32 coils can achieve sub-100 ms per volume on a single A100, enabling real-time clinical deployment.
+Given measured (under-sampled) k-space `y` and a sampling mask `M`, we produce an
+image `x` by repeating, for `T` stages:
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+1. **Regularize (denoise) in image space:** `x ← x + λ (D(x) − x)`, where `D` is a
+   3×3 convolution. In a trained net `D` is a small CNN; here it is a fixed
+   Gaussian smoother. This is the exact per-pixel **stencil** a `cuDNN` conv layer
+   computes.
+2. **Data consistency in k-space:** transform `x` to k-space, overwrite the
+   **sampled** frequencies with the measured values `y`, transform back.
+
+**The GPU bottleneck that is parallelized:** both operations are
+**per-output-element independent** — every pixel's denoise reads only its 3×3
+neighbourhood, and every k-space/image sample is an independent reduction. A GPU
+gives each output element its own thread. In production the transform is a
+`cuFFT` (`O(N log N)`) and the denoiser is a tensor-core CNN, so a 256²×32-coil
+volume reconstructs in **sub-100 ms** — real-time. (We use a tiny image and a
+direct `O(N²)` DFT so the whole thing is a readable, no-black-box demo.)
 
 ## The algorithm in brief
 
-E2E-VarNet (variational network with learned sensitivity maps), unrolled ADMM-Net, deep cascade of CNN, U-Net in image domain, score-based diffusion models for MRI (DiffusionMBIR), plug-and-play denoising priors, recurrent unrolled networks.
+- **Zero-filled init:** inverse-DFT the measured k-space → the aliased start image.
+- **Unrolled cascade (×T stages):** denoiser stencil → forward DFT → data-consistency
+  mask-replace → inverse DFT.
+- **Denoiser `D`:** fixed normalized 1-2-1 Gaussian 3×3 kernel (clamp boundary).
+- **Transforms:** direct 2-D DFT / iDFT (stand-ins for `cuFFT`).
+- **Score:** RMS error of the reconstruction vs the ground-truth phantom, compared
+  against the zero-filled baseline.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+Full derivation, complexity, and the GPU thread-mapping are in [`THEORY.md`](THEORY.md).
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3** (the repo's
+ratified standard — see [`docs/BUILD_GUIDE.md`](../../../docs/BUILD_GUIDE.md)).
 
 1. Open `build/deep-learning-mri-ct-reconstruction.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/deep-learning-mri-ct-reconstruction.exe`.
+2. Select **`Release|x64`** (or `Debug|x64`).
+3. **Build** (Ctrl+Shift+B). The `.exe` lands in `build/x64/<Config>/`.
 
-Command-line alternative (Developer PowerShell):
+Command line (Developer PowerShell):
 
 ```powershell
-msbuild build\deep-learning-mri-ct-reconstruction.sln /p:Configuration=Release /p:Platform=x64
+& "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" `
+  build\deep-learning-mri-ct-reconstruction.sln /p:Configuration=Release /p:Platform=x64 /m
 ```
+
+An optional `CMakeLists.txt` builds the same sources on Linux/macOS/CI.
 
 ## Run the demo
 
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.ps1      # Windows
+```
+```bash
+./demo/run_demo.sh       # Linux/macOS (CMake build)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+It builds if needed, runs on `data/sample/mri_scan_sample.txt`, prints the result,
+and diffs `stdout` against `demo/expected_output.txt`. See [`demo/README.md`](demo/README.md).
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: fastMRI (https://fastmri.med.nyu.edu/) — raw multi-coil k-space, knee/brain, gold-standard reference; fastMRI+ with radiologist annotations (https://github.com/StanfordMIMI/fastMRI_plus); 2016 AAPM Low-Dose CT Challenge for CT reconstruction learning.
+The committed sample `data/sample/mri_scan_sample.txt` is **fully synthetic**: a
+24×24 phantom (disk + square on a dim background), its exact k-space, and a mask
+that keeps ~39% of frequencies. No patient data. Generated by
+`scripts/make_synthetic.py`. The real dataset is **fastMRI** (raw multi-coil
+k-space) — free for research **after** a data-use agreement, **not
+redistributable**; `scripts/download_data.*` prints the registration steps and
+never bypasses them. Provenance, exact layout, and licensing: [`data/README.md`](data/README.md).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+```
+image = 24 x 24, k-space samples kept = 225 / 576 (39.1%)
+RMS error vs truth : zero-filled = 0.102342  ->  reconstructed = 0.090973
+recon improved zero-filled by 11.1%
+recon diagonal samples (8): 0.0774 0.0689 0.5213 0.7610 1.0074 0.8723 0.0934 0.0862
+RESULT: PASS (GPU matches CPU within tol=1.0e-03)
+```
+
+**Success** = the reconstruction lowers RMS error vs the zero-filled baseline
+(here by 11%), **and** the GPU image matches the CPU reference within `1e-3`. The
+GPU-vs-CPU check works because both paths call the **same** `__host__ __device__`
+math (`recon_core.h`, `dft_core.h`); the tiny residual (`~8e-6`) is fused-multiply-add
+reassociation across the two executors, well inside tolerance (see THEORY).
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — the 5-step shape: load → CPU recon → GPU recon →
+   verify → report.
+2. [`src/kernels.cuh`](src/kernels.cuh) — the `Acquisition` / `ReconParams` types and
+   the `recon_gpu` interface.
+3. [`src/recon_core.h`](src/recon_core.h) — the shared per-pixel denoiser stencil
+   (`__host__ __device__`, so CPU and GPU agree exactly).
+4. [`src/dft_core.h`](src/dft_core.h) — the shared forward/inverse 2-D DFT.
+5. [`src/kernels.cu`](src/kernels.cu) — the three kernels + the host ping-pong
+   unroll loop.
+6. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the serial twin (baseline +
+   data plumbing).
 
 ## Prior art & further reading
 
-fastMRI baseline code (https://github.com/facebookresearch/fastMRI) — PyTorch E2E-VarNet, U-Net, evaluation scripts; BART (https://github.com/mrirecon/bart) — Deep MRI reconstruction via BART-learn module; Direct (https://github.com/directgroup/direct) — modular PyTorch framework for DL MRI reconstruction (multiple unrolled architectures); Hugging Face Medical Imaging (https://huggingface.co/datasets?search=mri) — model hub with pretrained MRI reconstruction checkpoints.
-
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
-
-## CUDA pattern used here
-
-cuDNN (conv layers), Tensor Cores (FP16 mixed precision), PyTorch CUDA autograd; pipeline: data → pinned host memory → GPU → network forward pass → loss → backward; multi-GPU DDP training via NCCL. --
+- **fastMRI baseline** — <https://github.com/facebookresearch/fastMRI>. PyTorch
+  E2E-VarNet, U-Net, and evaluation scripts. Read it to see the *trained* denoiser
+  and *learned* sensitivity maps our fixed operators stand in for.
+- **DIRECT** — <https://github.com/directgroup/direct>. A modular framework of many
+  unrolled architectures; good for comparing data-consistency formulations.
+- **BART** — <https://github.com/mrirecon/bart>. Classical + deep MRI recon; the
+  reference for how the transforms and coil combination are done properly.
+- **Hugging Face MRI models** — <https://huggingface.co/datasets?search=mri>.
+  Pretrained reconstruction checkpoints to inspect.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Swap the prior.** Replace the fixed Gaussian in `recon_core.h` with a
+   sharpening or total-variation step and see how RMS-after changes. (This is the
+   seam where a trained CNN plugs in.)
+2. **Sweep the schedule.** Change `RECON_STAGES` / `RECON_LAMBDA` in `main.cu`;
+   plot RMS vs stages. Where do diminishing returns start? Why can too-large λ hurt?
+3. **Change the acceleration.** Edit the mask in `reference_cpu.cpp` (keep 25% vs
+   50%). How does the zero-filled baseline and the recovered image degrade?
+4. **Go to `cuFFT`.** Replace the direct DFT kernels with `cuFFT` R2C/C2R and
+   compare timing at 128² and 256². This is the single biggest real-world speedup.
+5. **Shared-memory tiling.** Stage the 3×3 window in shared memory (like flagship
+   7.10) and measure the effect at larger image sizes.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Not a trained network.** The denoiser weights are **fixed constants**, not
+  learned; there are no sensitivity maps, no coils, no training loop. This teaches
+  the *unrolled structure*, not the *learning*.
+- **Direct DFT, not FFT.** `O(N²)` per transform — fine only because the image is
+  tiny. Real pipelines use `cuFFT`.
+- **Single-coil, magnitude-ish, noiseless synthetic phantom.** Real MRI is
+  multi-coil complex data with noise and non-Cartesian trajectories.
+- **Timing is a teaching artifact**, never a benchmark claim (CLAUDE.md §12). Here
+  the direct DFT dominates, so absolute numbers say little about a tuned pipeline.
+- **Educational only — not for clinical use.**

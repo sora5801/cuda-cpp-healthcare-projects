@@ -153,6 +153,11 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- Shared host+device math cores (HD-macro idiom): the ONE copy of the
+         per-pixel stencil and the DFT that both the CPU reference and the GPU
+         kernels call, so their results match exactly. -->
+    <ClInclude Include="..\src\recon_core.h" />
+    <ClInclude Include="..\src\dft_core.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

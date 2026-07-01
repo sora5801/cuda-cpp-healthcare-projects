@@ -2,8 +2,8 @@
   "id": "4.5",
   "id_padded": "4.05",
   "project": "PET Image Reconstruction",
-  "status": "todo",
-  "owner": "",
-  "branch": "",
-  "skeleton": true
+  "status": "done",
+  "owner": "worker",
+  "branch": "proj/4.05-pet-image-reconstruction",
+  "skeleton": false
 }

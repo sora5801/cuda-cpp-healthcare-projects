@@ -1,33 +1,66 @@
-# Demo — 4.4 Deep-Learning MRI/CT Reconstruction
+# Demo — Project 4.4 Deep-Learning MRI/CT Reconstruction
 
 ## What this demonstrates
 
-Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
+One command builds the project (if needed), runs it on the committed **synthetic**
+under-sampled MRI acquisition, and checks the result. It shows the whole point of
+learned / unrolled reconstruction in miniature:
 
-1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+- We keep only **39%** of k-space (~2.5× faster "scan").
+- A **zero-filled** reconstruction (inverse-transform the measured k-space
+  directly) is blurry and aliased — its RMS error vs the ground-truth phantom is
+  printed as the "before".
+- An **unrolled cascade** (12 stages of *denoise → data-consistency*) sharpens it,
+  lowering the RMS error by **~11%** — printed as the "after".
+- The **GPU** result is verified to match the **CPU** reference within `1e-3`.
 
-The program splits its output deliberately:
+> This is a **reduced-scope teaching version**: the denoiser is a *fixed* Gaussian
+> prior, not a trained CNN, and the transform is a direct DFT, not cuFFT. It
+> teaches the *structure* that trained methods (E2E-VarNet on fastMRI) share. See
+> `../THEORY.md`.
 
-- **stdout** is byte-for-byte deterministic and is diffed against
-  [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+## Run it
 
-## Expected result
+```powershell
+# Windows (PowerShell), from the project folder:
+./demo/run_demo.ps1
+```
+
+```bash
+# Linux/macOS (uses the optional CMake build):
+./demo/run_demo.sh
+```
+
+## What you should see
+
+`stdout` (deterministic; diffed against `expected_output.txt`):
 
 ```
 4.4 -- Deep-Learning MRI/CT Reconstruction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+[REDUCED-SCOPE teaching demo: fixed denoiser prior + k-space data consistency,
+ unrolled 12 stages. Not a trained network -- see THEORY.md.]
+image = 24 x 24, k-space samples kept = 225 / 576 (39.1%)
+RMS error vs truth : zero-filled = 0.102342  ->  reconstructed = 0.090973
+recon improved zero-filled by 11.1%
+recon diagonal samples (8): 0.0774 0.0689 0.5213 0.7610 1.0074 0.8723 0.0934 0.0862
+RESULT: PASS (GPU matches CPU within tol=1.0e-03)
 ```
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+`stderr` (shown, not diffed — timings vary run to run):
+
+```
+[data]   source: ...\data\sample\mri_scan_sample.txt  (24 x 24 image)
+[timing] CPU recon: <ms>   GPU stage kernels: <ms>
+[timing] teaching artifact only -- the direct O(N^2) DFT dominates; a real pipeline uses cuFFT ...
+[verify] max_abs_err(GPU,CPU) = <~8e-06>  (tolerance 1.0e-03)
+```
+
+## How the check works
+
+`stdout` carries only **deterministic** values (dimensions, the RMS-before/after,
+a 4-decimal fingerprint of 8 diagonal pixels, PASS/FAIL). We print 4 decimals on
+the pixels on purpose: the last one or two digits of a 6-decimal print wobble with
+the compiler's fused-multiply-add choices (Debug vs Release), which is exactly the
+floating-point lesson in `../THEORY.md`. Timings and the exact `max_abs_err` go to
+`stderr` so they never break the diff. The program's **exit code** (0 = GPU matches
+CPU) is a second gate the runner checks.

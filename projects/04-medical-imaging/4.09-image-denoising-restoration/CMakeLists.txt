@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 4.9 -- Image Denoising & Restoration   (template skeleton)
+# Project 4.9 : Image Denoising & Restoration  (Non-Local Means)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/image-denoising-restoration.sln (CLAUDE.md §5). Both

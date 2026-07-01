@@ -1,5 +1,7 @@
 4.8 -- Deformable Image Registration
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Demons DIR: 64x64 image, 120 iters, sigma=1.50 px (radius=5)
+SSD before = 51.8191
+SSD after  = 0.0643  (99.88% reduction)
+mean |displacement| = 4.5079 px
+u_x along center row (8 samples): 1.3479 2.2833 3.3400 4.3975 5.3793 6.4929 8.0949 10.5250
+RESULT: PASS (GPU field matches CPU within tol=1.0e-03 px)

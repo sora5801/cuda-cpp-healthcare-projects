@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real DIR dataset pointers (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 4.8 -- Deformable Image Registration   (template skeleton)
+# Project 4.8 : Deformable Image Registration (reduced-scope teaching version)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, and it NEVER bypasses
+# credentials or registration. This project ships its own SYNTHETIC image pair,
+# so there is nothing to auto-download; the real registration datasets below all
+# require agreeing to a data-use / challenge license, which you must do yourself.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,18 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 4.8 -- Deformable Image Registration"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    OASIS brain MRI (https://www.oasis-brains.org/) — used in Learn2Reg challenge; Learn2Reg 2022 challenge (https://learn2reg.grand-challenge.org/) — lung, brain, abdominal; DIR-Lab lung CT deformation dataset (https://dir-lab.com/); 4D-CT lung datasets for respiratory motion."
+echo "There is NOTHING to download for the demo: this project generates its"
+echo "own synthetic fixed/moving image pair (data/sample/dir_pair.txt)."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "REAL registration benchmarks (each needs you to register/accept a license):"
+echo "  Learn2Reg challenge : https://learn2reg.grand-challenge.org/"
+echo "      lung / brain / abdominal CT + MR pairs with evaluation."
+echo "  OASIS brain MRI     : https://www.oasis-brains.org/"
+echo "      the brain set used by the Learn2Reg inter-subject task."
+echo "  DIR-Lab lung CT     : https://dir-lab.com/"
+echo "      4D-CT respiratory pairs with expert landmarks (gold-standard TRE)."
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Do NOT commit any of the above into this repo (license + patient data)."
+echo "Convert a real image slice into this project's text format yourself, or"
+echo "make a bigger SYNTHETIC pair (no download, fully offline):"
+echo "  python scripts/make_synthetic.py --nx 128 --ny 128 --shift 8.0"

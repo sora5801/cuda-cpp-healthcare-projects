@@ -1,122 +1,147 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: run Demons DIR on CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 4.8 -- Deformable Image Registration   (template skeleton)
+// Project 4.8 : Deformable Image Registration (reduced-scope teaching version)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the shape EVERY project in this repo follows):
+//   1. Load the fixed/moving image pair (data/sample).
+//   2. CPU reference Demons (reference_cpu.cpp)  -> trusted displacement field.
+//   3. GPU Demons (kernels.cu)                    -> identical per-pixel physics.
+//   4. VERIFY: the GPU field matches the CPU field within a documented tolerance.
+//   5. REPORT: deterministic registration quality (SSD before/after) to stdout;
+//              timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// WHY THE STDOUT IS DETERMINISTIC
+//   Every number printed to stdout is derived from the CPU field (a serial
+//   double-precision computation that is bit-identical every run) and printed at
+//   FIXED precision. The GPU field is only used for the PASS/FAIL verdict (a
+//   thresholded comparison), never printed as a raw float -- so demo/run_demo
+//   can diff stdout against expected_output.txt. Run-varying numbers (timings,
+//   the exact GPU-vs-CPU difference) go to stderr, which is shown but not diffed.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+// WHAT SUCCESS LOOKS LIKE
+//   The moving image is a deformed copy of the fixed image (a shifted/warped
+//   bright disk, see data/README.md). A correct DIR drives the SSD between the
+//   WARPED moving image and the fixed image far below the initial SSD -- i.e.
+//   the disk "snaps" onto the target. We report both, and the percent reduction.
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then demons.h (the per-pixel physics), kernels.cu, and
+// reference_cpu.cpp for the serial baseline. See ../THEORY.md for the "why".
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // register_gpu, DemonsParams, DirImages
+#include "reference_cpu.h"    // load_images, register_cpu, warp_image, ssd
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "4.8";
 static const char* PROJECT_NAME = "Deformable Image Registration";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Correctness tolerance on the DISPLACEMENT field (pixels). Demons is a long
+// iterative solver: over hundreds of iterations the GPU's fused-multiply-add and
+// the host compiler's arithmetic diverge by ~1e-5 even in double precision
+// (PATTERNS.md §4). Displacements here are O(1-5) pixels, so 1e-3 pixel is far
+// below anything visible -- "the same deformation" -- yet honest about the FP
+// drift. We do NOT claim bit-identical fields.
+static constexpr double TOLERANCE = 1.0e-3;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// The Demons run parameters. Chosen so the demo converges visibly in a fraction
+// of a second on the tiny sample while exercising all three kernels many times.
+static DemonsParams make_params(int nx, int ny) {
+    DemonsParams P;
+    P.nx      = nx;
+    P.ny      = ny;
+    P.iters   = 120;      // outer iterations (enough to register the sample)
+    P.sigma   = 1.5;      // Gaussian regularization width, in pixels
+    P.radius  = 5;        // kernel half-width (>= ceil(3*sigma)=5): captures ~99%
+    P.epsilon = 1.0e-6;   // force-denominator floor (avoids 0/0 in flat regions)
+    return P;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load the image pair -------------------------------------------
+    const std::string path =
+        (argc > 1) ? argv[1] : "data/sample/dir_pair.txt";
+    DirImages im;
+    try {
+        im = load_images(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const DemonsParams P = make_params(im.nx, im.ny);
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // Initial dissimilarity: SSD between the UNREGISTERED moving image and the
+    // fixed image. This is the "before" number the method must beat.
+    const double ssd_before = ssd(im.fixed, im.moving);
+
+    // ---- 2. CPU reference Demons (timed) ----------------------------------
+    std::vector<double> ux_cpu, uy_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    register_cpu(im, P, ux_cpu, uy_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // Warp the moving image by the CPU field and measure SSD-after (the number
+    // we report -- deterministic because it comes from the serial CPU field).
+    std::vector<double> warped_cpu;
+    warp_image(im, ux_cpu, uy_cpu, warped_cpu);
+    const double ssd_after = ssd(im.fixed, warped_cpu);
+
+    // ---- 3. GPU Demons (loop timed inside the wrapper) --------------------
+    std::vector<double> ux_gpu, uy_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    register_gpu(im, P, ux_gpu, uy_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (GPU displacement field agrees with CPU) ---------------
+    double worst = 0.0;   // largest per-component displacement difference (px)
+    for (std::size_t i = 0; i < ux_cpu.size(); ++i) {
+        worst = std::fmax(worst, std::fabs(ux_cpu[i] - ux_gpu[i]));
+        worst = std::fmax(worst, std::fabs(uy_cpu[i] - uy_gpu[i]));
+    }
+    const bool pass = worst <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // Mean displacement magnitude of the (CPU) field -- a deterministic summary
+    // of "how much the image had to move". Reported to stdout.
+    double disp_sum = 0.0;
+    for (std::size_t i = 0; i < ux_cpu.size(); ++i)
+        disp_sum += std::sqrt(ux_cpu[i] * ux_cpu[i] + uy_cpu[i] * uy_cpu[i]);
+    const double mean_disp = disp_sum / static_cast<double>(ux_cpu.size());
+
+    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) ----------
+    const double pct = 100.0 * (ssd_before - ssd_after) / ssd_before;
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("Demons DIR: %dx%d image, %d iters, sigma=%.2f px (radius=%d)\n",
+                im.nx, im.ny, P.iters, P.sigma, P.radius);
+    std::printf("SSD before = %.4f\n", ssd_before);
+    std::printf("SSD after  = %.4f  (%.2f%% reduction)\n", ssd_after, pct);
+    std::printf("mean |displacement| = %.4f px\n", mean_disp);
+    // A short deterministic profile: the x-displacement sampled along the middle
+    // row lets the learner see the field's shape (it should peak where the disk
+    // moved most). Printed at fixed precision from the CPU field.
+    std::printf("u_x along center row (8 samples):");
+    const int cy = im.ny / 2;
+    for (int s = 0; s < 8; ++s) {
+        const int x = (s * (im.nx - 1)) / 7;
+        std::printf(" %.4f", ux_cpu[cy * im.nx + x]);
+    }
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("RESULT: %s (GPU field matches CPU within tol=1.0e-03 px)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
+    std::fprintf(stderr, "[data]   source: %s  (%d x %d pixels)\n",
+                 path.c_str(), im.nx, im.ny);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact -- the GPU's edge grows with "
+                         "image/volume size; a real 256^3 DIR is ~10^7 voxels x "
+                         "hundreds of iters, where the GPU is essential.\n");
+    std::fprintf(stderr, "[verify] worst displacement diff = %.3e px  (tolerance %.1e)\n",
+                 worst, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

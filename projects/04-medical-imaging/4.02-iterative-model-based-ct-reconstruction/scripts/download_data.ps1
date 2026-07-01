@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 4.2 -- Iterative / Model-Based CT Reconstruction   (template skeleton)
+# Project 4.2 : Iterative / Model-Based CT Reconstruction
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# licensing, and NEVER bypasses credentials/registration. The real low-dose CT
+# datasets for this project are all credentialed / non-redistributable, so this
+# script prints instructions + links and defers to scripts/make_synthetic.py for
+# the offline synthetic stand-in the demo actually uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,19 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.2 -- Iterative / Model-Based CT Reconstruction"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    2016 AAPM Low-Dose CT Grand Challenge (https://www.aapm.org/grandchallenge/lowdosect/); Mayo Clinic Low-Dose CT dataset (available via TCIA); LIDC-IDRI via TCIA (https://www.cancerimagingarchive.net/)."
+Write-Host "The real datasets for this project are CREDENTIALED and NOT redistributable."
+Write-Host "This script does not (and must not) bypass their registration. To obtain them:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  * 2016 AAPM Low-Dose CT Grand Challenge (paired low/normal-dose scans)"
+Write-Host "      https://www.aapm.org/grandchallenge/lowdosect/   (register for access)"
+Write-Host "  * Mayo Clinic Low-Dose CT  -- via TCIA (The Cancer Imaging Archive)"
+Write-Host "  * LIDC-IDRI CT scans       -- via TCIA, under a data-use agreement"
+Write-Host "      https://www.cancerimagingarchive.net/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "After downloading (with your own credentials), convert a scan's sinogram to"
+Write-Host "the text format documented in data/README.md."
+Write-Host ""
+Write-Host "The committed synthetic sample (data/sample/sinogram_sample.txt) is enough to"
+Write-Host "run the demo offline. For a larger SYNTHETIC problem, run:"
+Write-Host "    python scripts/make_synthetic.py --angles 90 --det 127 --img 96 --iters 80"

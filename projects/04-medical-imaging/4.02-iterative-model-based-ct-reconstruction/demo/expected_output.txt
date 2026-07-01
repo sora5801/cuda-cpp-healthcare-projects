@@ -1,5 +1,8 @@
 4.2 -- Iterative / Model-Based CT Reconstruction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+SIRT+TV: 48 angles x 67 detectors -> 48x48 image, 60 iterations
+lambda = 1.500  tv_weight = 0.0100
+center pixel value = 1.0091
+max reconstructed value = 1.6538 at (px,py)=(24,33)
+central row profile (8 samples): -0.0074 0.2525 1.1263 1.0324 1.0009 0.9493 0.7014 0.0141
+reconstruction RMSE vs truth = 0.1043
+RESULT: PASS (GPU matches CPU within tol=2.0e-03)

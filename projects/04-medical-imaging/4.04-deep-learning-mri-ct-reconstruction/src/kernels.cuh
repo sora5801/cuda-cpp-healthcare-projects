@@ -1,52 +1,72 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  Public interface of the GPU reconstruction path
 // ---------------------------------------------------------------------------
-// Project 4.4 -- Deep-Learning MRI/CT Reconstruction   (template skeleton)
+// Project 4.4 : Deep-Learning MRI/CT Reconstruction  (REDUCED-SCOPE TEACHING VERSION)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// WHAT THIS DECLARES
+//   * Acquisition -- the "scan": image dims, the fully-sampled ground-truth
+//     image (for scoring only), the UNDER-SAMPLED k-space we actually measured,
+//     and the binary sampling MASK that says which frequencies were kept.
+//   * ReconParams -- the unrolled-network hyper-parameters (stage count, the
+//     denoiser strength lambda). A trained net would learn these; we fix them.
+//   * recon_gpu() -- runs the whole unrolled reconstruction on the GPU and hands
+//     back the reconstructed image plus a GPU-measured timing.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The GPU path is the twin of recon_cpu() (reference_cpu.cpp): identical math,
+//   different executor. main.cu runs both and verifies they agree.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   NOTE: this header is included only by .cu translation units. It has no
+//   __global__ declarations (the kernels are file-local to kernels.cu), so it is
+//   plain C++ -- but recon_cpu()'s declaration lives in reference_cpu.h to keep
+//   the host-compiled reference free of any CUDA dependency.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: main.cu. READ BEFORE: kernels.cu (the implementations).
+// The per-pixel math is in recon_core.h (stencil) and dft_core.h (transform).
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ---------------------------------------------------------------------------
+// Acquisition: everything the reconstruction is given about one "scan".
+//   In real MRI the scanner measures k-space along a trajectory that SKIPS lines
+//   to go faster (acceleration). We model that with a per-frequency binary mask:
+//   mask[k]==1 means "this frequency was measured", 0 means "skipped".
+//   All arrays are row-major, length ny*nx, stored as structure-of-arrays so
+//   that consecutive threads touch consecutive memory (coalesced GPU access).
+// ---------------------------------------------------------------------------
+struct Acquisition {
+    int ny = 0;                    // image height in pixels
+    int nx = 0;                    // image width in pixels
+    std::vector<float> truth;      // [ny*nx] ground-truth image (scoring ONLY;
+                                   //   a real scan never has this -- synthetic here)
+    std::vector<float> kmeas_re;   // [ny*nx] measured k-space, real part
+    std::vector<float> kmeas_im;   // [ny*nx] measured k-space, imag part
+    std::vector<int>   mask;       // [ny*nx] 1 = frequency sampled, 0 = skipped
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+    int n() const { return ny * nx; }   // total pixel/frequency count
+};
+
+// ---------------------------------------------------------------------------
+// ReconParams: the fixed "network" hyper-parameters of the unrolled recon.
+//   stages : how many cascade stages (each = denoise + data-consistency). More
+//            stages -> sharper reconstruction, up to a point (see Exercises).
+//   lambda : denoiser strength in [0,1] (how far each stage moves toward D(x)).
+//   A trained E2E-VarNet would LEARN both the number of unrolls and per-stage
+//   weights; we fix them so the demo is deterministic and explainable.
+// ---------------------------------------------------------------------------
+struct ReconParams {
+    int   stages = 12;
+    float lambda = 0.5f;
+};
+
+// ---------------------------------------------------------------------------
+// recon_gpu: run the full unrolled reconstruction on the GPU.
+//   Inputs : acq (measurement + mask), p (hyper-parameters).
+//   Output : recon -- [ny*nx] reconstructed image (row-major), resized inside.
+//   Out-param kernel_ms -- total GPU time for all cascade-stage kernels (CUDA
+//            events), a teaching artifact only (CLAUDE.md section 12).
+//   The GPU result is verified against recon_cpu() in main.cu.
+// ---------------------------------------------------------------------------
+void recon_gpu(const Acquisition& acq, const ReconParams& p,
+               std::vector<float>& recon, float* kernel_ms);

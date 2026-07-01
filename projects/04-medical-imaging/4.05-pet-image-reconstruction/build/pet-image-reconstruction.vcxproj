@@ -153,6 +153,9 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- Shared __host__ __device__ projection geometry, included by BOTH the CPU
+         reference and the CUDA kernels so their math matches (see pet_geometry.h). -->
+    <ClInclude Include="..\src\pet_geometry.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

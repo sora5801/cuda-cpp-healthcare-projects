@@ -1,5 +1,8 @@
 4.4 -- Deep-Learning MRI/CT Reconstruction
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+[REDUCED-SCOPE teaching demo: fixed denoiser prior + k-space data consistency,
+ unrolled 12 stages. Not a trained network -- see THEORY.md.]
+image = 24 x 24, k-space samples kept = 225 / 576 (39.1%)
+RMS error vs truth : zero-filled = 0.102342  ->  reconstructed = 0.090973
+recon improved zero-filled by 11.1%
+recon diagonal samples (8): 0.0774 0.0689 0.5213 0.7610 1.0074 0.8723 0.0934 0.0862
+RESULT: PASS (GPU matches CPU within tol=1.0e-03)

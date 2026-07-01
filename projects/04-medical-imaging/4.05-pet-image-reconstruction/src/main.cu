@@ -1,122 +1,115 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load counts, run MLEM on CPU + GPU, verify
 // ---------------------------------------------------------------------------
-// Project 4.5 -- PET Image Reconstruction   (template skeleton)
+// Project 4.5 : PET Image Reconstruction (MLEM / OS-EM)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the house style, cf. 4.01 / 12.01):
+//   1. Load the measured sinogram + geometry (data/sample).
+//   2. Precompute trig + the sensitivity image A^T 1 (shared by both solvers).
+//   3a. CPU reference MLEM (reference_cpu.cpp) -- the trusted baseline.
+//   3b. GPU MLEM (kernels.cu) -- forward/back projection gathers, no atomics.
+//   4. VERIFY: the GPU image matches the CPU image within tolerance.
+//   5. REPORT: deterministic image samples -> stdout; timing -> stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// WHY THE SENSITIVITY IS COMPUTED ONCE, ON THE HOST
+//   s_j = A^T 1 does not depend on the current image, so it is computed a single
+//   time before iterating and reused by every MLEM step on both sides. Doing it
+//   once (and identically for CPU and GPU) keeps the two solvers using the exact
+//   same normalizer -- one less source of divergence.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+// STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it against
+// demo/expected_output.txt; timings (run-to-run varying) go to STDERR.
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then pet_geometry.h (shared math), reference_cpu.*,
+// then kernels.cuh -> kernels.cu. See ../THEORY.md for the "why".
 // ===========================================================================
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // mlem_gpu, PetProblem, PetGeom
+#include "reference_cpu.h"    // load_pet, compute_trig, sensitivity_cpu, mlem_cpu
+#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "4.5";
-static const char* PROJECT_NAME = "PET Image Reconstruction";
+static const char* PROJECT_NAME = "PET Image Reconstruction (MLEM)";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// MLEM sums many interpolated projection samples over many iterations. The CPU
+// (pixel-driven scatter) and GPU (LOR-parallel gather) accumulate the SAME terms
+// in a different order, so they differ only by float rounding / FMA contraction
+// that compounds slowly over iterations. A small absolute tolerance is the honest
+// choice (docs/PATTERNS.md §4, same reasoning as 4.01 / 10.02).
+static constexpr double TOLERANCE = 1.0e-3;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Default iteration count if the sample file's header advises none (>0 wins).
+static constexpr int DEFAULT_ITERS = 30;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/sinogram_sample.txt";
+    PetProblem p;
+    int file_iters = 0;
+    try {
+        p = load_pet(path, file_iters);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const int iters = (file_iters > 0) ? file_iters : DEFAULT_ITERS;
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. Shared setup: trig + sensitivity image ------------------------
+    compute_trig(p);
+    std::vector<float> sens;
+    sensitivity_cpu(p, sens);
+
+    // ---- 3a. CPU reference MLEM (timed) -----------------------------------
+    std::vector<float> img_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    mlem_cpu(p, sens, iters, img_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3b. GPU MLEM (kernel time summed over iterations) ----------------
+    std::vector<float> img_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    mlem_gpu(p, sens, iters, img_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify ---------------------------------------------------------
+    const double err = util::max_abs_err(img_cpu, img_gpu);
+    const bool pass = err <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    const int N = p.geom.N;
+    const int cpix = (N / 2) * N + (N / 2);       // center pixel (the hot disc)
+    // Peak of the reconstruction and where it sits (ties -> lowest index).
+    float vmax = img_gpu[0]; int amax = 0;
+    for (std::size_t i = 1; i < img_gpu.size(); ++i)
+        if (img_gpu[i] > vmax) { vmax = img_gpu[i]; amax = static_cast<int>(i); }
+    // Total activity = sum of the reconstructed image (roughly conserved by MLEM).
+    double total = 0.0;
+    for (float v : img_gpu) total += v;
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("MLEM: %d iterations, %d angles x %d detectors -> %dx%d image\n",
+                iters, p.geom.K, p.geom.D, N, N);
+    std::printf("center pixel activity = %.4f\n", img_gpu[cpix]);
+    std::printf("peak activity = %.4f at (px,py)=(%d,%d)\n", vmax, amax % N, amax / N);
+    std::printf("total reconstructed activity = %.4f\n", total);
+    std::printf("central row profile (8 samples):");
+    for (int s = 0; s < 8; ++s) {
+        const int px = (s * (N - 1)) / 7;         // 8 evenly spaced columns
+        std::printf(" %.4f", img_gpu[(N / 2) * N + px]);
+    }
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-03)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d x %d sinogram -> %dx%d image, %d iters)\n",
+                 path.c_str(), p.geom.K, p.geom.D, N, N, iters);
+    std::fprintf(stderr, "[timing] CPU MLEM: %.3f ms   GPU MLEM: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- per-iteration projection cost, and thus the "
+                         "GPU's edge, grows with image size, angle count, and iterations.\n");
+    std::fprintf(stderr, "[verify] max_abs_err = %.3e  (tolerance %.1e)\n", err, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

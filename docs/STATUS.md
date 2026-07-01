@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 117/301 projects done (38.9%) | todo 184 | in-progress 0 | missing 0
+**Progress:** 123/301 projects done (40.9%) | todo 178 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 45 | 0 | 22 |
-| 🟡 Intermediate | 206 | 66 | 0 | 140 |
+| 🟡 Intermediate | 206 | 72 | 0 | 134 |
 | 🔴 Advanced | 28 | 6 | 0 | 22 |
 
 ## 1. Drug Discovery & Molecular Design  (35/35 done)
@@ -125,19 +125,19 @@
 | 3.29 | Motif Finding in Genomic Sequences | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 3.30 | Pangenome Graph Construction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 
-## 4. Medical Imaging & Image Reconstruction  (7/33 done)
+## 4. Medical Imaging & Image Reconstruction  (13/33 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
 | 4.01 | CT Reconstruction — Filtered Backprojection | 🟢 Beginner | Established | [x] done | lead | main |
-| 4.02 | Iterative / Model-Based CT Reconstruction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 4.03 | MRI Reconstruction with Compressed Sensing | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 4.04 | Deep-Learning MRI/CT Reconstruction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 4.05 | PET Image Reconstruction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 4.02 | Iterative / Model-Based CT Reconstruction | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 4.03 | MRI Reconstruction with Compressed Sensing | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 4.04 | Deep-Learning MRI/CT Reconstruction | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 4.05 | PET Image Reconstruction | 🟡 Intermediate | Active R&D | [x] done | worker | proj/4.05-pet-image-reconstruction |
 | 4.06 | Ultrasound Beamforming | 🟢 Beginner | Established | [x] done | - | - |
 | 4.07 | Medical Image Segmentation (Deep Learning) | 🟢 Beginner | Established | [x] done | - | - |
-| 4.08 | Deformable Image Registration | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 4.09 | Image Denoising & Restoration | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 4.08 | Deformable Image Registration | 🟡 Intermediate | Active R&D | [x] done | worker | - |
+| 4.09 | Image Denoising & Restoration | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 4.10 | Super-Resolution Microscopy Reconstruction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 4.11 | Digital Pathology / Whole-Slide Image Analysis | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 4.12 | Optical Coherence Tomography Processing | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

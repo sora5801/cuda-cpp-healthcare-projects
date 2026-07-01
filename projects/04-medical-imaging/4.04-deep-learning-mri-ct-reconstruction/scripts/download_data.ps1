@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 4.4 -- Deep-Learning MRI/CT Reconstruction   (template skeleton)
+# Project 4.4 : Deep-Learning MRI/CT Reconstruction  (REDUCED-SCOPE TEACHING VERSION)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints the source URL +
+# expected size, and NEVER bypasses credentials/registration. fastMRI requires a
+# signed data-use agreement, so this script only prints instructions + links and
+# defers to scripts/make_synthetic.py for an offline, synthetic stand-in that the
+# demo actually runs on.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -14,20 +15,22 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $DataDir = Join-Path $ProjectRoot "data"
 
-Write-Host "[download_data] Project 4.4 -- Deep-Learning MRI/CT Reconstruction"
+Write-Host "[download_data] Project 4.4 : Deep-Learning MRI/CT Reconstruction"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    fastMRI (https://fastmri.med.nyu.edu/) — raw multi-coil k-space, knee/brain, gold-standard reference; fastMRI+ with radiologist annotations (https://github.com/StanfordMIMI/fastMRI_plus); 2016 AAPM Low-Dose CT Challenge for CT reconstruction learning."
+Write-Host "This demo ships a tiny SYNTHETIC acquisition (data/sample/mri_scan_sample.txt);"
+Write-Host "no download is required to build or run it."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "To study REAL learned reconstruction, get raw multi-coil k-space from fastMRI:"
+Write-Host "  1) Register + accept the data-use agreement at:  https://fastmri.med.nyu.edu/"
+Write-Host "     (NYU Langone; free for research. We do NOT and CANNOT bypass this step.)"
+Write-Host "  2) You receive time-limited download links by email. The knee/brain single- and"
+Write-Host "     multi-coil sets are large (tens to hundreds of GB) and are .h5 (HDF5) files."
+Write-Host "  3) fastMRI+ radiologist annotations: https://github.com/StanfordMIMI/fastMRI_plus"
+Write-Host "  4) For learned CT instead, see the 2016 AAPM Low-Dose CT Grand Challenge."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Reading .h5 k-space + training an E2E-VarNet is a PyTorch task; this C++ demo"
+Write-Host "teaches the unrolled-reconstruction STRUCTURE on a small synthetic phantom instead."
+Write-Host ""
+Write-Host "Regenerate / resize the synthetic sample with:"
+Write-Host "    python scripts/make_synthetic.py --ny 32 --nx 32"

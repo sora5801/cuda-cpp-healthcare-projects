@@ -1,12 +1,14 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real DIR dataset pointers (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 4.8 -- Deformable Image Registration   (template skeleton)
+# Project 4.8 : Deformable Image Registration (reduced-scope teaching version)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, and it NEVER bypasses
+# credentials or registration. This project ships its own SYNTHETIC image pair,
+# so there is nothing to auto-download; the real registration datasets below all
+# require agreeing to a data-use / challenge license, which you must do yourself.
+# We print the links + instructions and defer to make_synthetic.py for offline
+# runs -- a bigger synthetic pair is one command away.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +18,19 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 4.8 -- Deformable Image Registration"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    OASIS brain MRI (https://www.oasis-brains.org/) — used in Learn2Reg challenge; Learn2Reg 2022 challenge (https://learn2reg.grand-challenge.org/) — lung, brain, abdominal; DIR-Lab lung CT deformation dataset (https://dir-lab.com/); 4D-CT lung datasets for respiratory motion."
+Write-Host "There is NOTHING to download for the demo: this project generates its"
+Write-Host "own synthetic fixed/moving image pair (data/sample/dir_pair.txt)."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "REAL registration benchmarks (each needs you to register/accept a license):"
+Write-Host "  Learn2Reg challenge : https://learn2reg.grand-challenge.org/"
+Write-Host "      lung / brain / abdominal CT + MR pairs with evaluation."
+Write-Host "  OASIS brain MRI     : https://www.oasis-brains.org/"
+Write-Host "      the brain set used by the Learn2Reg inter-subject task."
+Write-Host "  DIR-Lab lung CT     : https://dir-lab.com/"
+Write-Host "      4D-CT respiratory pairs with expert landmarks (gold-standard TRE)."
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Do NOT commit any of the above into this repo (license + patient data)."
+Write-Host "Convert a real image slice into this project's text format yourself, or"
+Write-Host "make a bigger SYNTHETIC pair (no download, fully offline):"
+Write-Host "  python scripts/make_synthetic.py --nx 128 --ny 128 --shift 8.0"

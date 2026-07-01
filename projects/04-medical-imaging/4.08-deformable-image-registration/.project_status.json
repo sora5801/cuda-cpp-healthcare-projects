@@ -2,8 +2,8 @@
   "id": "4.8",
   "id_padded": "4.08",
   "project": "Deformable Image Registration",
-  "status": "todo",
-  "owner": "",
+  "status": "done",
+  "owner": "worker",
   "branch": "",
-  "skeleton": true
+  "skeleton": false
 }

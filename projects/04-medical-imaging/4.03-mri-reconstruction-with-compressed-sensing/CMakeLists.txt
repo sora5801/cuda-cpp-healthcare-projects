@@ -29,5 +29,11 @@ add_executable(mri-reconstruction-with-compressed-sensing
   src/reference_cpu.cpp
 )
 
-# So #include "kernels.cuh" and "util/..." resolve from src/.
+# So #include "kernels.cuh", "cs_core.h", and "util/..." resolve from src/.
 target_include_directories(mri-reconstruction-with-compressed-sensing PRIVATE src)
+
+# Link NVIDIA's cuFFT: src/kernels.cu uses cufftPlan2d/cufftExecC2C for the 2D
+# forward/inverse FFTs at the heart of each FISTA iteration. CUDA::cufft is the
+# imported target that CUDAToolkit exposes (mirrors cufft.lib in the .vcxproj).
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(mri-reconstruction-with-compressed-sensing PRIVATE CUDA::cufft)

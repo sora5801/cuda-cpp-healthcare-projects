@@ -1,52 +1,70 @@
 // ===========================================================================
 // src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 4.8 -- Deformable Image Registration   (template skeleton)
+// Project 4.8 : Deformable Image Registration (reduced-scope teaching version)
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   The "what the GPU offers" header. main.cu calls register_gpu(); kernels.cu
+//   implements the host wrapper plus three device kernels. Included only by .cu
+//   translation units (it declares __global__ kernels, so the plain C++ compiler
+//   must never see it -- that is why the CPU reference lives in reference_cpu.h).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+// THE BIG IDEA (Thirion's Demons on the GPU)
+//   One Demons iteration is three data-parallel passes, each ONE THREAD PER
+//   PIXEL over the nx*ny image (a 2-D grid of 2-D blocks, cf. 14.02/6.04):
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//     1. FORCE  : demons_force_kernel -- each thread computes du at its pixel
+//                 (warp + gradient + Thirion normalization, all in demons.h) and
+//                 adds it to the displacement field. Pure gather, no races: a
+//                 thread only writes its own u[i].
+//     2. SMOOTH-X : gauss_x_kernel -- separable Gaussian blur along x (stencil).
+//     3. SMOOTH-Y : gauss_y_kernel -- separable Gaussian blur along y (stencil).
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+//   Steps 2/3 write into a SECOND pair of buffers (ping-pong) so no thread reads
+//   a field another thread is mid-writing. The host wrapper loops these kernels
+//   P.iters times, swapping buffers, then copies the final field back.
+//
+//   All per-pixel math is the SAME demons.h code the CPU reference runs, so the
+//   GPU and CPU displacement fields agree within the tolerance in ../THEORY.md.
+//
+// READ THIS AFTER: demons.h, util/cuda_check.cuh, util/timer.cuh. Then kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "demons.h"           // DemonsParams + the shared __host__ __device__ core
+#include "reference_cpu.h"    // DirImages (the loaded fixed/moving pair)
+
+// ---- Device kernels (documented in full in kernels.cu) -------------------
+// demons_force_kernel: one thread per pixel adds the Demons update du to (ux,uy).
+//   F,M      : device images [ny*nx].
+//   ux,uy    : device displacement field, updated in place.
+//   P        : parameters (by value -> parameter memory, read by all threads).
+__global__ void demons_force_kernel(const double* __restrict__ F,
+                                    const double* __restrict__ M,
+                                    double* __restrict__ ux,
+                                    double* __restrict__ uy,
+                                    DemonsParams P);
+
+// gauss_x_kernel / gauss_y_kernel: one thread per pixel, separable Gaussian blur
+//   of one displacement component from `src` into `dst` (never in place).
+__global__ void gauss_x_kernel(const double* __restrict__ src,
+                               double* __restrict__ dst,
+                               DemonsParams P);
+__global__ void gauss_y_kernel(const double* __restrict__ src,
+                               double* __restrict__ dst,
+                               DemonsParams P);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// register_gpu: run the full Demons solver on the GPU and return the final
+//   displacement field.
+//   im        : the fixed/moving image pair (host); copied to the device once.
+//   P         : run parameters.
+//   ux,uy     : host output displacement field, each resized to nx*ny.
+//   kernel_ms : out-param, milliseconds spent in the iteration loop (CUDA-event
+//               timed), excluding the one-time H2D/D2H copies.
+// main.cu calls exactly this; all CUDA bookkeeping is hidden inside.
+void register_gpu(const DirImages& im, const DemonsParams& P,
+                  std::vector<double>& ux, std::vector<double>& uy,
+                  float* kernel_ms);

@@ -1,121 +1,141 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load k-space, run CPU + GPU FISTA, verify, report
 // ---------------------------------------------------------------------------
-// Project 4.3 -- MRI Reconstruction with Compressed Sensing   (template skeleton)
+// Project 4.3 : MRI Reconstruction with Compressed Sensing
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load the under-sampled k-space problem (data/sample).
+//   2. CPU reference: zero-filled baseline + FISTA reconstruction (reference_cpu.cpp).
+//   3. GPU: the same FISTA using cuFFT (kernels.cu).
+//   4. VERIFY: assert the GPU image agrees with the CPU image within tolerance,
+//      AND (the real science) that CS reduces error vs the zero-filled baseline.
+//   5. REPORT: deterministic summary to stdout; timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Every printed number is derived from the CPU path
+//   (which is fully deterministic); run-to-run timings go to STDERR (shown, not
+//   diffed). See PATTERNS.md section 3 on the stdout/stderr split.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu (the cuFFT
+// FISTA), and reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // reconstruct_gpu (GPU path)
+#include "reference_cpu.h"    // load_kspace, reconstruct_cpu, zero_filled_magnitude
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "4.3";
 static const char* PROJECT_NAME = "MRI Reconstruction with Compressed Sensing";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Correctness tolerance for the GPU-vs-CPU MAGNITUDE image comparison.
+//   The GPU uses cuFFT and the CPU uses our radix-2 FFT; both are single precision
+//   and both run the SAME FISTA arithmetic (cs_core.h). Over a few dozen iterations
+//   the two FFT libraries' rounding diverges by a small, physically-negligible
+//   amount, so we verify to a relative-scaled absolute tolerance rather than
+//   pretending the results are bit-identical (PATTERNS.md section 4, iterative case).
+static constexpr double TOL_ABS = 2.0e-3;   // absolute floor
+static constexpr double TOL_REL = 1.0e-3;   // fraction of the image's peak magnitude
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
+// rms: root-mean-square value of an image (a stable, order-independent scalar).
+static double rms(const std::vector<float>& v) {
+    double s = 0.0;
+    for (float x : v) s += static_cast<double>(x) * static_cast<double>(x);
+    return std::sqrt(s / static_cast<double>(v.size()));
 }
 
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
+// rms_diff: RMS of the pixelwise difference of two equal-size images.
+static double rms_diff(const std::vector<float>& a, const std::vector<float>& b) {
+    double s = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const double dd = static_cast<double>(a[i]) - static_cast<double>(b[i]);
+        s += dd * dd;
     }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+    return std::sqrt(s / static_cast<double>(a.size()));
+}
+
+// max_abs: peak magnitude of an image (for the relative tolerance and reporting).
+static double max_abs(const std::vector<float>& v) {
+    double m = 0.0;
+    for (float x : v) { const double a = std::fabs(x); if (a > m) m = a; }
+    return m;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load the under-sampled k-space problem ------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/kspace_sample.txt";
+    KSpaceData d;
+    try {
+        d = load_kspace(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const int total = d.n * d.n;
+    int n_sampled = 0;
+    for (int m : d.mask) n_sampled += m;
+    const double sample_frac = static_cast<double>(n_sampled) / static_cast<double>(total);
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference: baseline + FISTA (timed) -----------------------
+    std::vector<float> zerofill_cpu, recon_cpu;
+    zero_filled_magnitude(d, zerofill_cpu);          // naive "before" image
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    reconstruct_cpu(d, recon_cpu);                   // CS "after" image
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
-    float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    // ---- 3. GPU: the same FISTA via cuFFT (loop timed inside the wrapper) --
+    std::vector<float> recon_gpu;
+    float gpu_ms = 0.0f;
+    reconstruct_gpu(d, recon_gpu, &gpu_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify --------------------------------------------------------
+    // (a) GPU agrees with CPU (the portability/correctness check).
+    const double peak = max_abs(recon_cpu);
+    const double gpu_cpu_rms = rms_diff(recon_cpu, recon_gpu);
+    const double tol = TOL_ABS + TOL_REL * peak;
+    const bool gpu_ok = gpu_cpu_rms <= tol;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // (b) CS actually helped: reconstruction error vs. ground truth is SMALLER
+    //     than the zero-filled baseline's error (the science, if truth is present).
+    bool cs_ok = true;
+    double err_zf = 0.0, err_cs = 0.0;
+    if (d.has_truth) {
+        err_zf = rms_diff(zerofill_cpu, d.truth);    // aliased baseline error
+        err_cs = rms_diff(recon_cpu,   d.truth);     // CS-reconstructed error
+        cs_ok = err_cs < err_zf;                     // CS must beat zero-filling
+    }
+    const bool pass = gpu_ok && cs_ok;
+
+    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) ----------
+    // Every value below comes from the DETERMINISTIC CPU path (recon_cpu / truth),
+    // so stdout is byte-identical every run regardless of GPU thread ordering.
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("under-sampled Cartesian CS-MRI (single slice, single coil), FISTA + cuFFT\n");
+    std::printf("image: %dx%d   sampled k-space: %d/%d (%.1f%%)   lambda=%.4f   iters=%d\n",
+                d.n, d.n, n_sampled, total, 100.0 * sample_frac, d.lambda, d.iters);
+    std::printf("recon image RMS (CPU): %.6f   peak: %.6f\n", rms(recon_cpu), peak);
+    if (d.has_truth) {
+        std::printf("error vs truth (RMS): zero-filled=%.6f  CS-reconstructed=%.6f\n",
+                    err_zf, err_cs);
+        std::printf("CS improvement: %.2fx lower error than zero-filling\n",
+                    err_cs > 0.0 ? err_zf / err_cs : 0.0);
+    }
+    std::printf("RESULT: %s (GPU cuFFT recon matches CPU FISTA within tol; CS beats zero-fill)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
+    std::fprintf(stderr, "[data]   source: %s  (%dx%d, %.1f%% sampled)\n",
+                 path.c_str(), d.n, d.n, 100.0 * sample_frac);
+    std::fprintf(stderr, "[timing] CPU FISTA: %.3f ms   GPU FISTA (cuFFT): %.3f ms\n",
+                 cpu_ms, gpu_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- on this tiny slice the two per-iteration "
+                         "FFTs are launch-bound; the GPU's edge grows with image size and coil count.\n");
+    std::fprintf(stderr, "[verify] GPU-vs-CPU image RMS diff = %.6e  (tolerance %.6e)\n",
+                 gpu_cpu_rms, tol);
 
     // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;

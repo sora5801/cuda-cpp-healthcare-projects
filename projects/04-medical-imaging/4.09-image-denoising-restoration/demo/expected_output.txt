@@ -1,5 +1,7 @@
-4.9 -- Image Denoising & Restoration
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+4.9 -- Image Denoising & Restoration (Non-Local Means)
+Non-Local Means denoise: 32x32 image, patch r=2, search r=5, sigma=0.080, h=0.096
+PSNR noisy  vs clean = 22.0857 dB
+PSNR denoised vs clean = 29.9900 dB
+PSNR improvement = 7.9043 dB
+denoised central row (8 samples): 0.1317 0.1689 0.7330 0.7455 0.7630 0.7643 0.6591 0.1688
+RESULT: PASS (GPU matches CPU within tol=1.0e-04)

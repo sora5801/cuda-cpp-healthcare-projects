@@ -2,11 +2,12 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 4.4 -- Deep-Learning MRI/CT Reconstruction   (template skeleton)
+# Project 4.4 : Deep-Learning MRI/CT Reconstruction  (REDUCED-SCOPE TEACHING VERSION)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints source URL +
+# expected size, and NEVER bypasses credentials/registration. fastMRI requires a
+# signed data-use agreement, so this script prints instructions + links only and
+# defers to scripts/make_synthetic.py for an offline synthetic stand-in.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -14,20 +15,22 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="$PROJECT_ROOT/data"
 
-echo "[download_data] Project 4.4 -- Deep-Learning MRI/CT Reconstruction"
+echo "[download_data] Project 4.4 : Deep-Learning MRI/CT Reconstruction"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    fastMRI (https://fastmri.med.nyu.edu/) — raw multi-coil k-space, knee/brain, gold-standard reference; fastMRI+ with radiologist annotations (https://github.com/StanfordMIMI/fastMRI_plus); 2016 AAPM Low-Dose CT Challenge for CT reconstruction learning."
+echo "This demo ships a tiny SYNTHETIC acquisition (data/sample/mri_scan_sample.txt);"
+echo "no download is required to build or run it."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "To study REAL learned reconstruction, get raw multi-coil k-space from fastMRI:"
+echo "  1) Register + accept the data-use agreement at:  https://fastmri.med.nyu.edu/"
+echo "     (NYU Langone; free for research. We do NOT and CANNOT bypass this step.)"
+echo "  2) You receive time-limited download links by email. The knee/brain single- and"
+echo "     multi-coil sets are large (tens to hundreds of GB) and are .h5 (HDF5) files."
+echo "  3) fastMRI+ radiologist annotations: https://github.com/StanfordMIMI/fastMRI_plus"
+echo "  4) For learned CT instead, see the 2016 AAPM Low-Dose CT Grand Challenge."
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Reading .h5 k-space + training an E2E-VarNet is a PyTorch task; this C++ demo"
+echo "teaches the unrolled-reconstruction STRUCTURE on a small synthetic phantom instead."
+echo
+echo "Regenerate / resize the synthetic sample with:"
+echo "    python scripts/make_synthetic.py --ny 32 --nx 32"
