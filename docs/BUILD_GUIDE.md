@@ -168,6 +168,16 @@ need a couple of `.vcxproj` knobs to compile cleanly under MSVC + `nvcc` (first 
 All four switches are plain `.vcxproj` edits (no path hardcoding). For the optional CMake build,
 Thrust/CUB are found via `find_package(CUDAToolkit)` and need no extra `target_link_libraries`.
 
+## 7d. Using cuSPARSE (sparse linear algebra)
+
+cuSPARSE (`cusparseSpMV`, sparse solves, format conversions) links like the other libraries —
+add `cusparse.lib` to **both** `<Link>` sections (§7b) and `CUDA::cusparse` in CMake. One extra
+gotcha (first hit by `5.02` fluence-map optimization): parts of the modern **generic** API are
+marked deprecated in `<cusparse.h>`, which raises MSVC **C4996** warnings and would fail the
+"zero new warnings" gate. Define **`DISABLE_CUSPARSE_DEPRECATED`** (Project → C/C++ →
+Preprocessor, or `-D` on the `nvcc` command line) to silence exactly those deprecation notices
+without hiding real warnings. Comment the define in the `.vcxproj` so the reason is visible.
+
 ## 8. CI note
 
 A GitHub Actions workflow can **compile** changed projects (hosted runners have the toolkit) but **cannot run

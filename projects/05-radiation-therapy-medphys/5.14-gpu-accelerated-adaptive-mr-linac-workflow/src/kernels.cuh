@@ -1,52 +1,50 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU oART interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 5.14 -- GPU-Accelerated Adaptive MR-Linac Workflow   (template skeleton)
+// Project 5.14 : GPU-Accelerated Adaptive MR-Linac Workflow (reduced-scope)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (pattern: per-voxel GATHER + STENCIL, host-driven iteration)
+//   Online adaptive radiotherapy on an MR-Linac is a *pipeline of image
+//   operations*, and every one of them is embarrassingly parallel per voxel:
+//     * warp an image  -> each output voxel independently gathers (bilinear) from
+//       a source location -> one thread per output voxel (GATHER, like 4.01).
+//     * demons force    -> each voxel reads its own intensities + a 3x3 gradient
+//       stencil of the fixed image -> one thread per voxel (STENCIL, like 6.04).
+//     * Gaussian smooth -> a separable convolution, one thread per output voxel.
+//   The HOST drives the outer Demons iteration (warp -> add force -> smooth),
+//   launching a handful of kernels per iteration and keeping all state resident
+//   on the device between launches. This "host loop, device kernels, no D2H in
+//   the loop" structure is exactly how a real oART engine overlaps its stages.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Every kernel calls the SAME shared per-voxel functions the CPU reference
+//   uses (mrl_registration.h), so the GPU reproduces the CPU result. Only the
+//   Gaussian smoother is written twice (a device kernel here, a host loop in
+//   reference_cpu.cpp) -- but with identical weights and clamp policy, so the
+//   arithmetic still matches.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+// WHY THIS IS "REDUCED SCOPE"
+//   The clinical chain also includes NUFFT MRI reconstruction (cuFFT), a CNN for
+//   synthetic-CT (cuDNN), a full 3-D collapsed-cone/Monte-Carlo dose engine, and
+//   a fluence re-optimiser (cuSPARSE). We teach the registration + dose-mapping
+//   heart on a 2-D slice; ../THEORY.md maps each simplification to the real tool.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, mrl_registration.h.
+//   Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
-
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // OartCase / OartResult (pure C++, safe in a .cu)
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// oart_gpu: run the full reduced-scope oART workflow on the GPU.
+//   Uploads the case, runs `iters` Demons iterations (warp + force + smooth) with
+//   everything resident on the device, warps the dose, copies the fields back,
+//   and computes the same metrics as the CPU path (via compute_metrics on the
+//   host, for identical arithmetic). Returns the total GPU time of the registration
+//   + warp kernels (CUDA-event measured) in *kernel_ms.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   c         : the input case (images + parameters), read-only
+//   r         : filled with u, v, warped_dose, warped_moving and metrics
+//   kernel_ms : out-param, milliseconds spent in the GPU kernels (not H2D/D2H)
+void oart_gpu(const OartCase& c, OartResult& r, float* kernel_ms);

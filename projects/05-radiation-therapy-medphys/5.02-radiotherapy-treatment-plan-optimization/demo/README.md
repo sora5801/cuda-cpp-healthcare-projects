@@ -22,12 +22,20 @@ The program splits its output deliberately:
 
 ```
 5.2 -- Radiotherapy Treatment-Plan Optimization
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Fluence-map optimization: 48 voxels (PTV 7, OAR 6, BODY 35), 16 beamlets, nnz=178
+optimizer: projected gradient, 400 iters, step=0.020, Rx=60.0 Gy
+final objective F(x) = 253.8840
+PTV dose (Gy): mean 59.244  min 55.221  max 62.787  homogeneity 0.1277
+OAR dose (Gy): mean 10.955  max 29.164  (tolerance-limited sparing)
+RESULT: PASS (GPU plan matches CPU within dose tol=1.0e-02 Gy)
 ```
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+What the learner is seeing: the optimizer tuned 16 beamlet intensities so the
+7-voxel tumor (**PTV**) reaches a mean of **59.2 Gy** against a 60 Gy
+prescription, while the 6-voxel organ (**OAR**) is held to ~11 Gy mean. The
+`RESULT: PASS` line confirms the GPU plan (cuSPARSE SpMVs) matches the serial CPU
+reference within the documented `1e-2 Gy` dose tolerance. The **stderr** block
+adds the CPU/GPU timings and the exact measured difference — those vary run to run
+(and the GPU is *slower* here because the 48×16 sample is dominated by
+kernel-launch and cuSPARSE-setup overhead; its edge appears only on large
+matrices), so they are shown but not diffed against `expected_output.txt`.

@@ -1,122 +1,121 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load case, run CPU + GPU oART, verify, report
 // ---------------------------------------------------------------------------
-// Project 5.14 -- GPU-Accelerated Adaptive MR-Linac Workflow   (template skeleton)
+// Project 5.14 : GPU-Accelerated Adaptive MR-Linac Workflow (reduced-scope)
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load the oART case (data/sample, else fail loudly).
+//   2. Run the CPU reference workflow (reference_cpu.cpp)   -> trusted answer.
+//   3. Run the GPU workflow            (kernels.cu)          -> the thing taught.
+//   4. VERIFY: GPU displacement field + warped dose + metrics agree with the CPU
+//      within a documented tolerance                         -> correctness.
+//   5. REPORT: deterministic plan-approval numbers to stdout; timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   THE STORY THE OUTPUT TELLS. The synthetic daily MR is the planning MR with
+//   the tumour shifted (a full bladder pushed it). Before registration the images
+//   mismatch (high MSE) and the planned dose, if delivered blindly, would MISS the
+//   moved tumour (low coverage). After Demons registration the MSE collapses and
+//   the dose, warped onto the daily anatomy, again covers the target -- exactly
+//   what online adaptation buys you. We print both so the learner sees the gain.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Run-varying numbers (timings) go to STDERR.
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// READ THIS FIRST in the code tour, then mrl_registration.h (the physics),
+//   kernels.cuh -> kernels.cu (GPU), reference_cpu.cpp (baseline). Why: THEORY.md.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // oart_gpu (GPU path)
+#include "reference_cpu.h"    // oart_cpu (CPU baseline), OartCase/OartResult
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "5.14";
 static const char* PROJECT_NAME = "GPU-Accelerated Adaptive MR-Linac Workflow";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Correctness tolerance. Registration is an ITERATIVE double-precision solver with
+// bilinear gathers and Gaussian smoothing; over many iterations the GPU's fused
+// multiply-add and the host compiler diverge by ~1e-11 even though the arithmetic
+// is "the same" (PATTERNS.md section 4, the long-iterative case). We verify the
+// displacement field and warped dose to a physically-negligible tolerance and say
+// so, rather than pretending the two are bit-identical.
+static constexpr double TOLERANCE = 1.0e-6;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
+// max_abs_err over two double vectors (util/io.hpp's helper is float-only).
+static double max_abs_err_d(const std::vector<double>& a, const std::vector<double>& b) {
+    if (a.size() != b.size()) return 1e300;      // shape bug -> never "agree"
+    double worst = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const double d = std::fabs(a[i] - b[i]);
+        if (d > worst) worst = d;
     }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+    return worst;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load ------------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/oart_case.txt";
+    OartCase c;
+    try {
+        c = load_case(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
     // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    OartResult cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    oart_cpu(c, cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU workflow (kernels timed via CUDA events inside oart_gpu) ----
+    OartResult gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    oart_gpu(c, gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (field + warped dose agree; metrics agree) --------------
+    const double err_u    = max_abs_err_d(cpu.u,           gpu.u);
+    const double err_v    = max_abs_err_d(cpu.v,           gpu.v);
+    const double err_dose = max_abs_err_d(cpu.warped_dose, gpu.warped_dose);
+    const double err = std::fmax(std::fmax(err_u, err_v), err_dose);
+    const bool pass = (err <= TOLERANCE)
+                   && (std::fabs(cpu.mean_gtv_dose - gpu.mean_gtv_dose) <= TOLERANCE)
+                   && (std::fabs(cpu.d95           - gpu.d95)           <= TOLERANCE);
 
     // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // We report the GPU numbers (verified equal to the CPU) at fixed precision.
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("[reduced-scope teaching version: 2-D Demons registration + dose warp; "
+                "synthetic data]\n");
+    std::printf("case: %dx%d voxels, %d Demons iters, sigma=%.2f, K=%.2f, dose_thresh=%.2f Gy\n",
+                c.nx, c.ny, c.iters, c.sigma, c.k_norm, c.dose_thresh);
+    std::printf("registration MSE(moving vs fixed): before=%.6f  after=%.6f\n",
+                gpu.mse_before, gpu.mse_after);
+    // A stable summary of the displacement field: its peak magnitude (voxels).
+    double umax = 0.0;
+    for (std::size_t i = 0; i < gpu.u.size(); ++i) {
+        const double mag = std::sqrt(gpu.u[i]*gpu.u[i] + gpu.v[i]*gpu.v[i]);
+        if (mag > umax) umax = mag;
+    }
+    std::printf("peak displacement magnitude: %.6f voxels\n", umax);
+    std::printf("GTV plan metrics on WARPED dose:  mean=%.6f Gy  D95=%.6f Gy  coverage(>=%.2f Gy)=%.6f\n",
+                gpu.mean_gtv_dose, gpu.d95, c.dose_thresh, gpu.gtv_coverage);
+    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-06)\n", pass ? "PASS" : "FAIL");
 
     // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    std::fprintf(stderr, "[data]   source: %s  (%dx%d, %d iters)\n",
+                 path.c_str(), c.nx, c.ny, c.iters);
+    std::fprintf(stderr, "[timing] CPU workflow: %.3f ms   GPU kernels: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- a real oART slab is 3-D and far "
+                         "larger; per-iteration kernel launches dominate at this tiny size.\n");
+    std::fprintf(stderr, "[verify] max|GPU-CPU|: field=%.3e dose=%.3e  (tolerance %.1e)\n",
+                 std::fmax(err_u, err_v), err_dose, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

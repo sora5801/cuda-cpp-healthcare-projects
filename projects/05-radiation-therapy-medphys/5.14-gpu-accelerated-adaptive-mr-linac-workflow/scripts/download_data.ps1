@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 5.14 -- GPU-Accelerated Adaptive MR-Linac Workflow   (template skeleton)
+# Project 5.14 : GPU-Accelerated Adaptive MR-Linac Workflow (reduced-scope)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. Real MR-Linac images are patient data and
+# cannot be redistributed here, so this script prints where to obtain them and
+# defers to scripts/make_synthetic.py for the offline synthetic stand-in the demo
+# actually uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,19 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 5.14 -- GPU-Accelerated Adaptive MR-Linac Workflow"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    MR-Linac Consortium shared datasets (verify URL at mrlinac.org); TCIA MR-guided RT datasets; AAPM MR-Linac WG test cases; MRI-only radiotherapy datasets from published cohorts."
+Write-Host "The committed sample (data/sample/oart_case.txt) is SYNTHETIC and is all the"
+Write-Host "demo needs. Real MR-Linac data is patient-derived and NOT redistributed here."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "To work with real MR-guided radiotherapy images, obtain them yourself from:"
+Write-Host "  * MR-Linac Consortium shared datasets  -> verify URL at mrlinac.org (access)"
+Write-Host "  * TCIA MR-guided RT collections        -> https://www.cancerimagingarchive.net/"
+Write-Host "                                            (per-collection license / DUA)"
+Write-Host "  * AAPM MR-Linac Working Group test cases -> AAPM task-group pages"
+Write-Host "  * MRI-only radiotherapy cohorts        -> per published-paper terms"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Respect every license; some require registration or a data-use agreement."
+Write-Host "This script intentionally does NOT bypass any of that."
+Write-Host ""
+Write-Host "For a larger SYNTHETIC slice instead, run:"
+Write-Host "    python scripts/make_synthetic.py --nx 64 --ny 64"

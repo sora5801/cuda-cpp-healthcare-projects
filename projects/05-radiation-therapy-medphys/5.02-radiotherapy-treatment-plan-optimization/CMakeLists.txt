@@ -31,3 +31,10 @@ add_executable(radiotherapy-treatment-plan-optimization
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(radiotherapy-treatment-plan-optimization PRIVATE src)
+
+# Link cuSPARSE: the two SpMVs (D x and D^T r) that dominate every FMO iteration
+# are done by cuSPARSE (see src/kernels.cu). CUDA::cusparse is the imported
+# target the modern CUDAToolkit package exposes (mirrors cusparse.lib in the VS
+# project). CUDA::cudart is pulled in automatically by the CUDA language.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(radiotherapy-treatment-plan-optimization PRIVATE CUDA::cusparse)

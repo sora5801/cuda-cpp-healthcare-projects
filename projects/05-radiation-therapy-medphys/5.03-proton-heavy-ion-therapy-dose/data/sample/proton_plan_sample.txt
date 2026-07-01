@@ -1,0 +1,11 @@
+# SYNTHETIC proton pencil-beam plan (teaching only; not clinical).
+# Project 5.3 -- Proton & Heavy-Ion Therapy Dose.
+# Default: one 12 cm spot = a pristine Bragg peak. --ranges stacks an SOBP.
+# grid: nx ny nz dx ox oy oz
+9 9 40 0.5 -2.25 -2.25 0
+# beam: sigma0 sigma_grow peak_width p_exp z_entry
+0.3 0.02 0.6 1.77 0
+# spot count
+1
+# spots: x0 y0 range weight  (on axis; with --ranges, weight rises with depth)
+0 0 12 1

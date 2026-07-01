@@ -1,5 +1,6 @@
 # Changelog — newest first; each entry links to its push-note in `push-notes/`.
 
+- 2026-07-01 #02 -- [phase2 batch5g radiotherapy intermediate weeklylimit](push-notes/2026-07-01-02-phase2-batch5g-radiotherapy-intermediate-weeklylimit.md)
 - 2026-07-01 #01 -- [phase2 batch5f domain4-complete radtherapy-start](push-notes/2026-07-01-01-phase2-batch5f-domain4-complete-radtherapy-start.md)
 - 2026-07-01 #00 -- [phase2 batch5e medical-imaging analysis](push-notes/2026-07-01-00-phase2-batch5e-medical-imaging-analysis.md)
 - 2026-06-30 #11 -- [phase2 batch5d medical-imaging quantitative](push-notes/2026-06-30-11-phase2-batch5d-medical-imaging-quantitative.md)

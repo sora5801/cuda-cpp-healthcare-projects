@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 5.14 -- GPU-Accelerated Adaptive MR-Linac Workflow   (template skeleton)
+# Project 5.14 : GPU-Accelerated Adaptive MR-Linac Workflow (reduced-scope)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/gpu-accelerated-adaptive-mr-linac-workflow.sln (CLAUDE.md §5). Both

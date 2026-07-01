@@ -1,12 +1,14 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 5.3 -- Proton & Heavy-Ion Therapy Dose   (template skeleton)
+# Project 5.3 : Proton & Heavy-Ion Therapy Dose
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL(s) and
+# NEVER bypasses credentials/registration. The real proton-therapy datasets are
+# either patient-derived (need an institutional/DUA agreement) or ship inside a
+# Monte-Carlo toolkit (TOPAS/GATE benchmark beams). This project does NOT need
+# any of them to run: the committed synthetic plan drives the demo. This script
+# therefore prints where to get real data and defers to make_synthetic.py.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +18,22 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 5.3 -- Proton & Heavy-Ion Therapy Dose"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    TOPAS/GATE benchmark proton beam data; clinical proton CT datasets (develop via institution); TCIA proton treatment response datasets; POPI model for proton treatment planning (https://www.creatis.insa-lyon.fr/rio/popi-model)."
+Write-Host "This teaching project runs entirely on the committed SYNTHETIC plan in"
+Write-Host "data/sample/proton_plan_sample.txt -- no download is required."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real / reference proton data you may study (respect every license):"
+Write-Host "  * TOPAS / GATE benchmark proton beams -- integral depth-dose and"
+Write-Host "    lateral profiles used to COMMISSION analytic engines. Obtain via the"
+Write-Host "    TOPAS (https://www.topasmc.org) or GATE (http://www.opengatecollaboration.org)"
+Write-Host "    distributions; these are Monte-Carlo outputs, not patient data."
+Write-Host "  * POPI-model 4D CT for treatment planning:"
+Write-Host "    https://www.creatis.insa-lyon.fr/rio/popi-model"
+Write-Host "  * TCIA proton treatment-response collections (registration/DUA required):"
+Write-Host "    https://www.cancerimagingarchive.net"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Patient-derived / credentialed sets: this script will NOT bypass any"
+Write-Host "registration or data-use agreement. Follow the provider's process."
+Write-Host ""
+Write-Host "To make a LARGER synthetic plan (e.g. a spread-out Bragg peak), run:"
+Write-Host "    python scripts/make_synthetic.py --ranges 8 9 10 11 12"

@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 147/301 projects done (48.8%) | todo 154 | in-progress 0 | missing 0
+**Progress:** 151/301 projects done (50.2%) | todo 150 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 49 | 0 | 18 |
-| 🟡 Intermediate | 206 | 92 | 0 | 114 |
+| 🟡 Intermediate | 206 | 96 | 0 | 110 |
 | 🔴 Advanced | 28 | 6 | 0 | 22 |
 
 ## 1. Drug Discovery & Molecular Design  (35/35 done)
@@ -163,16 +163,16 @@
 | 4.32 | GPU-Accelerated Landmark Detection | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 4.33 | Real-Time MRI Reconstruction | 🟡 Intermediate | Active R&D | [x] done | - | - |
 
-## 5. Radiation Therapy & Medical Physics  (5/15 done)
+## 5. Radiation Therapy & Medical Physics  (9/15 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
 | 5.01 | Monte Carlo Dose Calculation | 🟡 Intermediate | Active R&D | [x] done | lead | main |
-| 5.02 | Radiotherapy Treatment-Plan Optimization | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 5.03 | Proton & Heavy-Ion Therapy Dose | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 5.02 | Radiotherapy Treatment-Plan Optimization | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 5.03 | Proton & Heavy-Ion Therapy Dose | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 5.04 | Collapsed-Cone / Superposition-Convolution Dose | 🟢 Beginner | Established | [x] done | - | - |
 | 5.05 | Deformable Dose Accumulation & Adaptive Radiotherapy | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 5.06 | GPU Boltzmann Transport (Deterministic Dose) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 5.06 | GPU Boltzmann Transport (Deterministic Dose) | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 5.07 | Brachytherapy Dose & Source Modeling | 🟢 Beginner | Established | [x] done | - | - |
 | 5.08 | Linac QA & Machine Performance Assessment | 🟢 Beginner | Established | [x] done | - | - |
 | 5.09 | Gamma-Index Dose Comparison | 🟢 Beginner | Established | [x] done | - | - |
@@ -180,7 +180,7 @@
 | 5.11 | Microdosimetry & Track-Structure Simulation | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
 | 5.12 | FLASH Radiotherapy GPU Modeling | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
 | 5.13 | BNCT Dose Calculation & Optimization | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
-| 5.14 | GPU-Accelerated Adaptive MR-Linac Workflow | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 5.14 | GPU-Accelerated Adaptive MR-Linac Workflow | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 5.15 | Proton CT & Ion Imaging Reconstruction | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
 
 ## 6. Computational Physiology & Systems Biology  (1/27 done)

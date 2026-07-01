@@ -2,7 +2,7 @@
   "id": "5.6",
   "id_padded": "5.06",
   "project": "GPU Boltzmann Transport (Deterministic Dose)",
-  "status": "todo",
+  "status": "done",
   "owner": "",
   "branch": "",
   "skeleton": true

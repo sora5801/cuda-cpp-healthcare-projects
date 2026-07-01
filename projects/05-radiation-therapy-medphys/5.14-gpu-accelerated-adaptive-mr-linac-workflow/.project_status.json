@@ -2,7 +2,7 @@
   "id": "5.14",
   "id_padded": "5.14",
   "project": "GPU-Accelerated Adaptive MR-Linac Workflow",
-  "status": "todo",
+  "status": "done",
   "owner": "",
   "branch": "",
   "skeleton": true

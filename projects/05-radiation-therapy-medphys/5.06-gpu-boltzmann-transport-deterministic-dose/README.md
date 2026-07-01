@@ -6,29 +6,50 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+This project solves the **linear Boltzmann transport equation (LBTE)**
+*deterministically* — with no Monte-Carlo randomness and no statistical noise —
+to compute how radiation fluence (and an absorbed-dose proxy) is distributed
+through a layered slab of tissue. It uses the **discrete-ordinates (Sₙ)** method:
+discretize the beam's directions into a handful of ordinates, sweep each ordinate
+across the slab with an upwind **diamond-difference** update, and repeat via
+**source iteration** until the scalar flux converges. To keep it readable, this
+is a **reduced-scope teaching version** — 1-D, single-energy, isotropic
+scattering — that still contains every concept a production engine like **Acuros
+XB** uses. The GPU parallelizes across the independent ordinates; a plain CPU
+reference computes the same thing so you can trust the GPU answer.
 
 ## What this computes & why the GPU helps
 
-The linear Boltzmann transport equation (LBTE) describes radiation transport deterministically: it tracks the fluence distribution of particles as a function of position, direction, and energy without stochastic noise. Solving it on a clinical 6-DoF phase-space grid (x, y, z, θ, φ, E) discretized at clinical resolution yields a system with ~10⁹–10¹⁰ unknowns; iterative solvers (source iteration, diffusion synthetic acceleration) require GPU to be tractable. Acuros XB (Varian Eclipse) implements a GPU-accelerated LBTE solver that outperforms superposition-convolution in heterogeneous tissue. The 3D_RZ geometry and electron transport coupling make Boltzmann dose accurate in lung, bone/tissue interfaces where MC is preferred but slow.
+The linear Boltzmann transport equation (LBTE) describes radiation transport
+deterministically: it tracks the fluence distribution of particles as a function
+of position, direction, and energy without stochastic noise. On a clinical 6-DoF
+phase-space grid `(x,y,z,θ,φ,E)` this is ~10⁹–10¹⁰ unknowns, so iterative solvers
+(source iteration, diffusion synthetic acceleration) need a GPU to be tractable.
+**Acuros XB** (Varian Eclipse) implements a GPU-accelerated LBTE solver that
+beats superposition-convolution in heterogeneous tissue — lung and bone/tissue
+interfaces where Monte Carlo is accurate but slow.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** the inner **transport sweep** — evaluating the
+angular flux for every direction over every spatial cell, once per source
+iteration — is the dominant cost. The directions (ordinates) are mutually
+independent within an iteration, so we map **one GPU thread per ordinate**; each
+thread sweeps the whole slab for its direction. A separate, fixed-order reduction
+turns the per-ordinate fluxes into the scalar flux (see [THEORY.md](THEORY.md)
+§4).
 
 ## The algorithm in brief
 
-Discrete ordinates (Sₙ) method, source iteration (SI), diffusion synthetic acceleration (DSA), multi-group energy discretization, linear discontinuous spatial FEM, Legendre polynomial scattering expansion, Acuros XB algorithm, coupled photon-electron LBTE.
+- **Discrete ordinates (Sₙ)** — Gauss-Legendre quadrature `{μ_n, w_n}` replaces
+  the angular integral.
+- **Transport sweep** — per direction, integrate the 1-D transport ODE cell by
+  cell (upwind), using the **diamond-difference** closure.
+- **Source iteration (SI)** — lag the scattering source on the previous scalar
+  flux; sweep all ordinates; re-form the scalar flux; repeat to convergence.
+- **Absorbed-dose proxy** — `D ∝ Σ_a · φ` from the converged flux.
+- *(Described but out of scope here: DSA acceleration, multi-group energy,
+  Legendre-anisotropic scattering, coupled photon-electron transport, LD-FEM.)*
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
 derivation.
@@ -49,6 +70,8 @@ Command-line alternative (Developer PowerShell):
 msbuild build\gpu-boltzmann-transport-deterministic-dose.sln /p:Configuration=Release /p:Platform=x64
 ```
 
+Only the CUDA runtime (`cudart_static.lib`) is linked — no extra CUDA libraries.
+
 ## Run the demo
 
 ```powershell
@@ -56,53 +79,100 @@ msbuild build\gpu-boltzmann-transport-deterministic-dose.sln /p:Configuration=Re
 ./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+The demo builds if needed, runs on `data/sample/slab_problem.txt`, prints the
+per-cell flux/dose profile, shows the GPU-vs-CPU agreement check, and prints a
+timing line to stderr.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
+- **Sample (committed):** `data/sample/slab_problem.txt` — a tiny, **synthetic**
+  "tissue / lung / tissue" slab with a source band, so the demo runs offline with
+  zero downloads.
+- **Full dataset:** `scripts/download_data.ps1` / `.sh` print where to obtain the
+  real references (they do not redistribute credentialed data).
 - **Provenance & license:** see [data/README.md](data/README.md).
 
-Catalog dataset notes: AAPM TG-105 lung benchmark; IROC heterogeneity phantom datasets; IAEA photon cross-section library; Acuros XB validation datasets from Varian white papers (publicly documented).
+Catalog dataset notes: AAPM TG-105 lung benchmark; IROC heterogeneity phantom
+datasets; IAEA photon cross-section library; Acuros XB validation datasets from
+Varian white papers (publicly documented).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt): a
+table of `scalar_flux` and `dose_proxy` per cell, ending in
+`RESULT: PASS (GPU flux matches CPU within tol=1.0e-11)`. The program computes the
+flux on both the **GPU** (`src/kernels.cu`) and a **CPU reference**
+(`src/reference_cpu.cpp`) and asserts they agree within `1e-11` (they agree to
+~`5e-17` in practice). The flux peaks in the source band and the dose proxy
+visibly drops in the low-density "lung" layer — the physics this method exists to
+capture.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — loads the slab, runs CPU + GPU, verifies, reports.
+2. [`src/boltzmann_sn.h`](src/boltzmann_sn.h) — **the physics**: the shared
+   `__host__ __device__` diamond-difference per-cell update and the single-ordinate
+   sweep (used identically by CPU and GPU).
+3. [`src/reference_cpu.h`](src/reference_cpu.h) / [`reference_cpu.cpp`](src/reference_cpu.cpp)
+   — the `SlabProblem`, the Gauss-Legendre quadrature, and the serial source
+   iteration baseline.
+4. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the ordinate-parallel idea.
+5. [`src/kernels.cu`](src/kernels.cu) — the sweep kernel, the deterministic
+   reduction kernel, and the host source-iteration driver.
+6. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
 
 ## Prior art & further reading
 
-OpenMC (https://github.com/openmc-dev/openmc) — open MC but with deterministic capabilities; Attila (commercial) and Denovo (https://github.com/ORNL-CEES/Exnihilo — verify URL) — deterministic transport; AHOTN (analytical and hybrid ordinates) codes (verify URL); GPU-accelerated Sₙ solvers in nuclear engineering literature (search "GPU Sn transport CUDA").
+- **OpenMC** (`https://github.com/openmc-dev/openmc`) — primarily Monte Carlo;
+  study it to contrast the stochastic and deterministic philosophies.
+- **Denovo / Exnihilo** (ORNL, `https://github.com/ORNL-CEES/Exnihilo`) —
+  production 3-D deterministic transport; learn its sweep + DSA architecture.
+- **Attila** (commercial) — the deterministic engine lineage behind medical LBTE.
+- **AHOTN / arbitrarily-high-order transport nodal** codes — higher-order spatial
+  schemes than our diamond difference.
+- **"GPU Sn transport CUDA"** literature — wavefront-parallel sweeps on the GPU.
 
 Study these to learn the production approach; **do not copy code wholesale** —
 reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-cuSPARSE for angular flux sweep (upwind differencing); cuFFT not applicable; custom CUDA kernel for inner transport sweep (spatial + angular decomposition); GPU memory: angular flux tensor in global memory, scattering source in shared memory; wavefront parallelism across spatial cells. --
+Independent-jobs parallelism across **ordinates** (one thread sweeps one
+direction), then a **fixed-order reduction** (one thread per cell) to form the
+scalar flux — deterministic, no atomics. The angular-contribution tensor lives in
+global memory; each sweep carries its edge flux in a register. The catalog's
+cuSPARSE upwind sweep and shared-memory scattering source are the ≥2-D
+optimizations, described in [THEORY.md](THEORY.md) §4/§7 but not needed at this
+teaching scale.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Raise the S_N order.** Regenerate the sample with `--nord 16` (or 32) and
+   watch the flux profile converge; how much does the answer move from S₈ to S₁₆?
+2. **Sweep the scattering ratio.** Edit a cell's `sigma_s` toward `sigma_t`
+   (c → 1) and observe the source-iteration count climb — then read the DSA
+   section (§7) to see how production codes fix it.
+3. **Thicken the lung layer** (edit `make_synthetic.py`) and confirm the dose
+   proxy dips further there while the flux stays smooth — the tissue/lung effect.
+4. **Add a reflective boundary.** Change one face BC so outgoing flux re-enters
+   (mirror), and check the flux no longer decays to ~0 there.
+5. **Move the reduction on-device.** Replace the host convergence copy with an
+   on-GPU L∞ reduction (Thrust/CUB) so the whole iteration stays on the device.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Reduced scope on purpose.** 1-D slab, one energy group, isotropic scattering,
+  vacuum boundaries, diamond-difference spatial closure. Real dose engines add
+  3-D geometry, multi-group energy, anisotropic (Legendre) scattering, coupled
+  photon→electron transport, LD-FEM, and DSA acceleration (see THEORY §7).
+- **Synthetic data.** The cross-sections in `data/sample/` are illustrative, not
+  measured tissue values; nothing here is calibrated to a real beam or patient.
+- **"Dose" is a proxy.** We report `Σ_a·φ` (energy-deposition-rate density), which
+  is proportional to absorbed dose only for a fixed particle energy and unit
+  density — enough to teach the shape, not a clinical dose.
+- **Timing is a teaching artifact.** On a 24-cell/S₈ slab the GPU is launch-bound
+  and slower than the CPU; the point is the pattern, and the GPU's edge grows with
+  `ncell × nord` and with multi-D meshes. Never a benchmark claim.
+- **Not for clinical use.** No output may inform diagnosis or treatment.
