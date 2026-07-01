@@ -1,5 +1,19 @@
-6.2 -- Whole-Heart Digital Twin
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+6.2 -- Whole-Heart Digital Twin (reduced-scope teaching model)
+closed-loop 0-D twin: FitzHugh-Nagumo EP + elastance mechanics + 3-element Windkessel
+ensemble: 12 virtual hearts, contractility E_max 1.20..3.40 mmHg/mL, 6 beats @ dt=0.10 ms
+SYNTHETIC parameters -- not a real patient. Not for clinical use.
+member  Emax(mmHg/mL)  EDV(mL)  ESV(mL)   SV(mL)   EF(%)  Ppk_lv  Ppk_ao
+  m0           1.200   143.26    87.97   55.287   38.6  150.22   87.23
+  m1           1.400   143.25    82.71   60.536   42.3  172.79   95.48
+  m2           1.600   143.24    78.08   65.162   45.5  194.55  102.71
+  m3           1.800   143.23    73.97   69.264   48.4  215.51  109.11
+  m4           2.000   143.23    70.30   72.923   50.9  235.64  114.80
+  m5           2.200   143.22    67.02   76.205   53.2  254.98  119.88
+  m6           2.400   143.22    64.05   79.163   55.3  273.52  124.46
+  m7           2.600   143.21    61.37   81.840   57.1  291.29  128.58
+  m8           2.800   143.21    58.93   84.274   58.8  308.28  132.32
+  m9           3.000   143.20    56.70   86.496   60.4  324.50  135.73
+  m10          3.200   143.20    54.67   88.530   61.8  340.00  138.84
+  m11          3.400   143.19    52.79   90.399   63.1  355.35  141.70
+twin-fit: target SV = 70.000 mL -> best member m3 (Emax=1.800 mmHg/mL, SV=69.264 mL, EF=48.4%)
+RESULT: PASS (GPU ensemble matches CPU within tol=1.0e-09)

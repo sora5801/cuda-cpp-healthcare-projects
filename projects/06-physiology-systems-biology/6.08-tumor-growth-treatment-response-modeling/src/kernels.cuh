@@ -1,52 +1,36 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU tumor-growth + treatment interface
 // ---------------------------------------------------------------------------
-// Project 6.8 -- Tumor Growth & Treatment-Response Modeling   (template skeleton)
+// Project 6.8 : Tumor Growth & Treatment-Response Modeling
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE PATTERN (a STENCIL + ping-pong, cf. lattice-Boltzmann 6.04, RD 14.02)
+//   Fisher-KPP growth updates each grid cell from its 4 nearest neighbours only,
+//   so we map ONE THREAD PER CELL on a 2-D grid. The host runs the time loop,
+//   launching the growth kernel once per step and PING-PONGING two density
+//   buffers: read the frozen previous field, write the next field, swap. On a
+//   scheduled radiotherapy fraction the host first launches a per-cell TREATMENT
+//   kernel (a pure multiply by the LQ surviving fraction) in place.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The per-cell updates are the shared tumor_grow_update / tumor_treat_update
+//   in tumor.h, so the GPU reproduces the CPU result (modulo tiny FP-order drift).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: tumor.h, util/cuda_check.cuh, util/timer.cuh, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // TumorParams (pure C++, safe to include in a .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// Device kernel: thread (x,y) computes one cell's next density from the input
+// buffer `u` (frozen) into the output buffer `un` -- one Fisher-KPP step.
+__global__ void tumor_grow_kernel(TumorParams P, const double* __restrict__ u,
+                                   double* __restrict__ un);
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Device kernel: thread i multiplies cell i's density by `survival` in place
+// (one radiotherapy fraction; the LQ surviving fraction is precomputed on host).
+__global__ void tumor_treat_kernel(int n, double survival, double* __restrict__ u);
+
+// Host wrapper: `u` comes in holding the INITIAL field and is updated in place to
+// the FINAL field after `steps` timesteps (growth + scheduled LQ fractions).
+// Writes the total GPU loop time (ms) through `kernel_ms`.
+void simulate_gpu(const TumorParams& P, std::vector<double>& u, float* kernel_ms);

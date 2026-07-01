@@ -1,121 +1,138 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load, run CPU + GPU deposition, verify, report
 // ---------------------------------------------------------------------------
-// Project 6.5 -- Respiratory / Lung Airflow & Particle Deposition   (template skeleton)
+// Project 6.5 : Respiratory / Lung Airflow & Particle Deposition
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load the deposition experiment (data/sample, or a built-in synthetic
+//      fallback) and build the airway geometry.
+//   2. CPU reference: track all particles serially (reference_cpu.cpp).
+//   3. GPU result: track all particles in parallel (kernels.cu) -- IDENTICAL
+//      histories via the shared lung_physics.h.
+//   4. VERIFY: the two INTEGER per-generation tallies must match EXACTLY (atomic
+//      integer adds commute -> deterministic, CPU-matching sum).
+//   5. REPORT: a deterministic deposition histogram to stdout; timing to stderr.
 //
 //   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
 //   against demo/expected_output.txt. Anything that varies run-to-run (timings)
 //   goes to STDERR, which the demo shows but does not diff.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: read this first, then lung_physics.h (the shared physics),
+// kernels.cuh -> kernels.cu (the GPU twin), and reference_cpu.cpp (the baseline).
+// See ../THEORY.md for the science and the GPU mapping.
 // ===========================================================================
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // deposition_gpu (GPU path), lung::Airway
+#include "reference_cpu.h"    // load_problem, build_airway, deposition_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
+// These two tokens identify the program and must match demo/expected_output.txt.
 static const char* PROJECT_ID   = "6.5";
 static const char* PROJECT_NAME = "Respiratory / Lung Airflow & Particle Deposition";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// ---------------------------------------------------------------------------
+// make_synthetic_problem: the built-in experiment used when no data file is
+// supplied. A 5-micron aerosol (unit density) inhaled at 30 L/min through the
+// first 16 conducting-airway generations, 200000 particle histories, fixed seed.
+// These EXACT values are what demo/expected_output.txt encodes, so they must not
+// change casually. (data/sample/lung_params.txt holds the same numbers.)
+// ---------------------------------------------------------------------------
+static DepositionProblem make_synthetic_problem() {
+    DepositionProblem p;
+    p.d_p         = 5.0e-6;          // 5 micron diameter                     [m]
+    p.rho_p       = 1000.0;          // unit density (water-like)        [kg/m^3]
+    p.n_gen       = 16;              // conducting airways (trachea..terminal)
+    p.flow_rate   = 30.0e-3 / 60.0;  // 30 L/min -> m^3/s
+    p.n_particles = 200000;          // histories
+    p.seed        = 12345ULL;        // fixed for reproducibility
+    return p;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
+    // ---- 1. Load the problem + build the airway ----------------------------
+    DepositionProblem prob;
     const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
+    if (argc > 1) {
+        try {
+            prob = load_problem(argv[1]);   // parse the sample file
+            source = argv[1];
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[error] %s\n", e.what());
+            return 2;
+        }
     } else {
-        make_synthetic(n, a, x, y);
+        prob = make_synthetic_problem();
     }
+    const lung::Airway aw = build_airway(prob);   // shared geometry (CPU==GPU)
 
     // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    std::vector<uint64_t> tally_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    deposition_cpu(prob, aw, tally_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
     // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    std::vector<uint64_t> tally_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    deposition_gpu(prob, aw, tally_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (exact integer match) -----------------------------------
+    const int n_slots = prob.n_gen + 1;         // generations + exhaled bucket
+    int mismatches = 0;
+    uint64_t deposited = 0;                       // particles that hit a wall
+    int peak_gen = 0;                             // generation with most deposits
+    for (int s = 0; s < n_slots; ++s) {
+        if (tally_cpu[s] != tally_gpu[s]) ++mismatches;
+        if (s < prob.n_gen) {
+            deposited += tally_gpu[s];
+            if (tally_gpu[s] > tally_gpu[peak_gen]) peak_gen = s;
+        }
+    }
+    const uint64_t exhaled = tally_gpu[prob.n_gen];
+    const bool pass = (mismatches == 0);
+
+    // Deposition fraction in fixed-point permille (integer) so stdout is exactly
+    // reproducible -- no float formatting of a run-dependent ratio. permille =
+    // round(1000 * deposited / n). Integer rounding: (2*num + den) / (2*den).
+    const uint64_t dep_permille =
+        (2ULL * deposited * 1000ULL + prob.n_particles) / (2ULL * prob.n_particles);
 
     // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("aerosol: d_p = %.1f um, rho_p = %.0f kg/m^3\n",
+                prob.d_p * 1e6, prob.rho_p);
+    std::printf("airway : %d generations, flow = %.1f L/min\n",
+                prob.n_gen, prob.flow_rate * 60.0 * 1000.0);
+    std::printf("particles = %llu, seed = %llu\n",
+                static_cast<unsigned long long>(prob.n_particles),
+                static_cast<unsigned long long>(prob.seed));
+    std::printf("deposited = %llu of %llu (%llu.%01llu%%), exhaled = %llu\n",
+                static_cast<unsigned long long>(deposited),
+                static_cast<unsigned long long>(prob.n_particles),
+                static_cast<unsigned long long>(dep_permille / 10ULL),
+                static_cast<unsigned long long>(dep_permille % 10ULL),
+                static_cast<unsigned long long>(exhaled));
+    std::printf("peak deposition generation = %d\n", peak_gen);
+    std::printf("deposition per generation (counts):\n ");
+    for (int g = 0; g < prob.n_gen; ++g)
+        std::printf(" %llu", static_cast<unsigned long long>(tally_gpu[g]));
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("RESULT: %s (GPU deposition tally matches CPU exactly)\n",
                 pass ? "PASS" : "FAIL");
 
     // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
     std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    std::fprintf(stderr, "[timing] CPU tracking: %.3f ms   GPU tracking: %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact -- speed-up grows with particle "
+                         "count; whole-lung studies track 1e7-1e8 particles.\n");
+    std::fprintf(stderr, "[verify] generation mismatches = %d (integer tally => atomics commute)\n",
+                 mismatches);
 
     // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;

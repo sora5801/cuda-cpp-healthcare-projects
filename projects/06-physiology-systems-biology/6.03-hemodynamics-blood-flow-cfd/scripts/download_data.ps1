@@ -1,12 +1,13 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real-dataset pointers (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 6.3 -- Hemodynamics / Blood-Flow CFD   (template skeleton)
+# Project 6.3 : Hemodynamics / Blood-Flow CFD   (reduced-scope teaching version)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, and NEVER bypasses
+# credentials/registration. This project GENERATES its own flow from the
+# parameters in data/sample/channel_params.txt, so there is nothing to download
+# for the demo. The real, research-grade inputs are credential-gated; this
+# script prints instructions and links ONLY and defers to make_synthetic.py.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,22 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 6.3 -- Hemodynamics / Blood-Flow CFD"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    PhysioNet MIMIC-III waveforms — invasive pressure/flow recordings (https://physionet.org/content/mimiciii/1.4/); Vascular Model Repository — patient-specific vascular geometries (http://www.vascularmodel.com); Zenodo Cardiac Mechanics Emulation dataset (https://zenodo.org/records/7075055); UK Biobank aortic flow (4D flow MRI subset) (https://www.ukbiobank.ac.uk)."
+Write-Host "Nothing to download: the solver makes its own channel flow from the"
+Write-Host "synthetic parameters in data/sample/channel_params.txt."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "For REAL patient-specific hemodynamics (image -> mesh -> CFD), the"
+Write-Host "catalog datasets are credential-gated or license-restricted; obtain"
+Write-Host "them yourself under their terms (this script will not bypass logins):"
+Write-Host "  Vascular Model Repository (geometries) : http://www.vascularmodel.com"
+Write-Host "  PhysioNet MIMIC-III waveforms          : https://physionet.org/content/mimiciii/1.4/"
+Write-Host "  Zenodo Cardiac Mechanics Emulation     : https://zenodo.org/records/7075055"
+Write-Host "  UK Biobank aortic 4D-flow MRI          : https://www.ukbiobank.ac.uk"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Full image-to-simulation pipeline (out of scope for this teaching project):"
+Write-Host "  SimVascular / svFSI : https://github.com/SimVascular/svFSI"
+Write-Host "  OpenFOAM            : https://github.com/OpenFOAM/OpenFOAM-dev"
+Write-Host ""
+Write-Host "Bigger / non-Newtonian SYNTHETIC problem:"
+Write-Host "  python scripts/make_synthetic.py --nx 128 --ny 65 --steps 20000"
+Write-Host "  python scripts/make_synthetic.py --nu-inf 0.03   # blood shear thinning"

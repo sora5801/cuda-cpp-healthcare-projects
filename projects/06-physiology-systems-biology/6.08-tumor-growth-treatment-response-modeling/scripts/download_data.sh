@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real-data calibration pointers (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 6.8 -- Tumor Growth & Treatment-Response Modeling   (template skeleton)
+# Project 6.8 : Tumor Growth & Treatment-Response Modeling
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# There is NOTHING to download to run this project: the simulation is built
+# deterministically from data/sample/tumor_params.txt. This script only prints
+# where REAL data would come from to calibrate a model, and never bypasses any
+# registration or credentials (CLAUDE.md §8).
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -15,19 +16,22 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="$PROJECT_ROOT/data"
 
 echo "[download_data] Project 6.8 -- Tumor Growth & Treatment-Response Modeling"
-echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    TCGA (The Cancer Genome Atlas) — multi-omics + imaging for model calibration (https://portal.gdc.cancer.gov); TCIA (The Cancer Imaging Archive) — multi-institutional tumor imaging (https://www.cancerimagingarchive.net); PhysioNet oncology waveforms (https://physionet.org); Zenodo tumor growth simulation datasets (search zenodo.org for "tumor growth simulation")."
+echo "There is no file to download: the tumor field is built from the"
+echo "parameters in data/sample/tumor_params.txt (see data/README.md)."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "This is a TEACHING model. Real mathematical-oncology models calibrate"
+echo "the parameters (D, rho, alpha, beta) against imaging + omics:"
+echo "  TCGA (multi-omics + imaging) : https://portal.gdc.cancer.gov"
+echo "  TCIA (tumor imaging)         : https://www.cancerimagingarchive.net"
+echo "  PhysioNet (oncology series)  : https://physionet.org"
+echo "  Zenodo (sim datasets)        : search 'tumor growth simulation'"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Some of these require registration; obtain access through their own"
+echo "portals -- this script will not attempt to bypass any credentials."
+echo
+echo "Bigger / different SYNTHETIC runs (no download):"
+echo "  python scripts/make_synthetic.py --nx 256 --ny 256 --steps 800"
+echo "  python scripts/make_synthetic.py --dose 3 --n-fractions 10"
+echo
+echo "Target data dir: $DATA_DIR"

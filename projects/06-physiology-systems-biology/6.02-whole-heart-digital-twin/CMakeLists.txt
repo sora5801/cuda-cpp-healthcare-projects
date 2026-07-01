@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 6.2 -- Whole-Heart Digital Twin   (template skeleton)
+# Project 6.2 -- Whole-Heart Digital Twin   (reduced-scope teaching version)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/whole-heart-digital-twin.sln (CLAUDE.md §5). Both

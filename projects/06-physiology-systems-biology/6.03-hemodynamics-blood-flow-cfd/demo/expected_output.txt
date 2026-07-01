@@ -1,5 +1,8 @@
-6.3 -- Hemodynamics / Blood-Flow CFD
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+6.3 -- Hemodynamics / Blood-Flow CFD (reduced-scope 2-D incompressible Navier-Stokes)
+channel: 32x17 grid, 40000 steps, 40 pressure-iters, nu=0.1000, rho=1.00, gx=1.00e-04
+rheology: Newtonian (Carreau-Yasuda nu0=0.1000 nu_inf=0.1000)
+centerline u_max = 0.030474 at y=8  (analytic Poiseuille = 0.032000)
+wall shear stress (bottom wall, mean over x) = 0.000720
+velocity profile u_x(y) across the channel (x=16):
+ 0.000000 0.007202 0.013416 0.018652 0.022921 0.026231 0.028590 0.030003 0.030474 0.030003 0.028590 0.026231 0.022921 0.018652 0.013416 0.007202 0.000000
+RESULT: PASS (GPU velocity matches CPU within tol=1.0e-09)

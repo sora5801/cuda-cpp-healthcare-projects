@@ -4,31 +4,53 @@
 
 > **🟡 Intermediate · Active R&D** — Domain 6: Computational Physiology & Systems Biology · Catalog ID `6.2`
 >
+> **Reduced-scope teaching version** (CLAUDE.md §13). The full twin is a 3-D
+> finite-element PDE model on a patient mesh; here we ship a spatially-lumped
+> (0-D) closed-loop heart that teaches every ingredient — EP, contraction,
+> circulation, and the ensemble inference loop — on the GPU.
+>
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
-
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
 
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+A **cardiac digital twin** is a personalized heart simulation, calibrated so its
+outputs match a patient's clinical measurements, then used to answer "what if"
+questions. This project builds a minimal but *complete* closed-loop twin in 0-D:
+a **FitzHugh-Nagumo** excitable cell (electrophysiology) drives a **time-varying
+elastance** ventricle (contraction) that pumps blood into a **3-element
+Windkessel** arterial load (circulation). It runs an **ensemble** of virtual
+hearts spanning a range of **contractility**, computes each one's pressure–volume
+summary (stroke volume, ejection fraction, peak pressures), and performs the
+**twin-fit** step: picking the contractility whose stroke volume best matches a
+clinical target. Each virtual heart is an independent forward solve, so the whole
+ensemble maps onto the GPU as **one thread per heart**.
 
 ## What this computes & why the GPU helps
 
-Integrates patient-specific cardiac geometry (from CMR segmentation), fiber orientation (rule-based or DTI), EP simulation, and mechanical contraction into a unified virtual organ calibrated to clinical measurements. Building the twin requires iterative parameter estimation loops—thousands of forward simulations of the EP+mechanics PDE system—making GPU acceleration critical not just for each simulation but for the ensemble inference step. Differentiable simulators (e.g., TorchCor) allow gradient-based parameter fitting through the forward model. Hemodynamic boundary conditions couple the twin to a lumped Windkessel circulation model.
+Building a real twin means running **thousands to millions of forward heart
+simulations** while adjusting parameters until the model matches data (the
+"inference step"). This project isolates that loop: it forward-simulates an
+ensemble of hearts and scans for the best-fitting contractility.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** the *forward simulation*. Each heart requires
+`beats · (bcl_ms/dt_ms)` sequential RK4 steps (48 000 here) — but the ensemble's
+members are completely **independent**, so the total work `n · steps` parallelizes
+perfectly across GPU threads while the per-thread critical path stays just
+`steps`. This is the batched-ensemble pattern the catalog names ("batched forward
+solves across ensemble members for parameter inference"), the same GPU idiom as
+the SEIR (`9.02`) and PBPK (`13.02`) flagships.
 
 ## The algorithm in brief
 
-Bidomain/monodomain EP, active-strain / active-stress cardiac mechanics (nonlinear elasticity), Windkessel 3-element lumped circulation, rule-based fiber assignment (Bayer-Blake-Plank), adjoint-based or ensemble Kalman filter parameter estimation, finite element method (FEM) with tetrahedral meshes.
+- **FitzHugh-Nagumo EP** — a 2-variable excitable-cell ODE paced periodically.
+- **Time-varying-elastance mechanics** — activation ramps ventricular stiffness,
+  giving the end-systolic pressure–volume relation `P_lv = E(t)·(V − V0)`.
+- **Diode valves** — mitral filling and aortic ejection flows gated by pressure.
+- **3-element Windkessel circulation** — arterial pressure from a compliance +
+  resistance reservoir charged by ejected flow.
+- **RK4 integration** — 4th-order Runge-Kutta, shared host/device for exact parity.
+- **Ensemble parameter scan** — 1-D grid search over contractility to fit stroke
+  volume (a miniature stand-in for ensemble-Kalman / adjoint inference).
 
 See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
 derivation.
@@ -49,60 +71,110 @@ Command-line alternative (Developer PowerShell):
 msbuild build\whole-heart-digital-twin.sln /p:Configuration=Release /p:Platform=x64
 ```
 
+Both `Debug|x64` and `Release|x64` build with zero warnings.
+
 ## Run the demo
 
 ```powershell
 ./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+./demo/run_demo.sh           # Linux/macOS (CMake build)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+The demo builds if needed, runs on `data/sample/heart_ensemble.txt`, prints the
+per-member pressure–volume table and the twin-fit result, shows the GPU-vs-CPU
+agreement check, and prints a timing line on stderr.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
+- **Sample (committed):** `data/sample/heart_ensemble.txt` — a one-line
+  **synthetic** ensemble config (a contractility sweep + a target stroke volume)
+  so the demo runs with zero downloads.
+- **Regenerate/resize:** `python scripts/make_synthetic.py --n 256`.
+- **Real-world sources:** `scripts/download_data.ps1` / `.sh` print links to the
+  imaging datasets a full twin is built from (none are auto-fetched).
 - **Provenance & license:** see [data/README.md](data/README.md).
 
-Catalog dataset notes: UK Biobank Cardiac MRI — 100 000+ cine CMR (https://www.ukbiobank.ac.uk); Zenodo Synthetic Biventricular Heart Meshes — 1 000 virtual cohort meshes (https://zenodo.org/records/4506930); Visible Human Project — full-body cryosection + CT + MRI (https://www.nlm.nih.gov/research/visible/visible_human.html); ACDC MICCAI — 100-patient CMR segmentations (https://www.creatis.insa-lyon.fr/Challenge/acdc/).
+Real-world datasets (study only): UK Biobank Cardiac MRI (https://www.ukbiobank.ac.uk);
+Zenodo Synthetic Biventricular Heart Meshes (https://zenodo.org/records/4506930);
+Visible Human Project (https://www.nlm.nih.gov/research/visible/visible_human.html);
+ACDC MICCAI (https://www.creatis.insa-lyon.fr/Challenge/acdc/).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt): a table
+of 12 virtual hearts whose stroke volume and ejection fraction rise with
+contractility, a `twin-fit` line selecting the best-matching member, and
+`RESULT: PASS`. The program computes every result on both the **GPU**
+(`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`) and asserts
+they agree within a `1e-9` tolerance — that agreement is the correctness
+guarantee. Because both paths share the same double-precision physics
+(`src/heart.h`), the observed worst difference is ~`5.7e-14`.
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — loads the ensemble, runs CPU + GPU, verifies,
+   reports the table + twin-fit.
+2. [`src/heart.h`](src/heart.h) — **the physics**: the shared `__host__ __device__`
+   FHN + elastance + Windkessel model and the RK4 integrator (start here for the "why").
+3. [`src/reference_cpu.h`](src/reference_cpu.h) / [`src/reference_cpu.cpp`](src/reference_cpu.cpp)
+   — the ensemble config, the `idx → E_max` map, and the trusted serial loop.
+4. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the one-thread-per-heart idea.
+5. [`src/kernels.cu`](src/kernels.cu) — the ensemble kernel and host wrapper.
+6. [`src/util/`](src/util/) — shared `CUDA_CHECK`, CUDA-event timer, host I/O.
 
 ## Prior art & further reading
 
-openCARP (https://git.opencarp.org/openCARP/openCARP) — EP component of twins; simcardems (https://github.com/ComputationalPhysiology/simcardems) — FEniCS-based cardiac electromechanics coupling; TorchCor (https://github.com/sagebei/torchcor) — PyTorch GPU cardiac EP FEM for differentiable twin fitting; Awesome-Cardiac-Digital-Twins list (https://github.com/lileitech/Awesome-Cardiac-Digital-Twins) — curated resource index.
+- [openCARP](https://git.opencarp.org/openCARP/openCARP) — the EP engine used in
+  many published twins; study its monodomain solver and ionic cell models.
+- [simcardems](https://github.com/ComputationalPhysiology/simcardems) — FEniCS
+  electromechanics coupling; how EP and finite-element mechanics join.
+- [TorchCor](https://github.com/sagebei/torchcor) — PyTorch GPU cardiac EP FEM;
+  the model for *differentiable* twin fitting (gradient-based inference).
+- [Awesome-Cardiac-Digital-Twins](https://github.com/lileitech/Awesome-Cardiac-Digital-Twins)
+  — curated index of datasets, methods, and papers.
 
 Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
+this project reimplements the *concepts* didactically (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-cuSPARSE + cuSOLVER (FEM assembly/solve), cuBLAS (adjoint vector ops), custom CUDA kernels (ionic ODE batch); pattern: batched forward solves across ensemble members for parameter inference; mixed precision (FP16 forward, FP32 gradient accumulation). --
+**Ensemble ODE integration — one thread per trajectory** (PATTERNS.md §1). Each
+thread runs the full multi-beat RK4 loop for one virtual heart entirely in
+registers and writes one summary; there is **no shared memory, no atomics, no
+sparse solver**. (The catalog lists cuSPARSE/cuSOLVER/cuBLAS because the *full*
+FEM twin inverts a large sparse matrix each timestep — our 0-D model has no
+spatial coupling, so a transparent hand-written kernel is both sufficient and more
+instructive. See THEORY §4 and §7.)
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Sweep a second parameter.** Add a peripheral-resistance (`Rp`) axis to make a
+   2-D ensemble (afterload × contractility) — extend `member_params` to a 2-D
+   index map like flagship `9.02`'s `member_params`.
+2. **Better inference.** Replace the grid search with a bisection or Newton step on
+   `SV(E_max) − SV*` (the function is monotone), and report how many forward solves
+   it takes versus the exhaustive scan.
+3. **Report the P–V loop.** Have a thread also write the (V, P_lv) trace of its
+   final beat so you can plot the pressure–volume loop and read stroke work as its
+   enclosed area.
+4. **Scale it.** Run `--n 100000` and watch the GPU-vs-CPU timing gap widen — the
+   ensemble pattern's whole point (a *teaching* timing, not a benchmark).
+5. **Add an atrium.** Make `P_venous` a second dynamic compartment to see how
+   preload changes stroke volume (Frank-Starling).
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **0-D, not 3-D.** There is **no spatial PDE**: no wave propagation, no mesh, no
+  fibers. This is a lumped model — the biggest simplification versus a real twin
+  (THEORY §7 describes the full FEM version).
+- **Phenomenological EP.** FitzHugh-Nagumo captures the *shape* of an action
+  potential but is not a biophysical ionic model (ten Tusscher, O'Hara-Rudy). Its
+  `v` variable is treated as a normalized activation, not a millivolt.
+- **Synthetic parameters.** Every number is made up and labeled synthetic; nothing
+  here derives from a real patient. Peak LV pressures at the high-contractility end
+  of the sweep exceed physiological values — expected for a lumped model with fixed
+  filling and no ventricular-arterial matching, and a good prompt for exercise 5.
+- **Not for clinical use.** Outputs are a teaching artifact. No diagnostic or
+  therapeutic claim is made or implied.

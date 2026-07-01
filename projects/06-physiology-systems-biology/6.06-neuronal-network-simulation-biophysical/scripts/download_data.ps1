@@ -1,12 +1,12 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 6.6 -- Neuronal Network Simulation (Biophysical)   (template skeleton)
+# Project 6.6 : Neuronal Network Simulation (Biophysical)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints the source URLs,
+# and NEVER bypasses credentials/registration. The demo runs entirely on the
+# committed synthetic sample; the real datasets below are OPTIONAL enrichment for
+# learners who want to drive the model from published morphologies/recordings.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,23 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 6.6 -- Neuronal Network Simulation (Biophysical)"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    NeuroMorpho.Org — 200 000+ 3D neuronal reconstructions across 900+ species (https://neuromorpho.org); ModelDB / modeldb.science — curated computational neuron models with NEURON/GENESIS files (https://modeldb.science); Allen Brain Cell Atlas — single-cell transcriptomics + patch-seq morpho-electric data (https://portal.brain-map.org); DANDI Archive — neurophysiology datasets in NWB format (https://dandiarchive.org)."
+Write-Host "This project runs on a TINY SYNTHETIC network committed under data/sample/"
+Write-Host "(network.txt). No download is required to build or run the demo."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "OPTIONAL real-world data sources (study these; none is auto-downloaded):"
+Write-Host "  * NeuroMorpho.Org  -- 200,000+ 3D neuronal reconstructions (SWC morphology)."
+Write-Host "      https://neuromorpho.org   (free; cite the original reconstruction authors)"
+Write-Host "  * ModelDB / modeldb.science -- curated NEURON/GENESIS model files."
+Write-Host "      https://modeldb.science"
+Write-Host "  * Allen Brain Cell Atlas -- patch-seq morpho-electric data."
+Write-Host "      https://portal.brain-map.org"
+Write-Host "  * DANDI Archive -- neurophysiology datasets (NWB format)."
+Write-Host "      https://dandiarchive.org"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Turning an SWC morphology into this model's compartment chain is left as an"
+Write-Host "exercise (see README 'Exercises'): parse the SWC tree, collapse each branch into"
+Write-Host "compartments, and order them for the Hines solver."
+Write-Host ""
+Write-Host "For a larger SYNTHETIC ring (offline), run:"
+Write-Host "    python scripts/make_synthetic.py --ncell 256 --steps 8000"

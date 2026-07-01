@@ -2,11 +2,11 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 6.6 -- Neuronal Network Simulation (Biophysical)   (template skeleton)
+# Project 6.6 : Neuronal Network Simulation (Biophysical)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints the source URLs,
+# and NEVER bypasses credentials/registration. The demo runs entirely on the
+# committed synthetic sample; the real datasets below are OPTIONAL enrichment.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +17,22 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 6.6 -- Neuronal Network Simulation (Biophysical)"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    NeuroMorpho.Org — 200 000+ 3D neuronal reconstructions across 900+ species (https://neuromorpho.org); ModelDB / modeldb.science — curated computational neuron models with NEURON/GENESIS files (https://modeldb.science); Allen Brain Cell Atlas — single-cell transcriptomics + patch-seq morpho-electric data (https://portal.brain-map.org); DANDI Archive — neurophysiology datasets in NWB format (https://dandiarchive.org)."
+echo "This project runs on a TINY SYNTHETIC network committed under data/sample/"
+echo "(network.txt). No download is required to build or run the demo."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "OPTIONAL real-world data sources (study these; none is auto-downloaded):"
+echo "  * NeuroMorpho.Org  -- 200,000+ 3D neuronal reconstructions (SWC morphology)."
+echo "      https://neuromorpho.org   (free; cite the original reconstruction authors)"
+echo "  * ModelDB / modeldb.science -- curated NEURON/GENESIS model files."
+echo "      https://modeldb.science"
+echo "  * Allen Brain Cell Atlas -- patch-seq morpho-electric data."
+echo "      https://portal.brain-map.org"
+echo "  * DANDI Archive -- neurophysiology datasets (NWB format)."
+echo "      https://dandiarchive.org"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Turning an SWC morphology into this model's compartment chain is left as an"
+echo "exercise (see README 'Exercises'): parse the SWC tree, collapse each branch into"
+echo "compartments, and order them for the Hines solver."
+echo
+echo "For a larger SYNTHETIC ring (offline), run:"
+echo "    python scripts/make_synthetic.py --ncell 256 --steps 8000"

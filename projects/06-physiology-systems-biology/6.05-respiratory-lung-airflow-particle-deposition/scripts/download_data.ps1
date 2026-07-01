@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 6.5 -- Respiratory / Lung Airflow & Particle Deposition   (template skeleton)
+# Project 6.5 : Respiratory / Lung Airflow & Particle Deposition
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints the source URLs
+# and NEVER bypasses credentials/registration. Real airway geometries come from
+# patient CT archives that require an account and a data-use agreement, so this
+# script only PRINTS how to obtain them and points at make_synthetic.py for an
+# offline stand-in. The committed tiny sample already runs the demo.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,22 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 6.5 -- Respiratory / Lung Airflow & Particle Deposition"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    LIDC-IDRI lung CT — 1 010 cases with nodule annotations, TCIA (https://wiki.cancerimagingarchive.net/display/Public/LIDC-IDRI); COPDGene lung CT dataset — 10 000 subjects (https://www.copdgene.org); SPIROMICS bronchial CT (https://www.spiromics.org); PhysioNet respiratory waveform databases (https://physionet.org)."
+Write-Host "This project ships a self-contained SYNTHETIC parameter file"
+Write-Host "(data/sample/lung_params.txt). No download is required to run the demo."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "To drive the model from a REAL patient airway geometry, obtain a lung CT"
+Write-Host "volume, segment the airway tree, and fit per-generation radii/lengths."
+Write-Host "Public sources (each needs registration / a data-use agreement -- respect it):"
+Write-Host "  * LIDC-IDRI lung CT (1010 cases), TCIA:"
+Write-Host "      https://wiki.cancerimagingarchive.net/display/Public/LIDC-IDRI"
+Write-Host "  * COPDGene lung CT (10000 subjects): https://www.copdgene.org"
+Write-Host "  * SPIROMICS bronchial CT:            https://www.spiromics.org"
+Write-Host "  * PhysioNet respiratory waveforms:   https://physionet.org"
+Write-Host "  Airway segmentation tooling: 3D Slicer + SlicerMorph"
+Write-Host "      https://github.com/SlicerMorph/SlicerMorph"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "For a larger SYNTHETIC experiment (no download), regenerate the sample:"
+Write-Host "    python scripts/make_synthetic.py --d_p 1.0 --n 1000000"
+Write-Host ""
+Write-Host "[download_data] Done (informational only; nothing was downloaded)."

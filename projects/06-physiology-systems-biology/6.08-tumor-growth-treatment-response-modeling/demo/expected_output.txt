@@ -1,5 +1,9 @@
 6.8 -- Tumor Growth & Treatment-Response Modeling
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Fisher-KPP: 128x128 grid, dx=0.200 mm, D=0.0200 mm^2/day, rho=0.150 /day, 400 steps
+Radiotherapy: 10 fractions x 2.00 Gy  (alpha=0.150 /Gy, beta=0.0150 /Gy^2, a/b=10.0 Gy)
+LQ per-fraction surviving fraction S = 0.6977 ; BED = 24.00 Gy
+control  (untreated): burden=6381.0758, max u=1.0000, core cells=6408, core radius=9.033 mm
+treated  (RT on)    : burden=4569.0466, max u=0.9987, core cells=4556, core radius=7.616 mm
+treatment response: tumor burden reduced by 28.40% vs control
+treated u along center row (8 samples): 0.0000 0.0931 0.9307 0.9976 0.9979 0.9438 0.1277 0.0000
+RESULT: PASS (GPU fields match CPU within tol=1.0e-06)

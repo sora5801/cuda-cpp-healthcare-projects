@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 6.7 -- Spiking Neural Network (Point-Neuron) Simulation   (template skeleton)
+# Project 6.7 : Spiking Neural Network (Point-Neuron) Simulation
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/spiking-neural-network-point-neuron-simulation.sln (CLAUDE.md §5). Both

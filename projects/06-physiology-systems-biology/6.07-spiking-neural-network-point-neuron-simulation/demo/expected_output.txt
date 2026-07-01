@@ -1,5 +1,9 @@
 6.7 -- Spiking Neural Network (Point-Neuron) Simulation
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+network: 200 neurons (160 exc + 40 inh), out_degree=16, 500 steps @ dt=0.10 ms (50.0 ms)
+weights: w_exc=0.900  w_inh=-2.200  ext_kick=1.800 every 30
+total spikes (GPU) = 943   mean rate = 94.300 Hz
+population spike raster (step: count):
+  [  0:  0] [ 71:  0] [142:  1] [213:  3] [285:  3] [356:  4] [427:  5] [499:  2]
+most active neurons (id:spikes:type):
+  [84:10:E] [16:9:E] [29:9:E] [59:9:E] [61:9:E]
+RESULT: PASS (GPU spike counts match CPU exactly; final V within 1e-09 mV)

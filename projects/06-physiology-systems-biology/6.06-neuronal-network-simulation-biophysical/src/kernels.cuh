@@ -1,52 +1,42 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU network-integration interface
 // ---------------------------------------------------------------------------
-// Project 6.6 -- Neuronal Network Simulation (Biophysical)   (template skeleton)
+// Project 6.6 : Neuronal Network Simulation (Biophysical)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (pattern: ENSEMBLE / ONE-THREAD-PER-CELL time integration)
+//   The network is `ncell` neurons, each an independent multi-compartment ODE
+//   system EXCEPT for the synaptic coupling. We map ONE GPU THREAD to ONE NEURON
+//   (in production, one thread BLOCK per cell with a warp walking the dendritic
+//   tree -- see THEORY -- but one thread per cell is the clearest teaching form
+//   and keeps each cell's small state in registers/local memory).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Coupling is handled by SEPARATING TIME STEPS INTO KERNEL LAUNCHES. Within a
+//   step a thread must not read another thread's freshly-written spike (there is
+//   no global barrier inside a kernel across all blocks). So we keep TWO spike
+//   buffers in global memory and launch the step kernel once per timestep: every
+//   thread reads its presynaptic partner's spike from the PREVIOUS buffer and
+//   writes its own spike into the CURRENT buffer; the host swaps the two buffers
+//   between launches (ping-pong). The kernel boundary IS the grid-wide barrier.
+//   This is exactly the double-buffering the CPU reference uses, so GPU and CPU
+//   spike counts match EXACTLY.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   The per-neuron physics (HH + Rush-Larsen + Hines/Thomas + synapse) is the
+//   SAME neuron.h code the CPU calls -> identical arithmetic. kernels.cu defines
+//   the kernel and the host driver.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: neuron.h, reference_cpu.h, util/*.  READ BEFORE: kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // NetworkConfig, CellResult (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
-
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Host driver: integrate the whole network on the GPU (one thread per neuron,
+// one kernel launch per timestep with ping-pong spike buffers), copy the
+// per-cell spike summaries back, and report the total kernel time.
+//   c            : the simulation configuration (sizes, dt, HH params, wiring)
+//   results      : filled with one CellResult per neuron (sized to c.ncell)
+//   kernel_ms    : total GPU time across all per-step launches (teaching artifact)
+void integrate_gpu(const NetworkConfig& c,
+                   std::vector<CellResult>& results,
+                   float* kernel_ms);

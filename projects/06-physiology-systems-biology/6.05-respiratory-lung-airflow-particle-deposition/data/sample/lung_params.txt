@@ -1,0 +1,6 @@
+# Synthetic deposition experiment for project 6.5 (see data/README.md).
+# One line of six whitespace-separated fields, in human-friendly units:
+#   d_p_microns  rho_p_kg_m3  n_gen  flow_L_per_min  n_particles  seed
+# (Lines beginning with '#' are ignored by make_synthetic.py, which regenerates
+#  this file; the loader in reference_cpu.cpp reads the six numbers below.)
+5.0 1000 16 30 200000 12345

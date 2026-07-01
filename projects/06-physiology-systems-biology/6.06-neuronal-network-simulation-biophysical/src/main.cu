@@ -1,122 +1,117 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: simulate the network, verify, report
 // ---------------------------------------------------------------------------
-// Project 6.6 -- Neuronal Network Simulation (Biophysical)   (template skeleton)
+// Project 6.6 : Neuronal Network Simulation (Biophysical)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the same skeleton every project in this repo follows):
+//   1. Load the network config (ring of multi-compartment HH neurons).
+//   2. CPU reference: integrate the whole network serially (reference_cpu.cpp).
+//   3. GPU: one thread per neuron, one kernel launch per timestep (kernels.cu).
+//   4. VERIFY: per-cell spike counts / first-spike steps match EXACTLY
+//      (integer crossing counts of identical double-precision voltages).
+//   5. REPORT: a deterministic per-cell + network summary to STDOUT; timing and
+//      run-varying detail to STDERR (so the demo can diff stdout reproducibly).
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
-//
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then neuron.h (the physics), reference_cpu.cpp (the
+// serial baseline + spike-buffer idea), then kernels.cu (the GPU twin).
 // ===========================================================================
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // integrate_gpu
+#include "reference_cpu.h"    // load_network, integrate_cpu, NetworkConfig, CellResult
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "6.6";
 static const char* PROJECT_NAME = "Neuronal Network Simulation (Biophysical)";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
-
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/network.txt";
+    NetworkConfig c;
+    try {
+        c = load_network(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<CellResult> res_cpu;
+    std::vector<int> raster;                 // per-step total spikes (stderr trace)
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    integrate_cpu(c, res_cpu, &raster);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU network (kernel-timed) ------------------------------------
+    std::vector<CellResult> res_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    integrate_gpu(c, res_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify: EXACT integer agreement -------------------------------
+    // The GPU and CPU run identical double-precision arithmetic (neuron.h), so
+    // the soma voltage sequences are bit-identical and the threshold crossings
+    // -- and thus spike_count / first_spike -- must match EXACTLY. Any mismatch
+    // is a real bug (a race, a wiring error), not floating-point noise, so the
+    // tolerance is ZERO. (docs/PATTERNS.md section 4: integer result -> exact.)
+    int mismatches = 0;
+    for (int i = 0; i < c.ncell; ++i) {
+        if (res_cpu[i].spike_count != res_gpu[i].spike_count ||
+            res_cpu[i].first_spike != res_gpu[i].first_spike) ++mismatches;
+    }
+    const bool pass = (mismatches == 0);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    // Network totals: total spikes, how many cells ever fired, and the mean
+    // firing rate (spikes per cell per second of simulated time).
+    long total_spikes = 0;
+    int  active_cells = 0;
+    for (int i = 0; i < c.ncell; ++i) {
+        total_spikes += res_gpu[i].spike_count;
+        if (res_gpu[i].spike_count > 0) ++active_cells;
+    }
+    const double sim_seconds = c.steps * c.dt / 1000.0;    // ms -> s
+    const double mean_rate_hz =
+        (c.ncell > 0 && sim_seconds > 0.0)
+            ? static_cast<double>(total_spikes) / (c.ncell * sim_seconds) : 0.0;
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("network: %d neurons x %d compartments, %d steps @ dt=%.3f ms (%.1f ms sim)\n",
+                c.ncell, c.ncomp, c.steps, c.dt, c.steps * c.dt);
+    std::printf("ring wiring: neuron i excites neuron (i+1); %d leading cells kicked (+%.1f mV)\n",
+                c.n_stim, c.i_stim);
+    std::printf("per-cell (idx : spikes firstStep):\n");
+    // Print up to 8 evenly-spaced cells so the wave signature is visible but the
+    // output stays compact and deterministic regardless of ncell.
+    const int shown = (c.ncell < 8) ? c.ncell : 8;
+    for (int s = 0; s < shown; ++s) {
+        const int i = (shown > 1) ? (s * (c.ncell - 1)) / (shown - 1) : 0;
+        std::printf("  c%-4d: %3d %6d\n", i, res_gpu[i].spike_count, res_gpu[i].first_spike);
+    }
+    std::printf("totals: %ld spikes across %d/%d active cells; mean rate = %.3f Hz\n",
+                total_spikes, active_cells, c.ncell, mean_rate_hz);
+    std::printf("RESULT: %s (GPU spike counts match CPU exactly across %d cells)\n",
+                pass ? "PASS" : "FAIL", c.ncell);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Run-varying detail -> STDERR ---------------------------------
+    // A tiny activity trace: the step at which the network first shows any spike
+    // and the peak simultaneous spike count -- handy for eyeballing the wave.
+    int first_active = -1, peak_simul = 0;
+    for (int t = 0; t < c.steps; ++t) {
+        if (raster[t] > 0 && first_active < 0) first_active = t;
+        if (raster[t] > peak_simul) peak_simul = raster[t];
+    }
+    std::fprintf(stderr, "[data]   source: %s  (%d neurons)\n", path.c_str(), c.ncell);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU: %.3f ms  (%d per-step launches)\n",
+                 cpu_ms, gpu_kernel_ms, c.steps);
+    std::fprintf(stderr, "[timing] teaching artifact -- one kernel launch per dt is launch-bound "
+                         "on tiny nets; the GPU wins as ncell grows into the thousands.\n");
+    std::fprintf(stderr, "[trace]  first network activity at step %d; peak simultaneous spikes = %d\n",
+                 first_active, peak_simul);
+    std::fprintf(stderr, "[verify] per-cell spike mismatches CPU vs GPU = %d (tolerance 0 = exact)\n",
+                 mismatches);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

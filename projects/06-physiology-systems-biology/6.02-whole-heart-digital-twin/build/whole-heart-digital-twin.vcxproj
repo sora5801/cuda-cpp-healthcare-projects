@@ -153,6 +153,9 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- heart.h : the shared __host__ __device__ heart physics + RK4 core, so the
+         CPU reference and the GPU kernel run byte-identical math (PATTERNS.md 2). -->
+    <ClInclude Include="..\src\heart.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

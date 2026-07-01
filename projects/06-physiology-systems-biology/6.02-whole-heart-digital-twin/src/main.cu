@@ -1,122 +1,123 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: load ensemble, run CPU + GPU, verify, twin-fit
 // ---------------------------------------------------------------------------
-// Project 6.2 -- Whole-Heart Digital Twin   (template skeleton)
+// Project 6.2 : Whole-Heart Digital Twin   (REDUCED-SCOPE TEACHING VERSION)
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load the ensemble config (a contractility sweep + a clinical target SV).
+//   2. CPU reference: simulate every virtual heart serially (reference_cpu.cpp).
+//   3. GPU: one thread per heart, the full multi-beat RK4 forward solve (kernels.cu).
+//   4. VERIFY: per-member summaries match (same shared physics -> same numbers).
+//   5. REPORT: deterministic ensemble table + the fitted twin -> STDOUT;
+//              timings + run-varying detail -> STDERR (shown, not diffed).
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Timings (which vary run to run) go to STDERR.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+//   NOT FOR CLINICAL USE. This is a spatially-lumped (0-D) TEACHING model on
+//   SYNTHETIC parameters; it does not represent any real patient.
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// READ THIS FIRST in the code tour, then heart.h (the physics), kernels.cuh ->
+// kernels.cu (the GPU ensemble), and reference_cpu.cpp (the CPU baseline).
+// See ../THEORY.md for the science and the GPU mapping.
 // ===========================================================================
+#include <cmath>      // std::fabs, std::fmax
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // integrate_gpu, EnsembleConfig, TwinResult
+#include "reference_cpu.h"    // load_ensemble, integrate_cpu, member_params
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
+// Program identity (kept in sync with demo/expected_output.txt).
 static const char* PROJECT_ID   = "6.2";
-static const char* PROJECT_NAME = "Whole-Heart Digital Twin";
+static const char* PROJECT_NAME = "Whole-Heart Digital Twin (reduced-scope teaching model)";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Correctness tolerance. CPU and GPU run the SAME double-precision RK4 over the
+// same fixed number of steps via the shared heart.h core, so they should agree
+// to a few ULPs. We allow a hair more (1e-9 mL / mmHg) to absorb the GPU's
+// fused-multiply-add reassociation, which can differ from the host compiler's
+// by ~1e-12 per step (PATTERNS.md section 4). This is far below any physiological
+// significance, so the demo's PASS is meaningful, not a rubber stamp.
+static constexpr double TOLERANCE = 1.0e-9;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load ------------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/heart_ensemble.txt";
+    EnsembleConfig c;
+    try {
+        c = load_ensemble(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const int n = ensemble_size(c);
 
     // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    std::vector<TwinResult> res_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    integrate_cpu(c, res_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU ensemble (kernel timed with CUDA events) -------------------
+    std::vector<TwinResult> res_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    integrate_gpu(c, res_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify GPU == CPU per member -----------------------------------
+    // Compare every clinically-meaningful output of every heart; the single
+    // worst absolute difference is our headline correctness number.
+    double worst = 0.0;
+    for (int i = 0; i < n; ++i) {
+        worst = std::fmax(worst, std::fabs(res_cpu[i].stroke_vol  - res_gpu[i].stroke_vol));
+        worst = std::fmax(worst, std::fabs(res_cpu[i].ejection_fr - res_gpu[i].ejection_fr));
+        worst = std::fmax(worst, std::fabs(res_cpu[i].peak_plv    - res_gpu[i].peak_plv));
+        worst = std::fmax(worst, std::fabs(res_cpu[i].peak_pao    - res_gpu[i].peak_pao));
+    }
+    const bool pass = worst <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 4b. The "twin fit": pick the member closest to the target SV ------
+    // This is the inference step in miniature -- scan the ensemble for the
+    // contractility whose forward-simulated stroke volume best matches the
+    // clinical target. Deterministic tie-break: the lowest index wins.
+    int best = 0;
+    double best_err = 1.0e300;
+    for (int i = 0; i < n; ++i) {
+        const double e = std::fabs(res_gpu[i].stroke_vol - c.target_sv);
+        if (e < best_err) { best_err = e; best = i; }
+    }
+    const HeartParams bp = member_params(c, best);
+
+    // ---- 5a. Deterministic report -> STDOUT --------------------------------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
+    std::printf("closed-loop 0-D twin: FitzHugh-Nagumo EP + elastance mechanics + 3-element Windkessel\n");
+    std::printf("ensemble: %d virtual hearts, contractility E_max %.2f..%.2f mmHg/mL, %d beats @ dt=%.2f ms\n",
+                n, c.emax_lo, c.emax_hi, c.beats, c.dt_ms);
+    std::printf("SYNTHETIC parameters -- not a real patient. Not for clinical use.\n");
+    std::printf("member  Emax(mmHg/mL)  EDV(mL)  ESV(mL)   SV(mL)   EF(%%)  Ppk_lv  Ppk_ao\n");
+    for (int i = 0; i < n; ++i) {
+        const HeartParams p = member_params(c, i);
+        const TwinResult& t = res_gpu[i];
+        std::printf("  m%-4d  %11.3f  %7.2f  %7.2f  %7.3f  %5.1f  %6.2f  %6.2f\n",
+                    i, p.E_max, t.edv, t.esv, t.stroke_vol,
+                    100.0 * t.ejection_fr, t.peak_plv, t.peak_pao);
+    }
+    std::printf("twin-fit: target SV = %.3f mL -> best member m%d "
+                "(Emax=%.3f mmHg/mL, SV=%.3f mL, EF=%.1f%%)\n",
+                c.target_sv, best, bp.E_max, res_gpu[best].stroke_vol,
+                100.0 * res_gpu[best].ejection_fr);
+    std::printf("RESULT: %s (GPU ensemble matches CPU within tol=1.0e-09)\n",
                 pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR --------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d members)\n", path.c_str(), n);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernel: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- speed-up grows with ensemble size; real twin "
+                         "inference runs 10^3-10^6 forward solves.\n");
+    std::fprintf(stderr, "[fit]    best-member SV error = %.3e mL\n", best_err);
+    std::fprintf(stderr, "[verify] worst per-member diff = %.3e  (tolerance %.1e)\n", worst, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

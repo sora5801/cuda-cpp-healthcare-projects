@@ -2,11 +2,13 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 6.5 -- Respiratory / Lung Airflow & Particle Deposition   (template skeleton)
+# Project 6.5 : Respiratory / Lung Airflow & Particle Deposition
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md section 8): idempotent, documented, prints source URLs and
+# NEVER bypasses credentials/registration. Real airway geometries come from
+# patient CT archives that require an account and a data-use agreement, so this
+# script only PRINTS how to obtain them and points at make_synthetic.py for an
+# offline stand-in. The committed tiny sample already runs the demo.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,21 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 6.5 -- Respiratory / Lung Airflow & Particle Deposition"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    LIDC-IDRI lung CT — 1 010 cases with nodule annotations, TCIA (https://wiki.cancerimagingarchive.net/display/Public/LIDC-IDRI); COPDGene lung CT dataset — 10 000 subjects (https://www.copdgene.org); SPIROMICS bronchial CT (https://www.spiromics.org); PhysioNet respiratory waveform databases (https://physionet.org)."
+echo "This project ships a self-contained SYNTHETIC parameter file"
+echo "(data/sample/lung_params.txt). No download is required to run the demo."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "To drive the model from a REAL patient airway geometry, obtain a lung CT"
+echo "volume, segment the airway tree, and fit per-generation radii/lengths."
+echo "Public sources (each needs registration / a data-use agreement -- respect it):"
+echo "  * LIDC-IDRI lung CT (1010 cases), TCIA:"
+echo "      https://wiki.cancerimagingarchive.net/display/Public/LIDC-IDRI"
+echo "  * COPDGene lung CT (10000 subjects): https://www.copdgene.org"
+echo "  * SPIROMICS bronchial CT:            https://www.spiromics.org"
+echo "  * PhysioNet respiratory waveforms:   https://physionet.org"
+echo "  Airway segmentation tooling: 3D Slicer + SlicerMorph"
+echo "      https://github.com/SlicerMorph/SlicerMorph"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "For a larger SYNTHETIC experiment (no download), regenerate the sample:"
+echo "    python scripts/make_synthetic.py --d_p 1.0 --n 1000000"
+echo
+echo "[download_data] Done (informational only; nothing was downloaded)."
