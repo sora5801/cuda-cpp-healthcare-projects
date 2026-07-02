@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 7.2 -- Drug-Target Interaction Prediction (GNN)   (template skeleton)
+# Project 7.2 -- Drug-Target Interaction Prediction (GNN)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/drug-target-interaction-prediction-gnn.sln (CLAUDE.md §5). Both

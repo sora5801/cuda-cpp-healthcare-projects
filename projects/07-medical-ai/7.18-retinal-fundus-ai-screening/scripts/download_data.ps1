@@ -1,12 +1,12 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 7.18 -- Retinal Fundus AI Screening   (template skeleton)
+# Project 7.18 : Retinal Fundus AI Screening
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# expected size, and NEVER bypasses credentials/registration. Every real fundus
+# dataset here is account-gated, so this script prints instructions + links only
+# and defers to scripts/make_synthetic.py for an offline stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,21 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 7.18 -- Retinal Fundus AI Screening"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    EyePACS — 88,000 labelled fundus images, 5-grade DR severity (Kaggle, verify URL) APTOS 2019 — 3,662 fundus images, DR grading competition (Kaggle, verify URL) DRIVE / STARE — retinal vessel segmentation datasets (verify URL) UK Biobank Retinal Imaging — 68k retinal fundus images with linked health records (https://www.ukbiobank.ac.uk/)"
+Write-Host "All real fundus datasets are ACCESS-RESTRICTED. This script does NOT"
+Write-Host "bypass any login or license -- it prints where to get them:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  EyePACS   ~88,000 labelled fundus images, 5-grade DR severity."
+Write-Host "            Kaggle 'Diabetic Retinopathy Detection' (account + rules). Verify URL."
+Write-Host "  APTOS2019 3,662 fundus images, DR grading."
+Write-Host "            Kaggle 'APTOS 2019 Blindness Detection' (account). Verify URL."
+Write-Host "  DRIVE/STARE  retinal vessel-segmentation datasets (registration varies)."
+Write-Host "  UK Biobank  ~68k fundus images + linked health records (credentialed):"
+Write-Host "            https://www.ukbiobank.ac.uk/"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "The committed tiny sample data/sample/fundus_sample.txt runs the demo offline."
+Write-Host "To (re)generate a synthetic fundus image instead:"
+Write-Host "    python scripts/make_synthetic.py --size 32"
+Write-Host ""
+Write-Host "To use a real image: load it (Pillow), resize to a small square, divide by"
+Write-Host "255, and write it in the 'C H W label' + channel-major float format (data/README.md)."

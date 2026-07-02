@@ -1,52 +1,71 @@
 // ===========================================================================
 // src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 7.3 -- Clinical NLP over Notes & Records   (template skeleton)
+// Project 7.3 : Clinical NLP over Notes & Records
 //
 // ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+//   The "what the GPU offers" header. main.cu calls the single host wrapper
+//   declared here; kernels.cu implements it (the device kernels + the cuBLAS
+//   batched-GEMM calls live there). Included only by .cu translation units (it
+//   would name __global__ kernels internally), so the plain host compiler never
+//   sees it -- that is why the CPU reference uses a separate pure-C++ header
+//   (reference_cpu.h).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+// THE GPU JOBS (and the pattern each uses -- see ../THEORY.md, PATTERNS.md)
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   A transformer self-attention encoder block is GEMM-DOMINATED (the catalog's
+//   own words). We split it the way a real implementation does:
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+//   1. Q = X Wq, K = X Wk, V = X Wv     -- three dense matmuls over ALL tokens.
+//        X is [(B*S) x D], each W is [D x D]. One cuBLAS DGEMM per projection
+//        (PATTERNS.md §1: "dense linear algebra -> use cuBLAS"). DGEMM is the
+//        single most optimized GPU routine in existence; kernels.cu explains
+//        what hand-rolling it would take (shared-memory tiling, register
+//        blocking, bank-conflict-free loads) and why we don't.
+//
+//   2. scores = Q_h K_hᵀ / sqrt(dh)     -- B*H independent [S x S] matmuls.
+//        We use cublasDgemmStridedBatched: ONE call does all B*H head-matmuls,
+//        striding through the Q/K buffers. This is the O(n²) attention cost the
+//        deep-dive names -- exactly the multi-head GEMM tensor cores accelerate.
+//
+//   3. softmax(scores) with PAD masking  -- a hand-written kernel. This is the
+//        one step that is NOT a GEMM. One block per (note, head, query row); the
+//        block cooperatively finds the row max, exponentiates (stable form from
+//        attn_core.h), sums, and normalizes. The "reduction within a block"
+//        pattern.
+//
+//   4. O_h = A_h V_h                     -- another B*H batched DGEMM, then the
+//        heads are already laid out contiguously so O is just [(B*S) x D].
+//
+//   Everything numeric that BOTH sides must agree on lives in attn_core.h, so
+//   the GPU output matches the CPU reference to near machine precision (main.cu).
+//
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, attn_core.h.
+// THEN READ kernels.cu.
 // ===========================================================================
 #pragma once
 
-#include <vector>
+#include "reference_cpu.h"   // NoteBatch, AttnResult (shared POD shapes)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ---------------------------------------------------------------------------
+// GpuAttnTimings: a small breakdown of where GPU time went, for the stderr
+//   teaching report. All in milliseconds, measured with CUDA events.
+// ---------------------------------------------------------------------------
+struct GpuAttnTimings {
+    float proj_ms  = 0.0f;   // the three projection DGEMMs (Q,K,V)
+    float score_ms = 0.0f;   // the batched QKᵀ DGEMM
+    float soft_ms  = 0.0f;   // the softmax + masking kernel
+    float ctx_ms   = 0.0f;   // the batched A·V DGEMM
+    float total_ms = 0.0f;   // sum of the above (compute only, excludes copies)
+};
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// ---------------------------------------------------------------------------
+// gpu_attention: run ONE self-attention encoder block over the whole batch on
+//   the GPU, filling `res` with the SAME shapes the CPU reference produces
+//   (res.out [B*S*D], res.weights [B*H*S*S]) so main.cu can verify entrywise.
+//     nb  : the loaded batch (token ids, embeddings, dims)
+//     res : output (resized inside), contextualized outputs + attention probs
+//     t   : out-param timing breakdown (CUDA-event measured)
+//   The function owns all device memory + the cuBLAS handle; main.cu just sees
+//   host structs in and out.
+void gpu_attention(const NoteBatch& nb, AttnResult& res, GpuAttnTimings* t);

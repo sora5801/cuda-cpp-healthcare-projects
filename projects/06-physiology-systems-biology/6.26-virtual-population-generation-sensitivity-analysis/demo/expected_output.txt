@@ -1,5 +1,17 @@
 6.26 -- Virtual Population Generation & Sensitivity Analysis
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+virtual population: 4096 Saltelli base samples, k=4 params, 24576 model evals
+PK model: 1-compartment oral, dose=100 mg, AUC over 72 h (720 trapezoid steps)
+parameter ranges (uniform priors):
+  ka  in [0.500, 2.000]
+  CL  in [3.000, 8.000]
+  V   in [20.000, 50.000]
+  F   in [0.600, 1.000]
+population AUC: mean=15.6820  variance=25.8025  (mg.h/L)
+Sobol sensitivity indices (fraction of AUC variance):
+  param   S1(first-order)   ST(total-order)
+  ka            0.0000           0.0000
+  CL            0.7908           0.8018
+  V            -0.0001           0.0000
+  F             0.1949           0.2153
+dominant parameter (largest S1): CL
+RESULT: PASS (GPU matches CPU; raw AUC and Sobol indices within tol=1.0e-09)

@@ -1,5 +1,7 @@
 7.18 -- Retinal Fundus AI Screening
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+[teaching CNN inference: conv->relu->pool x2 -> GAP -> FC -> softmax]
+image: 32x32 RGB  (channel-major, normalized [0,1])
+predicted DR grade: 2 moderate
+class probabilities: 0.211474 0.201075 0.233411 0.154383 0.199657
+Grad-CAM 8x8 peak = 0.225891 at (row=4,col=2)
+RESULT: PASS (GPU matches CPU within tol=1.0e-03; same grade)

@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 6.26 -- Virtual Population Generation & Sensitivity Analysis   (template skeleton)
+# Project 6.26 : Virtual Population Generation & Sensitivity Analysis
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/virtual-population-generation-sensitivity-analysis.sln (CLAUDE.md §5). Both

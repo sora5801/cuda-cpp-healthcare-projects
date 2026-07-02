@@ -1,122 +1,104 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: assimilate a pressure waveform, verify, report
 // ---------------------------------------------------------------------------
-// Project 6.27 -- Parameter Estimation & Data Assimilation for Physiological Models   (template skeleton)
+// Project 6.27 : Parameter Estimation & Data Assimilation for Physiological Models
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (every project in this repo follows it):
+//   1. Load the EnKF config (data/sample) and synthesize the noisy observations
+//      from a KNOWN true patient (a "twin experiment").
+//   2. CPU reference: run the whole Ensemble Kalman Filter serially.
+//   3. GPU: run the SAME filter with the ensemble forecast on the device.
+//   4. VERIFY: the two final ensembles match member-for-member (same integrator +
+//      same shared analysis + same seeds -> round-off agreement).
+//   5. REPORT: deterministic estimate + recovery accuracy -> stdout; timing -> stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-deterministic so demo/run_demo can diff it; timings and other
+//   run-varying numbers go to STDERR (shown, not diffed) -- docs/PATTERNS.md §3.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then windkessel.h (the model + RK4), reference_cpu.cpp
+// (observations, ensemble, the EnKF analysis), kernels.cu (the GPU forecast).
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // run_enkf_gpu, forecast_gpu
+#include "reference_cpu.h"    // load_config, synthesize_observations, run_enkf_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "6.27";
 static const char* PROJECT_NAME = "Parameter Estimation & Data Assimilation for Physiological Models";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Verification tolerance. CPU and GPU run the SAME double-precision RK4 forecast
+// (shared windkessel.h) and the SAME host analysis with identical seeds, so the
+// per-member states differ only by floating-point re-association across the many
+// windows -- a tiny physical tolerance covers it (docs/PATTERNS.md §4). We report
+// the actual worst diff on stderr so the honesty is visible.
+static constexpr double TOLERANCE = 1.0e-6;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load config + synthesize the "measured" observations -----------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/enkf_config.txt";
+    EnKFConfig c;
+    try {
+        c = load_config(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const std::vector<double> obs = synthesize_observations(c);
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference EnKF (timed) -------------------------------------
+    std::vector<double> ens_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    const EnKFResult cpu = run_enkf_cpu(c, obs, ens_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
-    float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    // ---- 3. GPU EnKF (device forecast; kernel time summed inside) ----------
+    std::vector<double> ens_gpu;
+    float gpu_forecast_ms = 0.0f;
+    const EnKFResult gpu = run_enkf_gpu(c, obs, ens_gpu, &gpu_forecast_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify: final ensembles agree member-for-member ----------------
+    double worst = 0.0;
+    for (std::size_t i = 0; i < ens_cpu.size(); ++i)
+        worst = std::fmax(worst, std::fabs(ens_cpu[i] - ens_gpu[i]));
+    const bool pass = (ens_cpu.size() == ens_gpu.size()) && (worst <= TOLERANCE);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT --------------------------------
+    // Relative recovery error of the estimate against the KNOWN truth -- this is
+    // the science check (did data assimilation actually recover the parameters?),
+    // stronger than mere CPU==GPU agreement (docs/PATTERNS.md §4).
+    const double R_err = 100.0 * std::fabs(gpu.R_hat - c.R_true) / c.R_true;
+    const double C_err = 100.0 * std::fabs(gpu.C_hat - c.C_true) / c.C_true;
+    // Prior error (before assimilation) so the reader sees how far the filter moved.
+    const double R_prior_err = 100.0 * std::fabs(c.R_prior - c.R_true) / c.R_true;
+    const double C_prior_err = 100.0 * std::fabs(c.C_prior - c.C_true) / c.C_true;
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("two-element Windkessel; EnKF joint state-parameter estimation\n");
+    std::printf("ensemble=%d  windows=%d  window=%.3fs (%d x dt=%.3fs)  obs_noise=%.1f mmHg\n",
+                c.m, c.n_obs, enkf_window_len(c), c.substeps, c.dt, c.obs_noise);
+    std::printf("true    : R=%.4f mmHg*s/mL   C=%.4f mL/mmHg\n", c.R_true, c.C_true);
+    std::printf("prior   : R=%.4f (%.1f%% off)   C=%.4f (%.1f%% off)\n",
+                c.R_prior, R_prior_err, c.C_prior, C_prior_err);
+    std::printf("estimate: R=%.4f (%.2f%% err)   C=%.4f (%.2f%% err)\n",
+                gpu.R_hat, R_err, gpu.C_hat, C_err);
+    std::printf("posterior spread: R_std=%.4f   C_std=%.4f\n", gpu.R_std, gpu.C_std);
+    std::printf("final ensemble-mean pressure RMSE vs obs = %.4f mmHg\n", gpu.final_rmse);
+    std::printf("RESULT: %s (GPU EnKF matches CPU within tol=1.0e-06)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR --------------------------------------
+    std::fprintf(stderr, "[data]   source: %s\n", path.c_str());
+    std::fprintf(stderr, "[cpu]    estimate R=%.6f C=%.6f (matches GPU headline to printed digits)\n",
+                 cpu.R_hat, cpu.C_hat);
+    std::fprintf(stderr, "[timing] CPU total: %.3f ms   GPU forecast (summed over %d windows): %.3f ms\n",
+                 cpu_ms, c.n_obs, gpu_forecast_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- tiny ensembles are launch/PCIe-bound; the GPU "
+                         "forecast wins as ensemble size and per-member cost grow.\n");
+    std::fprintf(stderr, "[verify] worst per-member state diff = %.3e  (tolerance %.1e)\n", worst, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

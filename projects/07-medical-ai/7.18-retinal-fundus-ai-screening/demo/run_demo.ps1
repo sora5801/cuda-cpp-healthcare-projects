@@ -1,7 +1,7 @@
 # ===========================================================================
 # demo/run_demo.ps1  --  One command: build (if needed) + run + verify
 # ---------------------------------------------------------------------------
-# Project 7.18 -- Retinal Fundus AI Screening   (template skeleton)
+# Project 7.18 : Retinal Fundus AI Screening
 #
 # WHAT IT DOES (CLAUDE.md §6.3)
 #   1. Ensure the Release exe exists (build it with MSBuild if missing).
@@ -18,7 +18,7 @@ $ProjectRoot = Split-Path -Parent $Demo
 $Slug        = "retinal-fundus-ai-screening"
 $Sln         = Join-Path $ProjectRoot "build\$Slug.sln"
 $Exe         = Join-Path $ProjectRoot "build\x64\Release\$Slug.exe"
-$Sample      = Join-Path $ProjectRoot "data\sample\saxpy_sample.txt"
+$Sample      = Join-Path $ProjectRoot "data\sample\fundus_sample.txt"
 $Expected    = Join-Path $Demo "expected_output.txt"
 
 function Find-MSBuild {

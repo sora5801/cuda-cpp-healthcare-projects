@@ -2,7 +2,7 @@
   "id": "7.2",
   "id_padded": "7.02",
   "project": "Drug-Target Interaction Prediction (GNN)",
-  "status": "todo",
+  "status": "done",
   "owner": "",
   "branch": "",
   "skeleton": true

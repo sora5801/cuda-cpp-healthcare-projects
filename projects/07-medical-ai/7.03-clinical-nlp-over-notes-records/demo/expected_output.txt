@@ -1,5 +1,14 @@
 7.3 -- Clinical NLP over Notes & Records
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+batch: B=4 notes, S=8 tokens, D=8 dim, H=2 heads (dh=4) [SYNTHETIC]
+per-note attention (head 0): pronoun 'he' attends most to ->
+  note 0: 'he'@5 -> 'patient'@1  (weight=0.1972)
+  note 1: 'he'@5 -> 'patient'@1  (weight=0.1883)
+  note 2: 'he'@5 -> 'patient'@1  (weight=0.2304)
+  note 3: 'he'@4 -> 'patient'@1  (weight=0.1885)
+coreference link 'he'->'patient' recovered in 4 / 4 notes
+per-note [CLS] summary (head 0 attention entropy; output L2 norm):
+  note 0: entropy=1.8949 nats   ||CLS_out||=0.7638
+  note 1: entropy=1.9367 nats   ||CLS_out||=0.8929
+  note 2: entropy=1.9316 nats   ||CLS_out||=0.4693
+  note 3: entropy=1.7473 nats   ||CLS_out||=0.8754
+RESULT: PASS (GPU attention matches CPU within tol)

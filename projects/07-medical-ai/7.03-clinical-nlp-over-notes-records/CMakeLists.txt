@@ -31,3 +31,8 @@ add_executable(clinical-nlp-over-notes-records
 
 # So #include "kernels.cuh" and "util/..." resolve from src/.
 target_include_directories(clinical-nlp-over-notes-records PRIVATE src)
+
+# cuBLAS provides the GEMMs at the heart of the transformer attention block
+# (projections + batched Q*K^T / A*V). See src/kernels.cu and BUILD_GUIDE 7b.
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(clinical-nlp-over-notes-records PRIVATE CUDA::cublas)

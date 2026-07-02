@@ -6,32 +6,54 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+Automated screening for diabetic retinopathy (DR) grades colour photographs of
+the back of the eye (the *fundus*) on a 0–4 severity scale. The workhorse is a
+**convolutional neural network (CNN)**: stacked convolution + activation +
+pooling layers that turn raw pixels into a small feature vector, followed by a
+linear classifier. This project implements that CNN **forward pass (inference)**
+on the GPU as a heavily-commented teaching model — the same skeleton as
+EfficientNet/Swin/RETFound, but small and with **fixed (untrained) weights** so
+it runs deterministically with no training run, no ML framework, and no
+downloads. The headline GPU lesson is the **shared-memory tiled 2-D
+convolution**, the 2-D analog of flagship 7.10.
 
 ## What this computes & why the GPU helps
 
-Classifies diabetic retinopathy, glaucoma, and age-related macular degeneration from colour fundus photographs or OCT scans. High-resolution fundus images (typically 2048×2048) require significant GPU memory for batch processing; ResNet, EfficientNet, and Swin-Transformer backbones fine-tuned on annotated fundus datasets are the standard approach. GPU tensor cores accelerate the backbone convolutions in batch; simultaneous inference across both eyes and multiple pathologies (multi-task heads) doubles effective throughput. Real-world screening pipelines process millions of images annually, making GPU throughput a primary operational concern.
+Classifies diabetic retinopathy (and, in production, glaucoma and AMD) from
+colour fundus photographs. High-resolution fundus images (typically 2048×2048)
+require significant GPU memory for batch processing; ResNet, EfficientNet, and
+Swin-Transformer backbones fine-tuned on annotated fundus datasets are the
+standard approach. GPU tensor cores accelerate the backbone convolutions in
+batch; simultaneous inference across both eyes and multiple pathologies
+(multi-task heads) doubles effective throughput. Real-world screening pipelines
+process millions of images annually, making GPU throughput a primary operational
+concern.
 
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+**The parallel bottleneck:** the **convolution layers**. Every output pixel of
+every feature map is an independent `K×K×C_in` multiply-accumulate over a local
+neighbourhood — millions of them per image, all independent. We give each output
+pixel its own GPU thread and stage each input tile in **shared memory** once (a
+halo tile) so neighbouring threads reuse loads instead of re-reading global
+memory `K×K` times. Pooling, global-average-pooling (a block reduction), and the
+tiny classifier round out the pipeline.
 
 ## The algorithm in brief
 
-EfficientNet-B4/B5 (winner of EyePACS 2019), Swin Transformer, Grad-CAM for lesion localisation, multi-task classification (DR grade + glaucoma + AMD), self-supervised pretraining on unlabelled fundus images, uncertainty calibration for referral decisions.
+- **2-D convolution + ReLU** (`conv_relu_tiled`) — the shared-memory tiling kernel.
+- **2×2 max-pool** — halve spatial size, keep the strongest activation.
+- Two conv→ReLU→pool blocks (3→6→12 feature maps), then **global average pool**
+  → a 12-D embedding.
+- **Fully-connected classifier** → 5 logits → **softmax** → argmax = DR grade.
+- **Grad-CAM-style class-activation map** for lesion localisation (catalog
+  "Grad-CAM").
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+Production systems add: learned weights (trained on EyePACS/APTOS), deeper
+backbones (EfficientNet-B4/B5, Swin Transformer), self-supervised pretraining
+(RETFound), multi-task heads, and uncertainty calibration for referral. See
+[THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
+derivation and §7 for what a *trained* model changes.
 
 ## Build
 
@@ -56,53 +78,113 @@ msbuild build\retinal-fundus-ai-screening.sln /p:Configuration=Release /p:Platfo
 ./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+The demo builds if needed, runs on `data/sample/fundus_sample.txt`, prints the
+predicted grade + probabilities + Grad-CAM peak, shows the GPU-vs-CPU agreement
+check, and prints a timing line.
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
+- **Sample (committed):** `data/sample/fundus_sample.txt` — one tiny, clearly
+  **synthetic** 3×32×32 colour "fundus-like" image so the demo runs offline with
+  zero downloads.
+- **Full dataset:** `scripts/download_data.ps1` / `.sh` print instructions and
+  links (all real datasets are account-gated; the scripts never bypass a login).
+  `scripts/make_synthetic.py` regenerates the synthetic sample at any size.
 - **Provenance & license:** see [data/README.md](data/README.md).
 
-Catalog dataset notes: EyePACS — 88,000 labelled fundus images, 5-grade DR severity (Kaggle, verify URL) APTOS 2019 — 3,662 fundus images, DR grading competition (Kaggle, verify URL) DRIVE / STARE — retinal vessel segmentation datasets (verify URL) UK Biobank Retinal Imaging — 68k retinal fundus images with linked health records (https://www.ukbiobank.ac.uk/)
+Catalog dataset notes: EyePACS — 88,000 labelled fundus images, 5-grade DR
+severity (Kaggle, verify URL); APTOS 2019 — 3,662 fundus images (Kaggle, verify
+URL); DRIVE / STARE — vessel segmentation (verify URL); UK Biobank Retinal
+Imaging — 68k fundus images with linked health records
+(<https://www.ukbiobank.ac.uk/>).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+Success looks like [`demo/expected_output.txt`](demo/expected_output.txt):
+
+```
+7.18 -- Retinal Fundus AI Screening
+[teaching CNN inference: conv->relu->pool x2 -> GAP -> FC -> softmax]
+image: 32x32 RGB  (channel-major, normalized [0,1])
+predicted DR grade: 2 moderate
+class probabilities: 0.211474 0.201075 0.233411 0.154383 0.199657
+Grad-CAM 8x8 peak = 0.225891 at (row=4,col=2)
+RESULT: PASS (GPU matches CPU within tol=1.0e-03; same grade)
+```
+
+The program runs the forward pass on both the **GPU** (`src/kernels.cu`) and a
+**CPU reference** (`src/reference_cpu.cpp`) using the *same* per-pixel math
+(`src/cnn_core.h`), and asserts the logits/probabilities/CAM agree within `1e-3`
+**and** that both predict the same grade — that agreement is the correctness
+guarantee. (The actual error is ~`1e-8`; the tolerance covers float-summation
+order in the average-pool reduction — see THEORY §5.)
 
 ## Code tour
 
 Read in this order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. [`src/main.cu`](src/main.cu) — loads the image, runs CPU + GPU, verifies, reports.
+2. [`src/cnn_core.h`](src/cnn_core.h) — the shared `__host__ __device__` per-pixel
+   math (conv MAC, ReLU, max-pool) that guarantees CPU==GPU parity.
+3. [`src/reference_cpu.h`](src/reference_cpu.h) / [`.cpp`](src/reference_cpu.cpp) —
+   the image/model containers and the trusted serial forward pass.
+4. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the tiling idea.
+5. [`src/kernels.cu`](src/kernels.cu) — the tiled conv, pool, GAP, FC, and CAM kernels.
+6. [`src/util/`](src/util/) — shared `CUDA_CHECK`, CUDA-event timer, I/O helpers.
 
 ## Prior art & further reading
 
-EfficientDet / EfficientNet (https://github.com/google/automl/tree/master/efficientnet) — strong fundus baselines MONAI (https://github.com/Project-MONAI/MONAI) — fundus classification pipelines RETFound (https://github.com/rmaphoh/RETFound_MAE) — MAE-pretrained retinal foundation model on 1.6M fundus images DeepDR Plus (verify URL) — end-to-end diabetic retinopathy screening system
+- **EfficientNet / EfficientDet** (<https://github.com/google/automl/tree/master/efficientnet>)
+  — strong fundus baselines; study the compound-scaling idea behind the depth we
+  omit.
+- **MONAI** (<https://github.com/Project-MONAI/MONAI>) — production medical-imaging
+  pipelines; see its fundus classification transforms and training loops.
+- **RETFound** (<https://github.com/rmaphoh/RETFound_MAE>) — a masked-autoencoder
+  foundation model pretrained on 1.6M fundus images; the self-supervised
+  pretraining we mention in "further work".
+- **DeepDR Plus** — end-to-end DR screening system (verify URL).
 
 Study these to learn the production approach; **do not copy code wholesale** —
 reimplement didactically and credit the source (CLAUDE.md §2).
 
 ## CUDA pattern used here
 
-cuDNN for EfficientNet/Swin convolutions, TensorRT for clinic deployment; pattern: data-parallel fine-tuning on high-resolution fundus batches with gradient accumulation. --
+**Shared-memory tiling** for the convolution layers (the 2-D version of the 1-D
+tiling in flagship 7.10): a block loads a haloed input tile into on-chip shared
+memory once, then every thread reads its `K×K` window from there. Plus a **block
+reduction** for global average pooling and small element-wise kernels for
+pooling / classifier / CAM. Production stacks use **cuDNN** for the convolutions
+and **TensorRT** for deployment; this project hand-writes the conv so the
+mechanism is not a black box (CLAUDE.md §6.1.6).
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Bigger, faster.** Regenerate a 128×128 sample (`make_synthetic.py --size
+   128`) and watch the stderr timing: the GPU's edge over the CPU grows as the
+   image (and thus the conv work) grows. At what size does the GPU overtake the
+   CPU on your card?
+2. **Tune the tile.** Change `TILE` in `kernels.cuh` (e.g. 8, 16, 32) and compare
+   kernel time. Note the shared-memory-per-block limit and occupancy trade-off.
+3. **Add a layer.** Extend the model to a third conv→ReLU→pool block (update
+   `cnn_core.h` shapes, `make_fixed_model`, both forward paths). Does CPU==GPU
+   still hold?
+4. **True Grad-CAM.** Our CAM uses the FC weights directly; implement gradient-
+   based Grad-CAM (backprop the winning logit to the last conv feature maps) and
+   compare the heatmaps.
+5. **Load a real image.** Convert a real fundus photo to the text format
+   (`data/README.md`), run it, and confirm the (untrained) pipeline still
+   produces a valid probability vector — a reminder that architecture ≠ accuracy.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+- **Not for clinical use.** The weights are **fixed and untrained**, so the
+  predicted grade is meaningless as a diagnosis — this demonstrates the CNN
+  *inference pipeline*, not diagnostic performance.
+- **Synthetic data.** The committed image is hand-drawn and clearly synthetic; it
+  is not a real retina.
+- **Reduced scope.** Two shallow conv layers vs. the dozens in EfficientNet/Swin;
+  no batch norm, no learned weights, no multi-task heads, single image (no batch),
+  fixed small resolution. THEORY §7 lists exactly what production changes.
+- **Teaching kernels.** The conv kernel favours clarity over peak throughput (no
+  `im2col`+GEMM, no Tensor Cores, no cuDNN); it is fast enough to teach the
+  tiling idea and to verify against the CPU, not to set records.

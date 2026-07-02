@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 181/301 projects done (60.1%) | todo 120 | in-progress 0 | missing 0
+**Progress:** 187/301 projects done (62.1%) | todo 114 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
-| 🟢 Beginner | 67 | 54 | 0 | 13 |
-| 🟡 Intermediate | 206 | 116 | 0 | 90 |
+| 🟢 Beginner | 67 | 57 | 0 | 10 |
+| 🟡 Intermediate | 206 | 119 | 0 | 87 |
 | 🔴 Advanced | 28 | 11 | 0 | 17 |
 
 ## 1. Drug Discovery & Molecular Design  (35/35 done)
@@ -183,7 +183,7 @@
 | 5.14 | GPU-Accelerated Adaptive MR-Linac Workflow | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 5.15 | Proton CT & Ion Imaging Reconstruction | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 
-## 6. Computational Physiology & Systems Biology  (25/27 done)
+## 6. Computational Physiology & Systems Biology  (27/27 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -212,16 +212,16 @@
 | 6.23 | Glucose-Insulin Dynamics & Artificial Pancreas | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 6.24 | Reaction-Diffusion Morphogenesis (Turing Patterns) | 🟢 Beginner | Established | [x] done | - | - |
 | 6.25 | Liver & Kidney Perfusion Modeling | 🟡 Intermediate | Active R&D | [x] done | - | - |
-| 6.26 | Virtual Population Generation & Sensitivity Analysis | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 6.27 | Parameter Estimation & Data Assimilation for Physiological Models | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 6.26 | Virtual Population Generation & Sensitivity Analysis | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 6.27 | Parameter Estimation & Data Assimilation for Physiological Models | 🟡 Intermediate | Active R&D | [x] done | - | - |
 
-## 7. Medical AI & Clinical Deep Learning  (1/19 done)
+## 7. Medical AI & Clinical Deep Learning  (5/19 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
-| 7.01 | Diagnostic Imaging Classifier | 🟢 Beginner | Established | [ ] todo | - | - |
-| 7.02 | Drug-Target Interaction Prediction (GNN) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 7.03 | Clinical NLP over Notes & Records | 🟢 Beginner | Established | [ ] todo | - | - |
+| 7.01 | Diagnostic Imaging Classifier | 🟢 Beginner | Established | [x] done | - | - |
+| 7.02 | Drug-Target Interaction Prediction (GNN) | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 7.03 | Clinical NLP over Notes & Records | 🟢 Beginner | Established | [x] done | - | - |
 | 7.04 | Medical Image Synthesis & Augmentation (Generative) | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 7.05 | Federated Learning for Healthcare | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 7.06 | Survival Analysis & Risk Prediction | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
@@ -236,7 +236,7 @@
 | 7.15 | Uncertainty & Out-of-Distribution Detection in Medical AI | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
 | 7.16 | Continual Learning & Concept Drift Adaptation | 🔴 Advanced | Frontier/Theoretical | [ ] todo | - | - |
 | 7.17 | Model Distillation & Compression for Edge Deployment | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 7.18 | Retinal Fundus AI Screening | 🟢 Beginner | Established | [ ] todo | - | - |
+| 7.18 | Retinal Fundus AI Screening | 🟢 Beginner | Established | [x] done | - | - |
 | 7.19 | Polygenic Risk Score Computation at Scale | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 
 ## 8. Neuroscience & Brain-Computer Interfaces  (1/16 done)

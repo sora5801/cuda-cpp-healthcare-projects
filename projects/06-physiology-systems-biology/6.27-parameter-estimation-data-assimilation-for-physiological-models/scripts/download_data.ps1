@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 6.27 -- Parameter Estimation & Data Assimilation for Physiological Models   (template skeleton)
+# Project 6.27 : Parameter Estimation & Data Assimilation for Physiological Models
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URLs, and NEVER
+# bypasses credentials/registration. The clinical waveform datasets below all
+# require registration/credentialed access, so this script only prints
+# instructions + links and defers to scripts/make_synthetic.py for the offline,
+# fully-reproducible synthetic stand-in the demo actually uses.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -14,20 +15,16 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $DataDir = Join-Path $ProjectRoot "data"
 
-Write-Host "[download_data] Project 6.27 -- Parameter Estimation & Data Assimilation for Physiological Models"
+Write-Host "[download_data] Project 6.27 -- Parameter Estimation & Data Assimilation"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    PhysioNet MIMIC clinical waveforms (https://physionet.org); UK Biobank cardiac functional parameters (https://www.ukbiobank.ac.uk); Zenodo cardiac mechanics emulation dataset (https://zenodo.org/records/7075055); openCARP community experiments (https://opencarp.org/community/community-experiments)."
+Write-Host "The demo runs entirely on the committed SYNTHETIC sample (data/sample/enkf_config.txt)."
+Write-Host "Real clinical waveform / cardiac-parameter datasets (all require registration):"
+Write-Host "  * PhysioNet MIMIC clinical waveforms  https://physionet.org  (credentialed)"
+Write-Host "  * UK Biobank cardiac functional params https://www.ukbiobank.ac.uk  (application)"
+Write-Host "  * Zenodo cardiac mechanics emulation   https://zenodo.org/records/7075055"
+Write-Host "  * openCARP community experiments       https://opencarp.org/community/community-experiments"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
-Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "This script does NOT attempt to bypass any credential wall (CLAUDE.md 8)."
+Write-Host "For a larger SYNTHETIC problem instead, run:"
+Write-Host "    python scripts/make_synthetic.py --ensemble 1024 --windows 80"

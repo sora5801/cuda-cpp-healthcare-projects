@@ -1,5 +1,9 @@
 6.27 -- Parameter Estimation & Data Assimilation for Physiological Models
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+two-element Windkessel; EnKF joint state-parameter estimation
+ensemble=256  windows=40  window=0.080s (16 x dt=0.005s)  obs_noise=1.0 mmHg
+true    : R=1.0000 mmHg*s/mL   C=1.5000 mL/mmHg
+prior   : R=1.4000 (40.0% off)   C=1.0000 (33.3% off)
+estimate: R=0.9986 (0.14% err)   C=1.4675 (2.17% err)
+posterior spread: R_std=0.0030   C_std=0.0173
+final ensemble-mean pressure RMSE vs obs = 1.7036 mmHg
+RESULT: PASS (GPU EnKF matches CPU within tol=1.0e-06)

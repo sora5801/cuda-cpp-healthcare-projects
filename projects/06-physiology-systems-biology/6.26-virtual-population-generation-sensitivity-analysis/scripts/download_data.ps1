@@ -1,12 +1,13 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Realistic virtual-population pointers (Windows)
 # ---------------------------------------------------------------------------
-# Project 6.26 -- Virtual Population Generation & Sensitivity Analysis   (template skeleton)
+# Project 6.26 : Virtual Population Generation & Sensitivity Analysis
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, and NEVER bypasses
+# credentials/registration. There is nothing to download for the demo -- the
+# study is generated from data/sample/vpop_config.txt. This script only prints
+# where the REAL physiology/PBPK data lives and defers to make_synthetic.py for
+# a larger offline study.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -15,19 +16,21 @@ $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 6.26 -- Virtual Population Generation & Sensitivity Analysis"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    NHANES anthropometric/physiological data (https://www.cdc.gov/nchs/nhanes/); WHO growth reference datasets (https://www.who.int/tools/growth-reference-data-for-5to19-years); OSP PBPK model library (https://github.com/Open-Systems-Pharmacology/OSP-PBPK-Model-Library); FDA drug label PK data (https://www.fda.gov/drugs)."
+Write-Host "There is no file to download: the demo's virtual population is"
+Write-Host "generated deterministically from data/sample/vpop_config.txt."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "For a REALISTIC virtual population + sensitivity workflow, use:"
+Write-Host "  NHANES physiology  : https://www.cdc.gov/nchs/nhanes/"
+Write-Host "  WHO growth data    : https://www.who.int/tools/growth-reference-data-for-5to19-years"
+Write-Host "  OSP PBPK library   : https://github.com/Open-Systems-Pharmacology/OSP-PBPK-Model-Library"
+Write-Host "  FDA drug-label PK  : https://www.fda.gov/drugs"
+Write-Host "  SALib (reference)  : https://github.com/SALib/SALib"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "These are externally licensed; respect each source's terms. This"
+Write-Host "script does NOT attempt to bypass any registration."
+Write-Host ""
+Write-Host "Bigger SYNTHETIC study (no download):"
+Write-Host "  python scripts/make_synthetic.py --N 16384"
+Write-Host ""
+Write-Host "Target data dir: $DataDir"

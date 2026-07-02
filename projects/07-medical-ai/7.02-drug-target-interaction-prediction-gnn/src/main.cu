@@ -1,122 +1,111 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: score drug x protein pairs, verify, report
 // ---------------------------------------------------------------------------
-// Project 7.2 -- Drug-Target Interaction Prediction (GNN)   (template skeleton)
+// Project 7.2 : Drug-Target Interaction Prediction (GNN)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape:
+//   1. Load the batched drug graphs + protein descriptors (data/sample).
+//   2. Build the FIXED (untrained, seeded) GNN weights (reference_cpu.cpp).
+//   3. Run the forward pass on CPU (reference) and GPU (kernels.cu).
+//   4. VERIFY: GPU embeddings + DTI scores match the CPU within a tiny tolerance.
+//   5. REPORT: deterministic DTI score matrix + the top-ranked pair to stdout;
+//      timing + verification detail to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// STDOUT is byte-for-byte deterministic (fixed weights, fixed-order reductions)
+// so demo/run_demo can diff it against demo/expected_output.txt. Timings go to
+// STDERR (shown, not diffed).
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then gnn.h (the math), kernels.cuh, kernels.cu,
+// reference_cpu.cpp.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // dti_gpu, Dataset, GnnModel
+#include "reference_cpu.h"    // load_dataset, build_model, dti_cpu
+#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "7.2";
 static const char* PROJECT_NAME = "Drug-Target Interaction Prediction (GNN)";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Verification tolerance. The CPU and GPU run identical math (gnn.h); the only
+// divergence is the GPU's fused multiply-add (FMA) contracting `a*b + c` into a
+// single rounding, vs. the host's two-step rounding. Over these tiny sums that
+// difference is ~1e-6, so 1e-4 on a probability in [0,1] is safe and honest
+// (PATTERNS.md sec 4 -- "same exact operations, small FP tolerance").
+static constexpr double TOLERANCE = 1.0e-4;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/dti_sample.txt";
+    Dataset d;
+    try {
+        d = load_dataset(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. Fixed (untrained, seeded) model --------------------------------
+    const GnnModel model = build_model();
+
+    // ---- 3a. CPU reference (timed) -----------------------------------------
+    std::vector<float> emb_cpu, score_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    dti_cpu(d, model, emb_cpu, score_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3b. GPU forward pass (kernels timed inside the wrapper) -----------
+    std::vector<float> emb_gpu, score_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    dti_gpu(d, model, emb_gpu, score_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (embeddings + scores) -----------------------------------
+    const double emb_err   = util::max_abs_err(emb_cpu, emb_gpu);
+    const double score_err = util::max_abs_err(score_cpu, score_gpu);
+    const bool pass = (emb_err <= TOLERANCE) && (score_err <= TOLERANCE);
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // Find the top-scoring pair from the GPU matrix (deterministic argmax: ties
+    // -> lowest flat index). This is the model's single best DTI prediction and
+    // the number the demo highlights.
+    int best_j = 0;
+    for (int j = 1; j < d.D * d.P; ++j)
+        if (score_gpu[j] > score_gpu[best_j]) best_j = j;
+    const int best_drug = best_j / d.P;
+    const int best_prot = best_j % d.P;
+
+    // ---- 5a. Deterministic report -> STDOUT --------------------------------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("[reduced-scope teaching model: FIXED (untrained) message-passing GNN]\n");
+    std::printf("batch: %d drugs x %d proteins, %d atoms total, F=%d, T=%d rounds\n",
+                d.D, d.P, d.total_nodes, GNN_F, GNN_T);
+    std::printf("DTI score matrix (rows = drugs, cols = proteins), probabilities:\n");
+    for (int drug = 0; drug < d.D; ++drug) {
+        std::printf("  drug %d:", drug);
+        for (int p = 0; p < d.P; ++p)
+            std::printf(" %.4f", score_gpu[static_cast<std::size_t>(drug) * d.P + p]);
+        std::printf("\n");
+    }
+    std::printf("top interaction: drug %d <-> protein %d  (score %.4f)\n",
+                best_drug, best_prot, score_gpu[best_j]);
+    std::printf("implanted ground truth: drug %d <-> protein %d  -> %s\n",
+                d.true_drug, d.true_prot,
+                (best_drug == d.true_drug && best_prot == d.true_prot) ? "RECOVERED" : "not top");
+    std::printf("RESULT: %s (GPU embeddings+scores match CPU)\n", pass ? "PASS" : "FAIL");
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR --------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d drugs, %d proteins, %d atoms)\n",
+                 path.c_str(), d.D, d.P, d.total_nodes);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernels: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- tiny batch is launch-bound; the GPU's edge "
+                         "grows to millions of compounds x thousands of targets.\n");
+    std::fprintf(stderr, "[verify] max |emb_cpu-emb_gpu| = %.3e, max |score_cpu-score_gpu| = %.3e "
+                         "(tolerance %.1e)\n", emb_err, score_err, TOLERANCE);
+    std::fprintf(stderr, "[honesty] weights are UNTRAINED (seeded); scores are illustrative, "
+                         "NOT clinical binding predictions.\n");
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

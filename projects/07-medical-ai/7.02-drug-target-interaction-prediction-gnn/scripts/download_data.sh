@@ -1,33 +1,36 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real DTI-dataset pointers (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 7.2 -- Drug-Target Interaction Prediction (GNN)   (template skeleton)
+# Project 7.2 : Drug-Target Interaction Prediction (GNN)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# Nothing to auto-download: the demo runs fully offline on the tiny synthetic
+# sample in data/sample/. This script prints where the REAL datasets live and how
+# to convert them into this project's loader format (data/README.md). It NEVER
+# bypasses registration/credentials (CLAUDE.md sec 8).
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
 echo "[download_data] Project 7.2 -- Drug-Target Interaction Prediction (GNN)"
-echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    BindingDB — ~2.9 million measured binding affinities for drug-target pairs (https://www.bindingdb.org/) ChEMBL — curated bioactivity database with >20M activity records (https://www.ebi.ac.uk/chembl/) Davis Kinase Dataset — kinase inhibitor affinities for 442 kinases × 68 drugs (verify URL) KIBA — integrated kinase inhibitor bioactivity benchmark (verify URL)"
+echo "The demo runs on a SYNTHETIC sample (data/sample/dti_sample.txt); nothing"
+echo "to fetch. Real DTI benchmarks (featurize molecular graphs + protein vectors,"
+echo "then write the format in data/README.md):"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  BindingDB : https://www.bindingdb.org/     (~2.9M measured Kd/Ki affinities)"
+echo "  ChEMBL    : https://www.ebi.ac.uk/chembl/   (>20M bioactivity records)"
+echo "  Davis     : kinase inhibitor affinities, 442 kinases x 68 drugs"
+echo "  KIBA      : integrated kinase-inhibitor bioactivity benchmark"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Toolkits that featurize + train the full model:"
+echo "  DeepPurpose : https://github.com/kexinhuang12345/DeepPurpose"
+echo "  TorchDrug   : https://github.com/DeepGraphLearning/torchdrug"
+echo "  DGL-LifeSci : https://github.com/awslabs/dgl-lifesci"
+echo
+echo "Bigger SYNTHETIC batch (no download):"
+echo "  python scripts/make_synthetic.py --drugs 64 --proteins 16"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

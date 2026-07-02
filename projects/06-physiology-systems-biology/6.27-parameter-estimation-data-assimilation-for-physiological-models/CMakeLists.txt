@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 6.27 -- Parameter Estimation & Data Assimilation for Physiological Models   (template skeleton)
+# Project 6.27 : Parameter Estimation & Data Assimilation for Physiological Models
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/parameter-estimation-data-assimilation-for-physiological-models.sln (CLAUDE.md §5). Both

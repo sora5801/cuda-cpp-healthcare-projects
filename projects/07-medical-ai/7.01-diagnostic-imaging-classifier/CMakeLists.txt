@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 7.1 -- Diagnostic Imaging Classifier   (template skeleton)
+# Project 7.1 : Diagnostic Imaging Classifier   (reduced-scope teaching CNN)
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/diagnostic-imaging-classifier.sln (CLAUDE.md §5). Both

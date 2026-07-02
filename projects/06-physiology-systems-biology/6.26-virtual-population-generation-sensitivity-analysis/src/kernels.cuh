@@ -1,52 +1,44 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU Saltelli-evaluation interface
 // ---------------------------------------------------------------------------
-// Project 6.26 -- Virtual Population Generation & Sensitivity Analysis   (template skeleton)
+// Project 6.26 : Virtual Population Generation & Sensitivity Analysis
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE PATTERN (ensemble evaluation, cf. flagships 9.02 SEIR and 13.02 PBPK)
+//   Sobol/Saltelli sensitivity needs N*(k+2) INDEPENDENT model evaluations --
+//   here, N*(k+2) virtual-patient AUC computations, one per Saltelli sample.
+//   Each is a self-contained forward PK solve with no cross-talk, so we assign
+//   ONE GPU THREAD PER EVALUATION: thread g decodes its Saltelli (block,row),
+//   builds its parameter vector, integrates the PK model, and writes one AUC.
+//   The shared per-sample math in vpop.h makes the GPU array match the CPU
+//   reference to round-off; the (cheap, serial) Sobol reduction that turns the
+//   AUC array into indices runs on the host for both arrays (reference_cpu.cpp).
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Included only by .cu translation units (it declares a __global__ kernel, so
+//   the plain C++ host compiler must never see it). The CPU-side declarations
+//   live in the pure-C++ reference_cpu.h.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, vpop.h. Then kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
+#include "reference_cpu.h"   // VpopParams (pure C++, safe to include in a .cu)
+
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// evaluate_kernel: thread `g` computes one Saltelli model evaluation.
+//   P    : population config passed BY VALUE (small POD -> copied into the
+//          kernel's parameter space; every thread reads its own copy, no global
+//          memory traffic for the scalars).
+//   total: N*(k+2), the number of evaluations (guards the ragged last block).
+//   out  : device pointer to `total` doubles; out[g] = AUC of evaluation g.
+__global__ void evaluate_kernel(VpopParams P, long total, double* __restrict__ out);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
+// evaluate_gpu: allocate the device output, launch one thread per Saltelli
+// evaluation, copy the AUC array back, and report the measured KERNEL time
+// (CUDA events) via *kernel_ms. main.cu calls exactly this; the Sobol reduction
+// is done afterward on the host (compute_sobol) for both CPU and GPU arrays.
+//   out       : host output, resized to N*(k+2) (output parameter)
 //   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+void evaluate_gpu(const VpopParams& P, std::vector<double>& out, float* kernel_ms);

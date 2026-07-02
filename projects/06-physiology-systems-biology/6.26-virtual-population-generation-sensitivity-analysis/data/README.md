@@ -1,37 +1,85 @@
 # Data — 6.26 Virtual Population Generation & Sensitivity Analysis
 
-## Committed sample (`sample/`)
+## Committed sample (`sample/vpop_config.txt`)
 
 | Field | Value |
 |---|---|
-| File | `sample/saxpy_sample.txt` |
-| Origin | **Synthetic** (generated; template placeholder) |
+| File | `sample/vpop_config.txt` |
+| Origin | **Synthetic** study configuration (`scripts/make_synthetic.py`) |
 | License | Public domain (CC0) — it is synthetic |
 | Size | < 1 KB |
-| Layout | line 1: `n`; line 2: `a`; line 3: `n` x-values; line 4: `n` y-values |
+| Setup | 4096 Saltelli base samples, k=4 PK params, 1-compartment oral model |
 
-This tiny file lets `demo/run_demo` run **offline, with zero downloads**, which
-is a hard requirement for every project (CLAUDE.md §8).
+The committed "data" is a **study configuration**, not a patient table. The
+virtual patients are generated *deterministically inside the program* from a
+Halton quasi-random sequence (`src/vpop.h`), so the whole study reproduces from
+this one small file — no per-patient rows to ship, and `demo/run_demo` runs
+**offline with zero downloads** (CLAUDE.md §8).
 
-TODO(impl): replace with this project's real tiny sample, and document each
-field's meaning, units, and provenance below.
+### File format (whitespace-separated; the loader skips newlines)
 
-## Full dataset
+```
+dose                # oral dose (mg)
+ka_lo  ka_hi        # first-order absorption rate range (1/h)
+CL_lo  CL_hi        # clearance range (L/h)
+V_lo   V_hi         # central distribution volume range (L)
+F_lo   F_hi         # oral bioavailability range (unitless fraction in (0,1])
+t_end  steps        # AUC integration horizon (h) and trapezoid step count
+N      seed         # Saltelli base sample size, base RNG seed (reserved)
+```
 
-TODO(impl): describe the real dataset(s) from the catalog and how to fetch them:
+Default sample:
 
-- **Source / URL:** (from the catalog "Datasets" column)
-- **License:** respect it. If redistribution is forbidden, the committed sample
-  MUST be synthetic and `make_synthetic.py` provides a stand-in.
-- **Size & checksum:** documented in `scripts/download_data.*`.
-- **Credentialed sets** (MIMIC, UK Biobank, ...): the download script must NOT
-  bypass registration — it prints instructions and links only.
+```
+100
+0.5 2
+3 8
+20 50
+0.6 1
+72 720
+4096 99
+```
 
-Catalog dataset notes (verbatim):
+| Field | Meaning |
+|---|---|
+| `dose` | administered oral dose (mg), a fixed constant |
+| `ka` range | absorption rate: how fast drug enters plasma |
+| `CL` range | clearance: how fast the body removes drug (drives AUC) |
+| `V` range | central volume of distribution |
+| `F` range | oral bioavailability: fraction of dose reaching circulation |
+| `t_end`, `steps` | horizon and grid for the trapezoid AUC integral |
+| `N` | Saltelli base sample size → `N·(k+2) = N·6` total model evaluations |
+| `seed` | reserved (the Halton sequence itself is deterministic) |
 
-> NHANES anthropometric/physiological data (https://www.cdc.gov/nchs/nhanes/); WHO growth reference datasets (https://www.who.int/tools/growth-reference-data-for-5to19-years); OSP PBPK model library (https://github.com/Open-Systems-Pharmacology/OSP-PBPK-Model-Library); FDA drug label PK data (https://www.fda.gov/drugs).
+**Sanity check.** The exposure metric has a closed form `AUC = F·Dose/CL`, so it
+depends only on `F` and `CL`. A correct Sobol analysis therefore attributes
+~all AUC variance to `CL` and `F` and ~0 to `ka` and `V` — the built-in teaching
+check the demo prints.
 
-## Provenance & field meanings
+Bigger study (no download): `python scripts/make_synthetic.py --N 16384`.
 
-TODO(impl): per-field meaning for the real dataset. Never imply clinical
-validity; label synthetic data as synthetic everywhere it appears.
+## "Full dataset" / realistic virtual populations
+
+A production virtual-population + sensitivity workflow replaces our uniform
+priors and toy model with measured physiology and full PBPK:
+
+- **NHANES** anthropometric/physiological data — <https://www.cdc.gov/nchs/nhanes/>
+  (body weight, organ sizes, demographics for realistic parameter distributions).
+- **WHO growth reference data** — <https://www.who.int/tools/growth-reference-data-for-5to19-years>.
+- **OSP PBPK Model Library** — <https://github.com/Open-Systems-Pharmacology/OSP-PBPK-Model-Library>
+  (whole-body PBPK models; PK-Sim's virtual-population module).
+- **FDA drug-label PK data** — <https://www.fda.gov/drugs> (clearance, volume,
+  bioavailability priors for real compounds).
+- **SALib** — <https://github.com/SALib/SALib> (reference Morris/Sobol/FAST
+  implementations to cross-check our indices).
+
+These are external, separately-licensed resources. `scripts/download_data.*`
+prints these pointers and does **not** attempt to bypass any registration.
+
+## Provenance & honesty
+
+The configuration is **synthetic** and the 1-compartment oral PK model is a
+teaching reduction; the parameter ranges are illustrative, not fitted to any
+drug. Outputs are a software demonstration of the Saltelli/Sobol algorithm on a
+GPU — **not** a pharmacokinetic prediction, and **not** for any clinical or
+dosing decision.

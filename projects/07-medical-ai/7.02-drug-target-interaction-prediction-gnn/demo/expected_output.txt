@@ -1,5 +1,13 @@
 7.2 -- Drug-Target Interaction Prediction (GNN)
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+[reduced-scope teaching model: FIXED (untrained) message-passing GNN]
+batch: 6 drugs x 4 proteins, 24 atoms total, F=8, T=2 rounds
+DTI score matrix (rows = drugs, cols = proteins), probabilities:
+  drug 0: 0.5282 0.5182 0.5285 0.5579
+  drug 1: 0.5448 0.5283 0.5444 0.5898
+  drug 2: 0.5645 0.5383 0.5611 0.6260
+  drug 3: 0.5355 0.5203 0.5330 0.5705
+  drug 4: 0.5550 0.5308 0.5501 0.6068
+  drug 5: 0.5972 0.5448 0.5780 0.6820
+top interaction: drug 5 <-> protein 3  (score 0.6820)
+implanted ground truth: drug 5 <-> protein 3  -> RECOVERED
+RESULT: PASS (GPU embeddings+scores match CPU)

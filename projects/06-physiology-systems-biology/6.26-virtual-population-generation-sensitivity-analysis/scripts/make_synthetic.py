@@ -1,48 +1,81 @@
 #!/usr/bin/env python3
 # ===========================================================================
-# scripts/make_synthetic.py  --  Generate the synthetic sample dataset
+# scripts/make_synthetic.py  --  Write the virtual-population / Sobol config
 # ---------------------------------------------------------------------------
-# Project 6.26 -- Virtual Population Generation & Sensitivity Analysis   (template skeleton)
+# Project 6.26 : Virtual Population Generation & Sensitivity Analysis
 #
-# WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+# The "data" is the STUDY SETUP, not per-patient rows: the oral dose, the
+# plausible uniform range for each of the k=4 uncertain PK parameters
+# (ka, CL, V, F), the integration horizon, and the Saltelli base sample size N.
+# The virtual patients themselves are generated deterministically inside the
+# program by a Halton quasi-random sequence (src/vpop.h), so the whole study is
+# reproducible without shipping any patient table.
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
-#
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+# OUTPUT (data/README.md format), whitespace-separated:
+#   dose
+#   ka_lo ka_hi
+#   CL_lo CL_hi
+#   V_lo  V_hi
+#   F_lo  F_hi
+#   t_end steps
+#   N seed
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py
+#   python scripts/make_synthetic.py --N 16384
+#
+# NOTE: the committed sample is SYNTHETIC and illustrative (not fitted to any
+# real drug). See data/README.md for provenance and real-data pointers.
 # ===========================================================================
 import argparse
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "data" / "sample" / "vpop_config.txt"
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
-    ap.add_argument("--out", default=str(OUT), help="output path")
+    ap = argparse.ArgumentParser(description="Write the Sobol virtual-population config.")
+    ap.add_argument("--dose", type=float, default=100.0, help="oral dose (mg)")
+    # Uniform prior ranges for each uncertain parameter (physiologically plausible,
+    # illustrative). ka: absorption; CL: clearance; V: volume; F: bioavailability.
+    ap.add_argument("--ka_lo", type=float, default=0.5, help="ka lower (1/h)")
+    ap.add_argument("--ka_hi", type=float, default=2.0, help="ka upper (1/h)")
+    ap.add_argument("--CL_lo", type=float, default=3.0, help="CL lower (L/h)")
+    ap.add_argument("--CL_hi", type=float, default=8.0, help="CL upper (L/h)")
+    ap.add_argument("--V_lo", type=float, default=20.0, help="V lower (L)")
+    ap.add_argument("--V_hi", type=float, default=50.0, help="V upper (L)")
+    ap.add_argument("--F_lo", type=float, default=0.6, help="F lower (fraction)")
+    ap.add_argument("--F_hi", type=float, default=1.0, help="F upper (fraction)")
+    ap.add_argument("--t_end", type=float, default=72.0, help="AUC horizon (h)")
+    ap.add_argument("--steps", type=int, default=720, help="trapezoid steps over [0,t_end]")
+    ap.add_argument("--N", type=int, default=4096, help="Saltelli base sample size")
+    ap.add_argument("--seed", type=int, default=99)
+    ap.add_argument("--out", default=str(OUT))
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
-
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    # One field per logical line for readability; the C++ loader skips whitespace.
+    text = (
+        f"{args.dose:g}\n"
+        f"{args.ka_lo:g} {args.ka_hi:g}\n"
+        f"{args.CL_lo:g} {args.CL_hi:g}\n"
+        f"{args.V_lo:g} {args.V_hi:g}\n"
+        f"{args.F_lo:g} {args.F_hi:g}\n"
+        f"{args.t_end:g} {args.steps}\n"
+        f"{args.N} {args.seed}\n"
+    )
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    Path(args.out).write_text(text, encoding="utf-8")
+
+    # Analytic sanity numbers the program should reproduce (AUC = F*Dose/CL):
+    #   Sobol variance is driven almost entirely by CL and F because ka and V drop
+    #   out of the closed form. That is the built-in teaching check.
+    total = args.N * (4 + 2)
+    print(f"[make_synthetic] wrote {args.out}")
+    print(f"[make_synthetic] N={args.N} -> {total} model evaluations "
+          f"(N*(k+2) with k=4)")
+    print(f"[make_synthetic] AUC = F*Dose/CL depends only on F,CL -> expect "
+          f"Sobol S(CL)+S(F) ~ 1, S(ka)+S(V) ~ 0")
 
 
 if __name__ == "__main__":

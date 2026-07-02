@@ -2,11 +2,12 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 7.18 -- Retinal Fundus AI Screening   (template skeleton)
+# Project 7.18 : Retinal Fundus AI Screening
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# size, and NEVER bypasses credentials/registration. Every real fundus dataset
+# here is account-gated, so this prints instructions + links only and defers to
+# scripts/make_synthetic.py for an offline stand-in.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,20 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 7.18 -- Retinal Fundus AI Screening"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    EyePACS — 88,000 labelled fundus images, 5-grade DR severity (Kaggle, verify URL) APTOS 2019 — 3,662 fundus images, DR grading competition (Kaggle, verify URL) DRIVE / STARE — retinal vessel segmentation datasets (verify URL) UK Biobank Retinal Imaging — 68k retinal fundus images with linked health records (https://www.ukbiobank.ac.uk/)"
+echo "All real fundus datasets are ACCESS-RESTRICTED. This script does NOT bypass"
+echo "any login or license -- it prints where to get them:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  EyePACS   ~88,000 labelled fundus images, 5-grade DR severity."
+echo "            Kaggle 'Diabetic Retinopathy Detection' (account + rules). Verify URL."
+echo "  APTOS2019 3,662 fundus images, DR grading."
+echo "            Kaggle 'APTOS 2019 Blindness Detection' (account). Verify URL."
+echo "  DRIVE/STARE  retinal vessel-segmentation datasets (registration varies)."
+echo "  UK Biobank  ~68k fundus images + linked health records (credentialed):"
+echo "            https://www.ukbiobank.ac.uk/"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "The committed tiny sample data/sample/fundus_sample.txt runs the demo offline."
+echo "To (re)generate a synthetic fundus image instead:"
+echo "    python scripts/make_synthetic.py --size 32"
+echo
+echo "To use a real image: load it (Pillow), resize to a small square, divide by 255,"
+echo "and write it in the 'C H W label' + channel-major float format (data/README.md)."

@@ -5,29 +5,45 @@
 Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on the committed `data/sample/imaging_sample.txt` (4 synthetic
+   patches + the fixed model weights).
+3. **Verify** the GPU forward pass against the CPU reference
+   (`src/reference_cpu.cpp`) and print a clear `PASS`/`FAIL`. The two share the
+   same `__host__ __device__` math, so the class logits agree **exactly** (tol 0).
+4. **Time** the two kernels (CUDA events) and the CPU baseline — a *teaching
+   artifact*, not a benchmark claim (on 4 tiny images the GPU is launch-bound and
+   slower than the CPU; the edge grows with batch size and resolution).
 
-The program splits its output deliberately:
+The program splits its output deliberately (PATTERNS.md §3):
 
 - **stdout** is byte-for-byte deterministic and is diffed against
   [`expected_output.txt`](expected_output.txt).
-- **stderr** carries the timing and the numeric error (which vary run to run), so
-  it is shown but never diffed.
+- **stderr** carries the timing and the numeric verification error (which vary run
+  to run), so it is shown but never diffed.
+
+## What you are looking at
+
+The per-image table shows, for each patch: the predicted class (`normal`/`lesion`),
+`P(lesion)` from softmax, the ground-truth label, and whether the prediction was
+correct. Then a batch-accuracy line. The two blob patches should read `lesion`
+with `P(lesion) ≈ 1`; the two flat/gradient patches should read `normal`.
 
 ## Expected result
 
 ```
 7.1 -- Diagnostic Imaging Classifier
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+[reduced-scope teaching CNN inference: conv->relu->maxpool->dense->softmax]
+images = 4   geometry = 16x16, 4 filters (3x3), 2 classes
+
+ idx  pred     P(lesion)  truth   ok
+   0  lesion     1.0000    lesion  yes
+   1  lesion     0.9999    lesion  yes
+   2  normal     0.3775    normal  yes
+   3  normal     0.3775    normal  yes
+
+accuracy: 4/4 correct (100.0%)
+RESULT: PASS (GPU matches CPU exactly; tol=0)
 ```
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+The `[verify]` line on stderr reports `max |logit_cpu - logit_gpu| = 0.000e+00`,
+confirming the GPU kernels reproduce the CPU reference bit-for-bit.

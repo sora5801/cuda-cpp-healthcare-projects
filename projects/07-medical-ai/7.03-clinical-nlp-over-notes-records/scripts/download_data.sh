@@ -2,11 +2,13 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 7.3 -- Clinical NLP over Notes & Records   (template skeleton)
+# Project 7.3 -- Clinical NLP over Notes & Records
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, and NEVER bypasses
+# credentials/registration. The real clinical-note corpora below are ALL
+# credentialed (de-identified but still protected patient text), so this script
+# only prints how to obtain them legally. The committed SYNTHETIC sample lets
+# the demo run offline with zero downloads.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,19 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 7.3 -- Clinical NLP over Notes & Records"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    MIMIC-IV Clinical Notes — 331,794 de-identified patient notes from Beth Israel Deaconess (https://physionet.org/content/mimic-iv-note/) i2b2/n2c2 NLP Challenge Datasets — named entity, coreference, and relation tasks in clinical text (https://n2c2.dbmi.hms.harvard.edu/) MTSamples — 4,999 transcribed medical reports across 40 specialties (https://mtsamples.com/) MedQA / MedMCQA — medical question answering benchmarks for evaluating clinical LLMs (verify URL)"
+echo "The demo runs on the committed SYNTHETIC sample (data/sample/notes_sample.txt)."
+echo "The real clinical-note datasets are CREDENTIALED and cannot be auto-downloaded:"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "  * MIMIC-IV Clinical Notes (331,794 de-identified notes, Beth Israel Deaconess)"
+echo "      https://physionet.org/content/mimic-iv-note/"
+echo "      Requires a PhysioNet credentialed account + CITI 'Data or Specimens Only"
+echo "      Research' training + signing the data use agreement. Do NOT bypass this."
+echo "  * i2b2 / n2c2 NLP Challenge datasets (NER, coreference, relation extraction)"
+echo "      https://n2c2.dbmi.hms.harvard.edu/   (DUA + registration required)"
+echo "  * MTSamples (4,999 transcribed medical reports; check license before use)"
+echo "      https://mtsamples.com/"
+echo "  * MedQA / MedMCQA (medical QA benchmarks; verify current URL/license)"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "After obtaining a corpus legally, tokenize it into the loader's format (see"
+echo "scripts/make_synthetic.py + data/README.md). For a larger SYNTHETIC problem:"
+echo "    python scripts/make_synthetic.py --dim 16 --heads 4"
