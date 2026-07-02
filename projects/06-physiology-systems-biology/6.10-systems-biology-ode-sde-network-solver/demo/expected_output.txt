@@ -1,5 +1,10 @@
 6.10 -- Systems-Biology ODE/SDE Network Solver
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+repressilator ensemble: 36 members (6 alpha x 6 n), 4000 steps @ dt=0.050 (T=200), beta=5.0 alpha0=1.0
+sample members (alpha n -> p2_final p2_min p2_max crossings osc):
+  m0  :   10.0 1.00 ->    3.3166    3.3166    3.3166   0 0
+  m9  :   60.0 2.20 ->    5.6226    2.7848    5.7201  17 1
+  m18 :  160.0 1.00 ->   12.6886   12.6886   12.6886   0 0
+  m27 :  210.0 2.20 ->    2.2663    2.2477   22.5924  14 1
+  m35 :  260.0 3.00 ->    2.6560    1.3408   57.4447  10 1
+ensemble: 17/36 members sustain oscillations
+RESULT: PASS (GPU ensemble matches CPU within tol=1.0e-09)

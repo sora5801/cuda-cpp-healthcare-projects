@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 169/301 projects done (56.1%) | todo 132 | in-progress 0 | missing 0
+**Progress:** 175/301 projects done (58.1%) | todo 126 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 54 | 0 | 13 |
-| 🟡 Intermediate | 206 | 104 | 0 | 102 |
+| 🟡 Intermediate | 206 | 110 | 0 | 96 |
 | 🔴 Advanced | 28 | 11 | 0 | 17 |
 
 ## 1. Drug Discovery & Molecular Design  (35/35 done)
@@ -183,7 +183,7 @@
 | 5.14 | GPU-Accelerated Adaptive MR-Linac Workflow | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 5.15 | Proton CT & Ion Imaging Reconstruction | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 
-## 6. Computational Physiology & Systems Biology  (13/27 done)
+## 6. Computational Physiology & Systems Biology  (19/27 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -195,15 +195,15 @@
 | 6.06 | Neuronal Network Simulation (Biophysical) | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 6.07 | Spiking Neural Network (Point-Neuron) Simulation | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 6.08 | Tumor Growth & Treatment-Response Modeling | 🟡 Intermediate | Active R&D | [x] done | - | - |
-| 6.09 | Agent-Based Tissue / Immune Simulation | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 6.10 | Systems-Biology ODE/SDE Network Solver | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 6.09 | Agent-Based Tissue / Immune Simulation | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 6.10 | Systems-Biology ODE/SDE Network Solver | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 6.11 | Stochastic (Gillespie) Biochemical Simulation | 🟢 Beginner | Established | [x] done | - | - |
 | 6.12 | Metabolic Flux / Constraint-Based Modeling | 🟢 Beginner | Established | [x] done | - | - |
-| 6.13 | Gene Regulatory Network Inference | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 6.14 | Multi-Scale Physiological Modeling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 6.13 | Gene Regulatory Network Inference | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 6.14 | Multi-Scale Physiological Modeling | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 6.15 | PK/PD & PBPK Modeling | 🟢 Beginner | Established | [x] done | - | - |
-| 6.16 | Cardiac Mechanics & Electromechanical Coupling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 6.17 | Purkinje System & Conduction System Modeling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 6.16 | Cardiac Mechanics & Electromechanical Coupling | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 6.17 | Purkinje System & Conduction System Modeling | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 6.18 | ECG Forward Problem & Body-Surface Potential Mapping | 🟢 Beginner | Established | [x] done | - | - |
 | 6.19 | Defibrillation & High-Voltage Shock Simulation | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 6.20 | Coronary Autoregulation & Microvascular Perfusion | 🟡 Intermediate | Active R&D | [ ] todo | - | - |

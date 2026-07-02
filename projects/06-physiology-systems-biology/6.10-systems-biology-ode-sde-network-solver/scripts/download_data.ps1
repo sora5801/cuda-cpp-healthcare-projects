@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 6.10 -- Systems-Biology ODE/SDE Network Solver   (template skeleton)
+# Project 6.10 : Systems-Biology ODE/SDE Network Solver
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. The real "data" for this project is
+# the space of curated systems-biology MODELS (SBML files), not a single tabular
+# download; this script points you to the model repositories and defers to
+# scripts/make_synthetic.py for the offline teaching stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,23 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 6.10 -- Systems-Biology ODE/SDE Network Solver"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    BioModels Database (EMBL-EBI) — 1000+ curated SBML models (https://www.ebi.ac.uk/biomodels); Reactome pathways — curated molecular interaction data (https://reactome.org); BioGRID interaction network (https://thebiogrid.org); VCell curated models (https://vcell.org)."
+Write-Host "This project integrates a small GRN (the repressilator) as an ENSEMBLE."
+Write-Host "The committed synthetic sample (data/sample/ensemble_params.txt) already"
+Write-Host "runs the demo offline. Real curated models live in these open repositories:"
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "  * BioModels (EMBL-EBI): 1000+ curated SBML models"
+Write-Host "      https://www.ebi.ac.uk/biomodels   (the repressilator is BIOMD0000000012)"
+Write-Host "  * Reactome pathways:    https://reactome.org"
+Write-Host "  * BioGRID network:      https://thebiogrid.org"
+Write-Host "  * VCell curated models: https://vcell.org"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "These are SBML/XML files. Turning an arbitrary SBML model into ODE RHS code"
+Write-Host "is a parsing + code-generation task (see libRoadRunner / Tellurium in the"
+Write-Host "README 'Prior art'); it is intentionally OUT OF SCOPE for this teaching demo,"
+Write-Host "which hard-codes the repressilator RHS in src/grn.h so the focus stays on the"
+Write-Host "GPU batch-ODE pattern. No credentials are required for any link above; respect"
+Write-Host "each site's license before redistributing anything."
+Write-Host ""
+Write-Host "For a bigger SYNTHETIC sweep (more ensemble members), run:"
+Write-Host "  python scripts/make_synthetic.py --na 64 --nn 64"

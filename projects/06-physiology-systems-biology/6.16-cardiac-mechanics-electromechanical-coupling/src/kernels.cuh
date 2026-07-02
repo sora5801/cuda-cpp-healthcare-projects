@@ -1,52 +1,47 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU ensemble-integration interface
 // ---------------------------------------------------------------------------
-// Project 6.16 -- Cardiac Mechanics & Electromechanical Coupling   (template skeleton)
+// Project 6.16 : Cardiac Mechanics & Electromechanical Coupling
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA  (batch ODE: one integration point per thread)
+//   The full cardiac-electromechanics solver batches a stiff ODE over every
+//   Gauss point of a finite-element mesh (catalog: "batch CVODE GPU for
+//   per-Gauss-point ODE"). Our reduced-scope teaching version keeps that exact
+//   PARALLEL STRUCTURE but makes each "integration point" a whole 0-D virtual
+//   heart: we sweep contractility x afterload and give each virtual heart its
+//   own GPU thread. The thread runs the FULL multi-beat RK4 time loop in
+//   registers and writes ONE PV-loop summary (CycleResult). There is no
+//   inter-thread communication -- pure embarrassing parallelism over hearts.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The ODE + RK4 are shared with the CPU (cardiac.h), so the GPU results match
+//   the reference to round-off. kernels.cu defines the kernel + host wrapper.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   This header contains a __global__ declaration, so ONLY .cu translation
+//   units may include it (the plain C++ compiler must never see __global__ --
+//   that is why the CPU reference lives in the pure-C++ reference_cpu.h).
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: cardiac.h, reference_cpu.h, util/cuda_check.cuh, util/timer.cuh.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // EnsembleConfig, CycleResult (pure C++, safe in .cu)
 
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ensemble_kernel: thread `idx` integrates virtual-heart `idx` and writes its
+//   PV-loop summary. It reads its (Tref, R_sys) from the sweep via
+//   member_params() (defined in reference_cpu.h, shared host+device).
+//     grid  : ceil(M / THREADS_PER_BLOCK) blocks
+//     block : THREADS_PER_BLOCK threads
+//     thread (blockIdx.x, threadIdx.x) -> heart index idx
+__global__ void ensemble_kernel(EnsembleConfig c, CycleResult* __restrict__ out);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// integrate_gpu: allocate the device output buffer, launch one thread per
+//   heart, copy the CycleResults back, and report the measured KERNEL time
+//   (CUDA events) via *kernel_ms. main.cu calls exactly this.
+//     c         : the ensemble configuration (passed by value into the kernel)
+//     results   : host output, resized to nT*nR (output parameter)
+//     kernel_ms : out-param, milliseconds spent in the kernel (not the copies)
+void integrate_gpu(const EnsembleConfig& c, std::vector<CycleResult>& results,
+                   float* kernel_ms);

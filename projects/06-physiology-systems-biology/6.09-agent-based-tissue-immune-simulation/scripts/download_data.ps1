@@ -1,12 +1,12 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  "Fetch the FULL dataset" (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 6.9 -- Agent-Based Tissue / Immune Simulation   (template skeleton)
+# Project 6.9 : Agent-Based Tissue / Immune Simulation
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# This project is a SIMULATION: its input is a scenario parameter file, not a
+# measured dataset, so there is nothing to download to run the demo. This script
+# (per CLAUDE.md §8) explains where REAL tissue/immune data live for those who
+# want to calibrate the model, and NEVER bypasses any registration.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +16,19 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 6.9 -- Agent-Based Tissue / Immune Simulation"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    CancerSEA single-cell functional states (http://biocc.hrbmu.edu.cn/CancerSEA/); TCGA pan-cancer immune landscape (https://portal.gdc.cancer.gov); MIBI/IMC imaging mass cytometry datasets (various Zenodo deposits); TCIA immunotherapy imaging (https://www.cancerimagingarchive.net)."
+Write-Host "This project generates its own tissue state; NO download is needed to run"
+Write-Host "the demo. The committed sample (data/sample/tissue_params.txt) is enough."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "For a larger SYNTHETIC scenario, regenerate the parameter file:"
+Write-Host "    python scripts/make_synthetic.py --gx 64 --gy 64 --n-tumor 400 --n-immune 300 --steps 800"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "To CALIBRATE cell states / immune landscapes against real data, see"
+Write-Host "(each requires its own registration / license -- follow their terms):"
+Write-Host "  * CancerSEA single-cell functional states : http://biocc.hrbmu.edu.cn/CancerSEA/"
+Write-Host "  * TCGA pan-cancer immune landscape        : https://portal.gdc.cancer.gov"
+Write-Host "  * MIBI/IMC imaging mass cytometry         : various Zenodo deposits"
+Write-Host "  * TCIA immunotherapy imaging              : https://www.cancerimagingarchive.net"
+Write-Host ""
+Write-Host "These are NOT auto-downloaded: they are large, credentialed, and their"
+Write-Host "licenses forbid blind redistribution. Educational use only -- not clinical."

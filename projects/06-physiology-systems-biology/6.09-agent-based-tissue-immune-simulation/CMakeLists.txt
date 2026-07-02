@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 6.9 -- Agent-Based Tissue / Immune Simulation   (template skeleton)
+# Project 6.9 : Agent-Based Tissue / Immune Simulation
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/agent-based-tissue-immune-simulation.sln (CLAUDE.md §5). Both

@@ -1,5 +1,13 @@
 6.16 -- Cardiac Mechanics & Electromechanical Coupling
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+[reduced-scope teaching model: 0-D electromechanics + Windkessel; NOT FOR CLINICAL USE]
+ensemble: 36 hearts (6 contractility x 6 afterload), 10 beats @ dt=0.10 ms, 8000 steps/beat
+sample hearts (Tref[mmHg/mL] Rsys[mmHg.ms/mL] -> EDV ESV SV[mL] EF% Ppeak[mmHg]):
+  h0    :   1.50   0.7000 -> 138.02  88.44  49.58  35.92    76.19
+  h9    :   1.90   1.6000 -> 137.50  73.99  63.52  46.19    78.09
+  h18   :   2.70   0.7000 -> 136.48  57.27  79.21  58.04    77.33
+  h27   :   3.10   1.6000 -> 135.97  52.04  83.93  61.73    79.81
+  h35   :   3.50   2.2000 -> 135.47  47.97  87.51  64.59    81.47
+best EF : h30    (Tref=3.50 R=0.7000) EF= 64.61% SV= 87.53 mL
+worst EF: h5     (Tref=1.50 R=2.2000) EF= 35.83% SV= 49.46 mL
+ensemble: mean EF = 53.25%
+RESULT: PASS (GPU ensemble matches CPU within tol=1.0e-01)

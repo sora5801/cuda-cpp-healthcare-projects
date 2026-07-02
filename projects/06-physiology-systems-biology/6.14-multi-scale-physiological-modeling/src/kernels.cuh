@@ -1,52 +1,39 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU multi-scale (monodomain) simulation interface
 // ---------------------------------------------------------------------------
-// Project 6.14 -- Multi-Scale Physiological Modeling   (template skeleton)
+// Project 6.14 : Multi-Scale Physiological Modeling
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (two-level parallelism for scale coupling)
+//   The catalog's GPU pattern is "CUDA grid over mesh elements, threads over the
+//   per-element ODE RHS." On our 1-D cable that becomes: ONE GPU THREAD PER NODE.
+//   Every global step, each thread:
+//     (A) advances its own cell ODE (FHN via RK4)      -- the FINE scale, and
+//     (B) applies the tissue diffusion stencil         -- the COARSE scale,
+//   using the SAME __host__ __device__ routines the CPU reference uses
+//   (multiscale.h), so GPU and CPU agree. This is operator splitting done in
+//   lock-step across the whole mesh -- the GPU form of the heterogeneous
+//   multiscale method (HMM). In a production VPH stack the sub-grid ODE solve
+//   is SUNDIALS batch-CVODE; here we hand-roll RK4 so nothing is a black box.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Because the diffusion sub-step reads each node's neighbours, we cannot do it
+//   in place (a thread might read a neighbour that another thread has already
+//   overwritten). We use PING-PONG buffers (flagship 6.04 / 14.02): read the old
+//   v field, write the new one, then swap. This makes the update a Jacobi sweep,
+//   which is exactly what the CPU reference does with its snapshot -> results
+//   match.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: multiscale.h, reference_cpu.h. kernels.cu defines the kernels.
 // ===========================================================================
 #pragma once
 
-#include <vector>
+#include "reference_cpu.h"   // CableConfig, CableResult (pure C++, safe in .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
-
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// Host wrapper: run the whole split-step simulation on the GPU (one thread per
+//   node, ping-pong buffers, per-step reaction + diffusion kernels), copy back
+//   the activation map + final field, and report the total GPU kernel time
+//   (summed over all step launches) via *kernel_ms.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   c         : the loaded cable configuration (by value; small + trivially copyable)
+//   out       : filled with activation_time / v_final / w_final / summary metrics
+//   kernel_ms : total on-device time spent in the step kernels (teaching artifact)
+void simulate_gpu(const CableConfig& c, CableResult& out, float* kernel_ms);

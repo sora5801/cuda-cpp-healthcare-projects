@@ -1,122 +1,117 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: run the multi-scale cable, verify, report
 // ---------------------------------------------------------------------------
-// Project 6.14 -- Multi-Scale Physiological Modeling   (template skeleton)
+// Project 6.14 : Multi-Scale Physiological Modeling
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the shape every project in this repo follows):
+//   1. Load the cable configuration (data/sample or a --arg path).
+//   2. CPU reference: serial split-step monodomain simulation (reference_cpu.cpp).
+//   3. GPU: one thread per node, ping-pong diffusion, per-step kernels (kernels.cu).
+//   4. VERIFY: the GPU final field + activation map match the CPU within a
+//      documented, physically-negligible tolerance (long iterative solver -> FMA
+//      divergence, PATTERNS.md section 4).
+//   5. REPORT: a deterministic activation map + conduction velocity to STDOUT;
+//      timings (run-varying) to STDERR.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
-//
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then multiscale.h (the shared per-node physics),
+//   kernels.cu (the GPU stepping), reference_cpu.cpp (the serial baseline).
 // ===========================================================================
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <limits>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // simulate_gpu, CableConfig, CableResult
+#include "reference_cpu.h"    // load_cable, simulate_cpu, summarize_activation
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "6.14";
 static const char* PROJECT_NAME = "Multi-Scale Physiological Modeling";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Verification tolerance. This is a LONG iterative double-precision solver:
+// thousands of split steps, each with a stencil and an RK4. The GPU's fused
+// multiply-add (FMA) and the host compiler's separate mul/add diverge by ~1e-13
+// per operation, which accumulates. We therefore verify to a small PHYSICAL
+// tolerance rather than pretending the two are bit-identical (PATTERNS.md sec 4,
+// and THEORY.md "How we verify correctness"). 1e-6 on a v-field of O(1) is far
+// below any physiological or discretization error.
+static constexpr double TOLERANCE = 1.0e-6;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// Largest absolute difference between two equal-length double fields (or +inf on
+// a size mismatch, so a shape bug can never be mistaken for agreement).
+static double max_field_diff(const std::vector<double>& a, const std::vector<double>& b) {
+    if (a.size() != b.size()) return std::numeric_limits<double>::infinity();
+    double worst = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        worst = std::fmax(worst, std::fabs(a[i] - b[i]));
+    return worst;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/cable.txt";
+    CableConfig c;
+    try {
+        c = load_cable(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    CableResult res_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    simulate_cpu(c, res_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU simulation (kernel time measured inside the wrapper) ------
+    CableResult res_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    simulate_gpu(c, res_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify: compare the final v field, w field, and activation map -
+    const double dv  = max_field_diff(res_cpu.v_final, res_gpu.v_final);
+    const double dw  = max_field_diff(res_cpu.w_final, res_gpu.w_final);
+    const double dact = max_field_diff(res_cpu.activation_time, res_gpu.activation_time);
+    const double worst = std::fmax(dv, std::fmax(dw, dact));
+    const bool pass = worst <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) ----------
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("1-D monodomain cable: %d nodes, dx=%.3f, dt=%.4f, %d steps (T=%.2f)\n",
+                c.n, c.dx, c.dt, c.steps, total_time(c));
+    std::printf("FHN cell: a=%.3f eps=%.3f b=%.3f | tissue D=%.3f | stim %d left nodes\n",
+                c.p.a, c.p.eps, c.p.b, c.p.D, c.stim_nodes);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // Activation map at a handful of evenly-spaced nodes: a propagating action
+    // potential makes the activation time INCREASE with position -- the KNOWN
+    // answer this synthetic problem is engineered to recover.
+    std::printf("activation map (node : x : t_activation):\n");
+    const int picks = 6;
+    for (int s = 0; s < picks; ++s) {
+        const int i = (c.n - 1) * s / (picks - 1);   // 0 .. n-1 inclusive
+        const double x = i * c.dx;
+        const double ta = res_gpu.activation_time[i];
+        if (ta >= 0.0) std::printf("  n%-5d %7.3f  %8.4f\n", i, x, ta);
+        else           std::printf("  n%-5d %7.3f  %8s\n",   i, x, "n/a");
+    }
+    std::printf("nodes activated: %d / %d\n", res_gpu.n_activated, c.n);
+    std::printf("conduction velocity: %.4f (space/time)\n", res_gpu.conduction_velocity);
+    std::printf("RESULT: %s (GPU field matches CPU within tol=%.1e)\n",
+                pass ? "PASS" : "FAIL", TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
+    std::fprintf(stderr, "[data]   source: %s  (%d nodes x %d steps = %lld node-steps)\n",
+                 path.c_str(), c.n, c.steps,
+                 static_cast<long long>(c.n) * c.steps);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU (kernels): %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- many tiny per-step launches are launch-bound "
+                         "on a short cable; the GPU's edge grows with node count (organ-scale meshes).\n");
+    std::fprintf(stderr, "[verify] worst field diff = %.3e  (v=%.3e w=%.3e act=%.3e; tol=%.1e)\n",
+                 worst, dv, dw, dact, TOLERANCE);
+
     return pass ? 0 : 1;
 }

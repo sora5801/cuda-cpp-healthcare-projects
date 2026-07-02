@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 6.13 -- Gene Regulatory Network Inference   (template skeleton)
+# Project 6.13 : Gene Regulatory Network Inference (ARACNE: MI + DPI)
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# expected size + checksum, and NEVER bypasses credentials/registration. This
+# project's "real data" is single-cell RNA-seq for which there is no committable
+# ground-truth network, so the demo runs on a labeled-synthetic sample; this
+# script prints how to obtain real data and defers to make_synthetic.py offline.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,21 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 6.13 -- Gene Regulatory Network Inference"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Gene Expression Omnibus (GEO) — tens of thousands of scRNA-seq datasets (https://www.ncbi.nlm.nih.gov/geo/); ENCODE TF binding ChIP-seq (https://www.encodeproject.org); BEELINE benchmark GRN datasets (https://github.com/Murali-group/BEELINE); Human Cell Atlas scRNA-seq (https://www.humancellatlas.org)."
+Write-Host "This project ships a labeled-SYNTHETIC sample with a KNOWN ground-truth"
+Write-Host "network (TF->A->B, TF->C, D->E; F,G,H,I noise) so you can watch ARACNE"
+Write-Host "recover it. Real scRNA-seq has no such ground truth to redistribute."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "To try REAL data, obtain an expression matrix (genes x cells) from:"
+Write-Host "  * Gene Expression Omnibus (GEO)        https://www.ncbi.nlm.nih.gov/geo/"
+Write-Host "  * BEELINE benchmark GRN datasets       https://github.com/Murali-group/BEELINE"
+Write-Host "  * Human Cell Atlas scRNA-seq           https://www.humancellatlas.org"
+Write-Host "  * ENCODE TF binding ChIP-seq (truth)   https://www.encodeproject.org"
+Write-Host "then reshape it to this loader's text format (see data/README.md):"
+Write-Host "  line 1: '<n_genes> <n_samples>'; then one row per gene: '<name> v0 v1 ...'"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Offline stand-in (no download, fully reproducible):"
+Write-Host "  python scripts/make_synthetic.py --samples 400"
+Write-Host ""
+Write-Host "Note: BEELINE/GEO/HCA are large and license-bound; respect each license."
+Write-Host "This script downloads nothing by itself and never bypasses credentials."

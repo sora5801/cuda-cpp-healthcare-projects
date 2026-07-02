@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  "Fetch the FULL dataset" (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 6.9 -- Agent-Based Tissue / Immune Simulation   (template skeleton)
+# Project 6.9 : Agent-Based Tissue / Immune Simulation
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# This project is a SIMULATION: its input is a scenario parameter file, not a
+# measured dataset, so there is nothing to download to run the demo. This script
+# (per CLAUDE.md §8) explains where REAL tissue/immune data live for those who
+# want to calibrate the model, and NEVER bypasses any registration.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,18 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 6.9 -- Agent-Based Tissue / Immune Simulation"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    CancerSEA single-cell functional states (http://biocc.hrbmu.edu.cn/CancerSEA/); TCGA pan-cancer immune landscape (https://portal.gdc.cancer.gov); MIBI/IMC imaging mass cytometry datasets (various Zenodo deposits); TCIA immunotherapy imaging (https://www.cancerimagingarchive.net)."
+echo "This project generates its own tissue state; NO download is needed to run"
+echo "the demo. The committed sample (data/sample/tissue_params.txt) is enough."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "For a larger SYNTHETIC scenario, regenerate the parameter file:"
+echo "    python scripts/make_synthetic.py --gx 64 --gy 64 --n-tumor 400 --n-immune 300 --steps 800"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "To CALIBRATE cell states / immune landscapes against real data, see"
+echo "(each requires its own registration / license -- follow their terms):"
+echo "  * CancerSEA single-cell functional states : http://biocc.hrbmu.edu.cn/CancerSEA/"
+echo "  * TCGA pan-cancer immune landscape        : https://portal.gdc.cancer.gov"
+echo "  * MIBI/IMC imaging mass cytometry         : various Zenodo deposits"
+echo "  * TCIA immunotherapy imaging              : https://www.cancerimagingarchive.net"
+echo
+echo "These are NOT auto-downloaded: they are large, credentialed, and their"
+echo "licenses forbid blind redistribution. Educational use only -- not clinical."

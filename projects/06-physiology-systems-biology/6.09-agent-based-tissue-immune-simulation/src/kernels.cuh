@@ -1,52 +1,39 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU ABM interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 6.9 -- Agent-Based Tissue / Immune Simulation   (template skeleton)
+// Project 6.9 : Agent-Based Tissue / Immune Simulation
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (a HYBRID of three flagship patterns)
+//   An agent-based tissue simulation couples a grid PDE with a particle system.
+//   We map each of the three per-step phases to the GPU pattern that fits it:
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//     (1) SECRETE  -> SCATTER-REDUCTION with atomics (like 11.09 k-means, 5.01
+//                     Monte-Carlo tally): one thread per cell atomic-adds a
+//                     FIXED-POINT quantum into the grid cell it occupies. Integer
+//                     atomics commute => deterministic and CPU-exact.
+//     (2) DIFFUSE  -> STENCIL + ping-pong (like 6.04 lattice-Boltzmann, 14.02
+//                     reaction-diffusion): one thread per grid cell, read c_old,
+//                     write c_new, swap buffers.
+//     (3) MOVE     -> per-agent update with SPATIAL BINNING for O(N) neighbour
+//                     search (the ABM-specific pattern): one thread per cell,
+//                     scanning only the 3x3 neighbouring bins.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   The per-element math is the shared abm_core.h (ABM_HD functions), so the GPU
+//   reproduces the CPU reference exactly. The spatial bins are rebuilt on the
+//   HOST each step (a counting sort) and uploaded -- a deliberate teaching choice:
+//   it keeps the neighbour order identical to the CPU (hence exact verification)
+//   and isolates the three GPU patterns cleanly. THEORY.md discusses the fully
+//   on-GPU binning (Thrust sort by key) that production codes use.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, abm_core.h, reference_cpu.h.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // AbmParams, Cells, SpatialBins, AbmResult (pure C++)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
-
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// Host wrapper: run the full ABM time loop on the GPU and return the
+// deterministic summary. `field_out` receives the final chemokine field.
+// `kernel_ms` receives the total GPU time of the loop (a teaching artifact).
+AbmResult abm_gpu(const AbmParams& p, const Cells& cells0,
+                  std::vector<double>& field_out, float* kernel_ms);

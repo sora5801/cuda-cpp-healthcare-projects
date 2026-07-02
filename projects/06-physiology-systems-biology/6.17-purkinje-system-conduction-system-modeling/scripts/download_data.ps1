@@ -1,12 +1,13 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 6.17 -- Purkinje System & Conduction System Modeling   (template skeleton)
+# Project 6.17 -- Purkinje System & Conduction System Modeling
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. This project ships a reduced-scope
+# TEACHING model that runs entirely on the committed synthetic sample, so there
+# is no required download. This script points to the real research datasets and
+# defers to scripts/make_synthetic.py for the offline stand-in.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +17,23 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 6.17 -- Purkinje System & Conduction System Modeling"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    openCARP community Purkinje experiments (https://opencarp.org/community/community-experiments); MonoAlg3D_C Purkinje examples (https://github.com/rsachetto/MonoAlg3D_C); NeuroMorpho (morphological analogy for tree datasets) (https://neuromorpho.org); PhysioNet His-bundle electrogram databases (https://physionet.org)."
+Write-Host "This project runs on the committed SYNTHETIC sample (data/sample/purkinje_tree.txt)."
+Write-Host "No download is required to build, run, or verify the demo."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "To regenerate / enlarge the synthetic tree:"
+Write-Host "    python scripts/make_synthetic.py"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Real Purkinje-network geometries and His-bundle electrograms (study these to"
+Write-Host "extend the project -- see README 'Exercises'):"
+Write-Host "  * openCARP community Purkinje experiments:"
+Write-Host "      https://opencarp.org/community/community-experiments"
+Write-Host "  * MonoAlg3D_C Purkinje examples (GPU monodomain + PMJ calibration):"
+Write-Host "      https://github.com/rsachetto/MonoAlg3D_C"
+Write-Host "  * NeuroMorpho (branching-tree morphologies, analogy):"
+Write-Host "      https://neuromorpho.org"
+Write-Host "  * PhysioNet His-bundle electrogram databases (may require registration):"
+Write-Host "      https://physionet.org"
+Write-Host ""
+Write-Host "NOTE: PhysioNet and similar sources may require an account + a signed data-use"
+Write-Host "agreement. This script prints instructions ONLY and never bypasses that step."

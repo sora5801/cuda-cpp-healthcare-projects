@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 6.17 -- Purkinje System & Conduction System Modeling   (template skeleton)
+# Project 6.17 -- Purkinje System & Conduction System Modeling
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/purkinje-system-conduction-system-modeling.sln (CLAUDE.md §5). Both

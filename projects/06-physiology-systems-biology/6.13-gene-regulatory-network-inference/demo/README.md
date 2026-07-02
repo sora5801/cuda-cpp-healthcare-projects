@@ -5,11 +5,12 @@
 Running `run_demo.ps1` (Windows) or `run_demo.sh` (Linux/CMake) will:
 
 1. **Build** the project if the executable is missing.
-2. **Run** it on the committed `data/sample/` input.
-3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`) and
-   print a clear `PASS`/`FAIL`.
-4. **Time** the kernel (CUDA events) and the CPU baseline — a *teaching artifact*,
-   not a benchmark claim.
+2. **Run** it on the committed `data/sample/expression_sample.txt` input.
+3. **Verify** the GPU result against the CPU reference (`reference_cpu.cpp`): the
+   mutual-information matrices must agree to ~1e-9 **and** the set of pruned edges
+   must be bit-identical. Prints a clear `PASS`/`FAIL`.
+4. **Time** the MI and DPI kernels (CUDA events) and the CPU baseline — a
+   *teaching artifact*, not a benchmark claim.
 
 The program splits its output deliberately:
 
@@ -22,12 +23,26 @@ The program splits its output deliberately:
 
 ```
 6.13 -- Gene Regulatory Network Inference
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+ARACNE mutual-information network: 10 genes x 200 samples, 8 bins
+inferred 4 direct edge(s) after MI>0.20 + DPI pruning:
+  TF     -- A        I = 0.9599 nats
+  TF     -- C        I = 0.9393 nats
+  D      -- E        I = 0.8602 nats
+  A      -- B        I = 0.7968 nats
+RESULT: PASS (GPU MI matches CPU within tol=1.0e-09; edge sets identical)
 ```
 
-> **Template note:** this is the SAXPY placeholder (`out = a*x + y`). TODO(impl):
-> once the real kernel is in place, update `expected_output.txt` and this file so
-> the demo demonstrates *this project's* computation.
+## How to read it
+
+The synthetic data has a **known** structure: `TF→A→B`, `TF→C`, `D→E`, and four
+noise genes `F,G,H,I` (see [`../data/README.md`](../data/README.md)). Before
+pruning, raw mutual information reports **seven** above-threshold edges — including
+three *indirect* ones (`TF–B`, `A–C`, `B–C`) that arise only because the genes
+share a common driver. The **Data Processing Inequality** step then removes each
+edge that is the strictly-weakest side of some triangle, leaving exactly the
+**four true direct edges** shown above. Watching those three spurious edges
+disappear is the core lesson of this demo.
+
+The `[verify]` line on stderr shows `MI max_abs_err ≈ 2.2e-16` — the GPU and CPU
+build identical integer histograms and evaluate the same log sum (via the shared
+`grn.h` core), so they agree to machine precision.

@@ -1,5 +1,12 @@
 6.17 -- Purkinje System & Conduction System Modeling
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Purkinje tree: 7 cables, dt=0.010 ms, 6000 steps (60.0 ms)
+per-cable (idx parent lenmm D -> CV[mm/ms] PMJ_t[ms] captured):
+  c0  p-1   20.0 3.00 ->  2.6247    7.620 yes
+  c1  p0    25.0 3.00 ->  2.5853   18.290 yes
+  c2  p0    25.0 1.50 ->  1.7973   22.530 yes
+  c3  p1    15.0 2.50 ->  2.4430   24.930 yes
+  c4  p1    15.0 2.50 ->  2.4430   24.930 yes
+  c5  p2    15.0 2.00 ->  2.1614   29.970 yes
+  c6  p2    15.0 2.00 ->  2.1614   29.970 yes
+tree: 7/7 cables captured; total ventricular activation = 29.970 ms
+RESULT: PASS (GPU per-cable steps + CV match CPU; tol=1.0e-09)

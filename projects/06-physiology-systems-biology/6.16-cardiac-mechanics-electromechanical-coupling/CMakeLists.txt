@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 6.16 -- Cardiac Mechanics & Electromechanical Coupling   (template skeleton)
+# Project 6.16 : Cardiac Mechanics & Electromechanical Coupling
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/cardiac-mechanics-electromechanical-coupling.sln (CLAUDE.md §5). Both

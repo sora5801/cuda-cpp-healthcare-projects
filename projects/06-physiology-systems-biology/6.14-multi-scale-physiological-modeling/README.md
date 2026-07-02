@@ -6,103 +6,168 @@
 >
 > _Educational only — not for clinical use (see CLAUDE.md §8)._
 
-<!-- =======================================================================
-     SCAFFOLD STATUS: this README was stamped from the catalog. The prose
-     fields below (Deep dive / Algorithms / Datasets / Prior art) are filled
-     in from the catalog. Sections marked TODO(impl)/TODO(theory) must be
-     completed by the project author before this project is "done"
-     (see CLAUDE.md §4.1 and tools/verify_project.py).
-     ======================================================================= -->
-
 ## Summary
 
-TODO(impl): One paragraph, plain language — what this project does and why a
-learner should care. (Seed from the deep dive below.)
+This project couples **two physical scales** — a cell-level ODE and a
+tissue-level PDE — and solves them together on the GPU, the essence of the
+Virtual Physiological Human (VPH) idea. Concretely it simulates a 1-D strand of
+cardiac tissue (a "cable"): at every node lives a tiny **FitzHugh-Nagumo** cell
+model (a didactic stand-in for ion-channel kinetics), and the nodes are coupled
+by **electrical diffusion**. A stimulus at the left end launches an **action
+potential** that *propagates* to the far end as a traveling wave — the same
+phenomenon behind every heartbeat. The demo recovers the wave's **activation map**
+and its **conduction velocity**, and checks the GPU result against a serial CPU
+reference.
 
 ## What this computes & why the GPU helps
 
-Couples models operating at different spatial/temporal scales: molecular (ion channel kinetics, μs–ms), cellular (action potential, ms), tissue (wave propagation, ms–s), organ (cardiac output, heartbeat), and system (circulation, minutes). The computational challenge is that fine-scale models (cell ODE) must be solved at each quadrature point of a coarse FEM mesh simultaneously—yielding millions of ODE instances per time step. GPU batch-ODE solving (CVODE GPU) fills this role. The Virtual Physiological Human (VPH) framework coordinates inter-scale coupling.
-
-**The parallel bottleneck:** TODO(impl) — name the specific step that is
-parallelized on the GPU and why it dominates the runtime.
+The multi-scale challenge (from the catalog deep dive) is that a **fine-scale
+cell ODE must be solved at every node of a coarse mesh, simultaneously** — in a
+real heart model, *millions* of coupled ODEs per time step. We keep that
+structure but shrink it to a laptop-sized 1-D cable. Each global time step does
+**operator splitting**: (1) a **reaction** sub-step advances every node's cell
+ODE independently (embarrassingly parallel — the bottleneck the GPU flattens),
+then (2) a **diffusion** sub-step couples neighbours with a 3-point stencil. The
+GPU maps this as **one thread per node** (the catalog's "grid over mesh elements,
+threads over the per-element ODE RHS"), with **ping-pong buffers** for the
+stencil so the parallel update matches the serial one exactly. On a short cable
+this is *launch-bound* (the GPU can be slower — see the timing note); the GPU's
+edge grows with mesh size toward organ scale.
 
 ## The algorithm in brief
 
-Heterogeneous multiscale method (HMM), operator splitting for scale coupling, homogenization, batch CVODE for cell-level ODEs at FEM quadrature points, Windkessel/1D vessel network for circulation, FEM for organ-level mechanics/EP, co-simulation coupling (FMI standard).
+- **FitzHugh-Nagumo cell ODE** per node — fast excitation `v` + slow recovery `w`.
+- **RK4** integration of the reaction term (the fine, sub-grid scale).
+- **Monodomain cable diffusion** — explicit forward-Euler 3-point Laplacian with
+  zero-flux (Neumann) boundaries (the coarse, tissue scale).
+- **Operator splitting** (Godunov) to couple the two scales each global step.
+- **Activation mapping** — first-crossing times → conduction velocity.
 
-See [THEORY.md](THEORY.md) for the full science → math → algorithm → GPU-mapping
-derivation.
+Depth, equations, and the GPU-mapping rationale live in [THEORY.md](THEORY.md).
 
 ## Build
 
-Requires **Visual Studio 2026** (v145 toolset) + **CUDA Toolkit 13.3**
-(see [docs/BUILD_GUIDE.md](../../../docs/BUILD_GUIDE.md)).
+Prerequisites: **Visual Studio 2026** (v145 toolset, "Desktop development with
+C++") and **CUDA Toolkit 13.3** — see [`docs/BUILD_GUIDE.md`](../../../docs/BUILD_GUIDE.md).
 
 1. Open `build/multi-scale-physiological-modeling.sln` in Visual Studio 2026.
-2. Select the **`Release|x64`** configuration.
-3. **Build → Build Solution** (Ctrl+Shift+B). The executable lands in
-   `build/x64/Release/multi-scale-physiological-modeling.exe`.
+2. Select the **`Release`** configuration and **`x64`** platform.
+3. **Build → Build Solution** (`Ctrl+Shift+B`).
 
-Command-line alternative (Developer PowerShell):
+The executable lands in `build/x64/Release/multi-scale-physiological-modeling.exe`.
+A command-line build (used by the demo):
 
 ```powershell
-msbuild build\multi-scale-physiological-modeling.sln /p:Configuration=Release /p:Platform=x64
+& "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" `
+  build\multi-scale-physiological-modeling.sln /p:Configuration=Release /p:Platform=x64 /m
 ```
+
+A cross-platform **CMake** build is provided too (optional, for Linux/CI):
+`cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release && cmake --build build/cmake`.
 
 ## Run the demo
 
 ```powershell
-./demo/run_demo.ps1          # Windows
-./demo/run_demo.sh           # Linux/macOS (if CMake build is used)
+powershell -ExecutionPolicy Bypass -File demo/run_demo.ps1
 ```
 
-The demo builds if needed, runs on `data/sample/`, prints the result, shows the
-GPU-vs-CPU agreement check, and prints a timing line.
+(Linux/CMake: `bash demo/run_demo.sh`.) It builds if needed, runs on
+`data/sample/cable.txt`, prints the activation map + conduction velocity, and
+diffs stdout against [`demo/expected_output.txt`](demo/expected_output.txt).
 
 ## Data
 
-- **Sample (committed):** `data/sample/` — a tiny, offline input so the demo runs
-  with zero downloads.
-- **Full dataset:** `scripts/download_data.ps1` / `.sh` (documented, idempotent).
-- **Provenance & license:** see [data/README.md](data/README.md).
-
-Catalog dataset notes: Physiome Model Repository — VPH-standard CellML models (https://models.physiomeproject.org); BioModels Database (https://www.ebi.ac.uk/biomodels); UK Biobank multi-modal phenotyping (https://www.ukbiobank.ac.uk); OpenCMISS examples (https://github.com/OpenCMISS/examples).
+The committed sample is a single line of **synthetic** configuration numbers
+(`data/sample/cable.txt`): the cable geometry, time-stepping, left-end stimulus,
+and FHN + diffusion parameters. It is not measured data — it is the *setup* of a
+self-contained toy simulation, tuned so the stimulus launches a clean traveling
+wave. Regenerate/resize with `python scripts/make_synthetic.py [--n … --steps …]`.
+This project is **simulation-only**, so no download is needed to run it;
+`scripts/download_data.*` point to the real VPH model repositories (Physiome
+Model Repository, BioModels, OpenCMISS examples, UK Biobank). Provenance, field
+meanings, and licensing are in [`data/README.md`](data/README.md).
 
 ## Expected output
 
-Success looks like `demo/expected_output.txt`. The program computes the result on
-both the **GPU** (`src/kernels.cu`) and a **CPU reference** (`src/reference_cpu.cpp`)
-and asserts they agree within the documented tolerance — that agreement is the
-correctness guarantee.
+```
+6.14 -- Multi-Scale Physiological Modeling
+1-D monodomain cable: 128 nodes, dx=0.500, dt=0.0200, 5000 steps (T=100.00)
+FHN cell: a=0.130 eps=0.005 b=0.500 | tissue D=2.000 | stim 5 left nodes
+activation map (node : x : t_activation):
+  n0       0.000    0.0000
+  n25     12.500   17.6200
+  n50     25.000   36.5600
+  n76     38.000   56.2600
+  n101    50.500   75.2200
+  n127    63.500   90.2000
+nodes activated: 128 / 128
+conduction velocity: 0.6790 (space/time)
+RESULT: PASS (GPU field matches CPU within tol=1.0e-06)
+```
+
+The activation times **increase with position** — that monotone map *is* the
+propagating action potential. `RESULT: PASS` means the GPU's final `(v, w)`
+fields and activation map match the CPU reference within `1e-6` (they actually
+agree to ~`1e-16`; the split arithmetic is identical on both sides). The GPU/CPU
+timings are on **stderr** (they vary and are not diffed).
 
 ## Code tour
 
-Read in this order:
+Suggested reading order:
 
-1. [`src/main.cu`](src/main.cu) — loads data, runs CPU + GPU, verifies, reports.
-2. [`src/kernels.cuh`](src/kernels.cuh) — the GPU interface + the thread-mapping idea.
-3. [`src/kernels.cu`](src/kernels.cu) — the kernel(s) and host wrapper.
-4. [`src/reference_cpu.cpp`](src/reference_cpu.cpp) — the trusted serial baseline.
-5. [`src/util/`](src/util/) — shared `CUDA_CHECK`, event timer, I/O helpers.
+1. **`src/multiscale.h`** — the shared `__host__ __device__` core: the FHN
+   reaction terms, the RK4 step, the diffusion stencil, and the config struct.
+   *This is where the physics lives; both CPU and GPU call it.*
+2. **`src/main.cu`** — the 5-step driver: load → CPU reference → GPU → verify →
+   report (deterministic result to stdout, timing to stderr).
+3. **`src/kernels.cu`** — the three per-step GPU kernels (react / diffuse /
+   record) and the host wrapper with **ping-pong buffers**.
+4. **`src/reference_cpu.cpp`** — the serial split-step baseline + the loader +
+   the conduction-velocity summary (shared with the GPU path).
 
 ## Prior art & further reading
 
-OpenCMISS/cm (https://github.com/OpenCMISS/cm) — multi-physics multi-scale FEM framework; SUNDIALS batch CVODE GPU (https://github.com/LLNL/sundials) — batch ODE for sub-grid cell models; simcardems (https://github.com/ComputationalPhysiology/simcardems) — cardiac electromechanics multi-scale coupling; Chaste (https://github.com/Chaste/Chaste) — multi-scale cardiac + lung + tumor modeling.
+From the catalog "Starter repos / tools" — study these; do not copy wholesale:
 
-Study these to learn the production approach; **do not copy code wholesale** —
-reimplement didactically and credit the source (CLAUDE.md §2).
+- **[OpenCMISS](https://github.com/OpenCMISS/cm)** — a multi-physics, multi-scale
+  FEM framework. *Learn how real inter-scale coupling is structured.*
+- **[SUNDIALS batch-CVODE (GPU)](https://github.com/LLNL/sundials)** — the
+  production way to batch-solve the sub-grid cell ODEs we hand-roll with RK4.
+- **[simcardems](https://github.com/ComputationalPhysiology/simcardems)** —
+  cardiac electromechanics multi-scale coupling. *The next scale up (mechanics).*
+- **[Chaste](https://github.com/Chaste/Chaste)** — multi-scale cardiac / lung /
+  tumor modeling. *A broad, well-tested reference implementation.*
 
-## CUDA pattern used here
-
-SUNDIALS CUDA NVector + batch CVODE (cell ODE at quadrature points); cuSPARSE for coarse-mesh FEM assembly; CUDA streams for asynchronous scale coupling; pattern: two-level parallelism—CUDA grid over FEM elements, threads over per-element ODE RHS evaluation. --
+Background: FitzHugh (1961) & Nagumo et al. (1962) for the cell model; Keener &
+Sneyd, *Mathematical Physiology* for reaction-diffusion in excitable tissue.
 
 ## Exercises
 
-TODO(impl): 3–5 "try this next" extensions for the learner. Ideas to seed from:
-larger inputs, a second precision (FP64), shared-memory tiling, a different
-block size sweep, or an additional verification metric.
+1. **Break stability.** Raise `D` (or `dt`) in `make_synthetic.py` until
+   `D·dt/dx² > 0.5` and watch the explicit diffusion step blow up. Then fix it
+   with an *implicit* diffusion solve (Thomas algorithm on the tridiagonal system).
+2. **Strang splitting.** Replace Godunov splitting (react-then-diffuse) with
+   second-order Strang splitting (half-diffuse → react → half-diffuse) and measure
+   the accuracy improvement at large `dt`.
+3. **2-D tissue.** Extend the cable to a 2-D sheet (5-point Laplacian); launch a
+   wave from a corner and visualize the curved wavefront. This is where the GPU
+   starts to clearly beat the CPU.
+4. **Re-entry.** Stimulate the left end twice with the right timing to create a
+   unidirectional block, and observe a re-entrant (rotating) wave — the
+   mechanism behind cardiac arrhythmias.
+5. **A real cell model.** Swap FHN for a Beeler-Reuter or ten-Tusscher ionic
+   model at each node (more state variables, stiffer) and note why an implicit /
+   adaptive integrator (CVODE) becomes attractive.
 
 ## Limitations & honesty
 
-TODO(impl): What is simplified, what is synthetic, what would differ in
-production. Be explicit — this is study material, not a clinical tool.
+This is a **reduced-scope teaching version** of a research-grade problem
+(CLAUDE.md §13). It is **1-D**, uses the **FitzHugh-Nagumo caricature** rather than
+a biophysical ionic model, an **explicit** (stability-limited) diffusion step
+rather than an implicit/FEM solve, and **Godunov** (first-order) operator
+splitting. There is no mechanics, no circulation, and no fiber anisotropy. All
+data is **synthetic** and the numbers are **illustrative only** — they have no
+clinical meaning and must not inform any medical decision. The GPU timing is a
+*teaching artifact*, not a benchmark claim: on this small cable the many tiny
+per-step kernel launches are launch-bound and can be slower than the CPU; the
+GPU's advantage appears at organ-scale mesh sizes.

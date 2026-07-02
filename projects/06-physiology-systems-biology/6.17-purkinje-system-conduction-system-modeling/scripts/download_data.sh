@@ -2,11 +2,13 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 6.17 -- Purkinje System & Conduction System Modeling   (template skeleton)
+# Project 6.17 -- Purkinje System & Conduction System Modeling
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. This project ships a reduced-scope
+# TEACHING model that runs entirely on the committed synthetic sample, so there
+# is no required download. This script points to the real research datasets and
+# defers to scripts/make_synthetic.py for the offline stand-in.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +19,22 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 6.17 -- Purkinje System & Conduction System Modeling"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    openCARP community Purkinje experiments (https://opencarp.org/community/community-experiments); MonoAlg3D_C Purkinje examples (https://github.com/rsachetto/MonoAlg3D_C); NeuroMorpho (morphological analogy for tree datasets) (https://neuromorpho.org); PhysioNet His-bundle electrogram databases (https://physionet.org)."
+echo "This project runs on the committed SYNTHETIC sample (data/sample/purkinje_tree.txt)."
+echo "No download is required to build, run, or verify the demo."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "To regenerate / enlarge the synthetic tree:"
+echo "    python scripts/make_synthetic.py"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Real Purkinje-network geometries and His-bundle electrograms (study these to"
+echo "extend the project -- see README 'Exercises'):"
+echo "  * openCARP community Purkinje experiments:"
+echo "      https://opencarp.org/community/community-experiments"
+echo "  * MonoAlg3D_C Purkinje examples (GPU monodomain + PMJ calibration):"
+echo "      https://github.com/rsachetto/MonoAlg3D_C"
+echo "  * NeuroMorpho (branching-tree morphologies, analogy):"
+echo "      https://neuromorpho.org"
+echo "  * PhysioNet His-bundle electrogram databases (may require registration):"
+echo "      https://physionet.org"
+echo
+echo "NOTE: PhysioNet and similar sources may require an account + a signed data-use"
+echo "agreement. This script prints instructions ONLY and never bypasses that step."
