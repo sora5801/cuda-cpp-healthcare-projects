@@ -153,6 +153,8 @@
     <ClCompile Include="..\src\reference_cpu.cpp" />
     <ClInclude Include="..\src\kernels.cuh" />
     <ClInclude Include="..\src\reference_cpu.h" />
+    <!-- The ONE shared __host__ __device__ per-vessel physics core (CPU==GPU). -->
+    <ClInclude Include="..\src\coronary.h" />
     <ClInclude Include="..\src\util\cuda_check.cuh" />
     <ClInclude Include="..\src\util\timer.cuh" />
     <ClInclude Include="..\src\util\io.hpp" />

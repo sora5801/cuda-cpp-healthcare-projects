@@ -1,52 +1,50 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU interface for the defibrillation DFT sweep
 // ---------------------------------------------------------------------------
-// Project 6.19 -- Defibrillation & High-Voltage Shock Simulation   (template skeleton)
+// Project 6.19 : Defibrillation & High-Voltage Shock Simulation
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (the "ensemble of trajectories" pattern -- PATTERNS.md section 1,
+// as in flagships 9.02 SEIR and 13.02 PBPK)
+//   We must simulate the SAME 1-D cable many times, once per candidate shock
+//   amplitude, to find the defibrillation threshold. Each amplitude's simulation
+//   is completely independent of the others, so we assign ONE GPU THREAD to ONE
+//   shock amplitude. Thread k loops the shared cable_step() (defib.h) over all
+//   time steps on its own private cable, then writes a single residual-activity
+//   number. No inter-thread communication, no atomics -- pure independent work.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Within each thread the cable update is itself a 3-point diffusion STENCIL
+//   with ping-pong buffers; because a thread owns its whole cable, it keeps the
+//   two buffers in per-thread scratch (device global memory here) and swaps
+//   pointers each step -- exactly mirroring the CPU reference.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Why not one thread PER CELL (a 2-D grid of amplitude x cell)? That would be
+//   the natural choice for a single huge cable, but here the cables are small
+//   (~128 cells) and we have many of them; thread-per-trajectory keeps the time
+//   loop and the ping-pong entirely inside one thread, which is simpler to teach
+//   and needs no cross-block synchronisation between the (thousands of) steps.
+//   THEORY.md "GPU mapping" discusses the crossover and how production
+//   whole-heart bidomain codes (one thread per cell + a cuSPARSE CG solve for
+//   the elliptic extracellular equation) differ.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: defib.h, reference_cpu.h (for FhnParams / ShockSweep),
+//                  util/cuda_check.cuh, util/timer.cuh.
 // ===========================================================================
 #pragma once
 
 #include <vector>
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+#include "reference_cpu.h"   // FhnParams, ShockSweep (pure C++, safe in .cu)
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// ---------------------------------------------------------------------------
+// sweep_gpu: run the whole DFT sweep on the GPU.
+//   p        : shared cable/FHN/shock parameters (passed by value to the kernel)
+//   amps     : the shock amplitudes to test (one per GPU thread)
+//   residual : filled (resized to amps.size()) with each amplitude's residual
+//              activity, in the SAME order as `amps` -> directly comparable to
+//              the CPU reference's output.
+//   kernel_ms: out-param, GPU time of the sweep kernel (CUDA-event measured).
+// The per-amplitude math is the shared cable_step()/activity_metric() from
+// defib.h, so residual[k] here equals simulate_one_cpu(p, amps[k]) on the CPU.
+// ---------------------------------------------------------------------------
+void sweep_gpu(const FhnParams& p, const std::vector<double>& amps,
+               std::vector<double>& residual, float* kernel_ms);

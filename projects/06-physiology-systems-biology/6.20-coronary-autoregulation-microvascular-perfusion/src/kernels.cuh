@@ -1,52 +1,48 @@
 // ===========================================================================
 // src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
 // ---------------------------------------------------------------------------
-// Project 6.20 -- Coronary Autoregulation & Microvascular Perfusion   (template skeleton)
+// Project 6.20 : Coronary Autoregulation & Microvascular Perfusion
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE GPU IDEA (PATTERNS.md §1: "iterative CG with sparse SpMV")
+//   The heavy step is solving the sparse SPD system L p = b for nodal pressures,
+//   once per autoregulation iteration. We solve it with CONJUGATE GRADIENT, whose
+//   inner loop is dominated by ONE sparse matrix-vector product (SpMV) y = L p
+//   plus a couple of dot-products and AXPYs. On the GPU:
+//     * L is stored in CSR (compressed sparse row). Each ROW = one network node;
+//       its nonzeros are the diagonal (sum of incident conductances) and one
+//       -G_ij per incident segment.
+//     * The SpMV kernel assigns ONE THREAD PER ROW (node): thread i walks its
+//       CSR row and accumulates y_i. This is exactly what cuSPARSE's SpMV does
+//       under the hood; we hand-roll it here so nothing is a black box (the
+//       catalog names cuSPARSE -- THEORY §real-world shows the cuSPARSE call).
+//     * Dot-products are block reductions summed by a tiny final kernel, in a
+//       FIXED order so the result is deterministic (PATTERNS.md §3).
+//   Conductances and the autoregulation radius update reuse coronary.h, so GPU
+//   and CPU compute identical per-vessel physics.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Only the host-callable driver is declared here; the __global__ kernels are
+//   internal to kernels.cu. This header is included by main.cu (host C++/nvcc).
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
-//
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: coronary.h, reference_cpu.h. Implementation: kernels.cu.
 // ===========================================================================
 #pragma once
 
-#include <vector>
+#include "reference_cpu.h"   // Network, Solution (shared POD types)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
-
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
+// ---------------------------------------------------------------------------
+// solve_gpu(net, n_autoreg, cg_tol, cg_max_iter, out, kernel_ms)
+//   GPU counterpart of solve_cpu(): runs the identical autoregulation outer loop
+//   and CG inner solves entirely on the device, then copies the final pressures
+//   and flows back into `out`.
 //
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+//   net         : network (radii are MUTATED across autoregulation, mirroring
+//                 the CPU path so the two end on the same geometry)
+//   n_autoreg   : number of outer autoregulation iterations (>= 1)
+//   cg_tol      : CG relative-residual stopping tolerance
+//   cg_max_iter : CG iteration cap
+//   out         : receives final p[n_nodes], q[n_segs], and last CG stats
+//   kernel_ms   : (out) total GPU time for all solves, measured with CUDA events
+//                 (teaching artifact only, printed to stderr)
+// ---------------------------------------------------------------------------
+void solve_gpu(Network& net, int n_autoreg, double cg_tol, int cg_max_iter,
+               Solution& out, float* kernel_ms);

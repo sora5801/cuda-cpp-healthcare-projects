@@ -1,122 +1,149 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: solve lobule perfusion, verify, report
 // ---------------------------------------------------------------------------
-// Project 6.25 -- Liver & Kidney Perfusion Modeling   (template skeleton)
+// Project 6.25 : Liver & Kidney Perfusion Modeling
 //
 // WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+//   1. Load the lobule config (fixed sinusoid physics + a velocity sweep).
+//   2. CPU reference: integrate every sinusoid serially (reference_cpu.cpp).
+//   3. GPU: one thread per sinusoid, full RK4 spatial march (kernels.cu).
+//   4. VERIFY (two ways):
+//        (a) per-sinusoid GPU vs CPU results agree to round-off (same RK4), AND
+//        (b) the mean extraction ratio matches the ANALYTIC first-order limit --
+//            a check on the SCIENCE, not just CPU==GPU agreement (PATTERNS.md 4).
+//   5. REPORT: deterministic per-zone/sinusoid table + lobule summary to stdout;
+//      timings and run-varying detail to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Timings go to STDERR (shown, not diffed).
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+//   >>> Educational, NOT for clinical use. All data are SYNTHETIC. <<<
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then perfusion.h (the ODE + RK4), reference_cpu.h/.cpp,
+//   kernels.cuh -> kernels.cu. See ../THEORY.md for the "why".
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // integrate_gpu, LobuleConfig, SinusoidResult
+#include "reference_cpu.h"    // load_lobule, integrate_cpu, sinusoid_velocity
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "6.25";
 static const char* PROJECT_NAME = "Liver & Kidney Perfusion Modeling";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// (a) GPU-vs-CPU tolerance. Both sides run the SAME double-precision RK4 from
+//     perfusion.h, so agreement is to floating-point round-off. 1e-9 is generous
+//     headroom over the ~1e-13 differences FMA ordering can introduce.
+static constexpr double TOLERANCE = 1.0e-9;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
+// (b) Analytic-limit tolerance. The closed-form profile below assumes the
+//     UNSATURATED (first-order) Michaelis-Menten regime C << Km; the sample is
+//     engineered so C_in << Km, but the small remaining nonlinearity means we
+//     only expect agreement to a physical ~1%% (0.01). Documented, not pretended.
+static constexpr double ANALYTIC_TOL = 1.0e-2;
 
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// ---------------------------------------------------------------------------
+// analytic_extraction: the first-order (C << Km) closed form for one sinusoid.
+//   In that limit R = (Vmax(x)/Km)*C, so v*dC/dx = -(Vmax(x)/Km)*C, an ODE with
+//   a spatially-varying rate. Integrating from 0..L:
+//       C_out = C_in * exp( -(1/v) * integral_0^L (Vmax(x)/Km) dx )
+//   With the LINEAR zonation Vmax(x) = Vmax_pp + (Vmax_cl-Vmax_pp)*(x/L), the
+//   integral of Vmax over [0,L] is L * (Vmax_pp+Vmax_cl)/2 (the average Vmax).
+//   Hence the extraction ratio E = 1 - exp( -(Vmax_avg/Km) * L / v ).
+//   This is a hand-derivable sanity check on the numerics (THEORY section 6).
+// ---------------------------------------------------------------------------
+static double analytic_extraction(const LobuleConfig& c, double v) {
+    const double vmax_avg = 0.5 * (c.p.Vmax_pp + c.p.Vmax_cl);   // mean over the zonation ramp
+    const double k = vmax_avg / c.p.Km;                          // first-order rate constant (1/s)
+    const double C_out = c.p.C_in * std::exp(-(k) * c.p.L / v);  // exponential washout
+    return (c.p.C_in > 0.0) ? (c.p.C_in - C_out) / c.p.C_in : 0.0;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1] : "data/sample/lobule.txt";
+    LobuleConfig c;
+    try {
+        c = load_lobule(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const int M = lobule_size(c);
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<SinusoidResult> res_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    integrate_cpu(c, res_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU ensemble (kernel timed) -----------------------------------
+    std::vector<SinusoidResult> res_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    integrate_gpu(c, res_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4a. Verify GPU vs CPU (per sinusoid) -----------------------------
+    double worst = 0.0;
+    for (int i = 0; i < M; ++i) {
+        worst = std::fmax(worst, std::fabs(res_cpu[i].C_out          - res_gpu[i].C_out));
+        worst = std::fmax(worst, std::fabs(res_cpu[i].extraction_ratio - res_gpu[i].extraction_ratio));
+    }
+    const bool pass_gpu = worst <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 4b. Verify against the analytic first-order limit ----------------
+    // Compare the mean numerical extraction ratio to the mean analytic one.
+    double sum_num = 0.0, sum_ana = 0.0, worst_ana = 0.0;
+    for (int i = 0; i < M; ++i) {
+        const double v = sinusoid_velocity(c, i);
+        const double ana = analytic_extraction(c, v);
+        sum_num += res_gpu[i].extraction_ratio;
+        sum_ana += ana;
+        worst_ana = std::fmax(worst_ana, std::fabs(res_gpu[i].extraction_ratio - ana));
+    }
+    const double mean_num = sum_num / M;
+    const double mean_ana = sum_ana / M;
+    const bool pass_ana = std::fabs(mean_num - mean_ana) <= ANALYTIC_TOL;
+
+    const bool pass = pass_gpu && pass_ana;
+
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    // Lobule-level summary: whole-lobule mean extraction (the hepatic clearance
+    // proxy) and the min/max across the perfusion (velocity) spread.
+    double emin = 1e300, emax = -1e300;
+    for (int i = 0; i < M; ++i) {
+        emin = std::fmin(emin, res_gpu[i].extraction_ratio);
+        emax = std::fmax(emax, res_gpu[i].extraction_ratio);
+    }
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("SYNTHETIC liver lobule: %d parallel sinusoids, L=%.3f mm, C_in=%.3f uM, Km=%.3f uM\n",
+                M, c.p.L, c.p.C_in, c.p.Km);
+    std::printf("zonation Vmax: periportal=%.3f -> centrilobular=%.3f uM/s; velocity sweep %.4f..%.4f mm/s over %d RK4 steps\n",
+                c.p.Vmax_pp, c.p.Vmax_cl, c.v_lo, c.v_hi, c.p.nseg);
+    std::printf("sample sinusoids (v[mm/s] -> C_out[uM] extraction[%%]):\n");
+    const int picks[5] = {0, M / 4, M / 2, (3 * M) / 4, M - 1};
+    for (int s = 0; s < 5; ++s) {
+        const int i = picks[s];
+        const double v = sinusoid_velocity(c, i);
+        std::printf("  s%-5d: %8.4f -> %8.4f %7.3f\n",
+                    i, v, res_gpu[i].C_out, 100.0 * res_gpu[i].extraction_ratio);
+    }
+    std::printf("lobule extraction ratio: mean=%.4f  min=%.4f  max=%.4f\n", mean_num, emin, emax);
+    std::printf("analytic first-order limit: mean extraction=%.4f\n", mean_ana);
+    std::printf("RESULT: %s (GPU==CPU within %.0e; mean extraction within %.0e of analytic)\n",
+                pass ? "PASS" : "FAIL", TOLERANCE, ANALYTIC_TOL);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d sinusoids)\n", path.c_str(), M);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU kernel: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- tiny lobules are launch-bound; the GPU edge "
+                         "grows toward the millions of segments a real organ model needs.\n");
+    std::fprintf(stderr, "[verify] worst per-sinusoid |GPU-CPU| = %.3e (tol %.1e); worst |num-analytic| = %.3e\n",
+                 worst, TOLERANCE, worst_ana);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

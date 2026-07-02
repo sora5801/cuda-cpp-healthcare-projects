@@ -2,47 +2,105 @@
 # ===========================================================================
 # scripts/make_synthetic.py  --  Generate the synthetic sample dataset
 # ---------------------------------------------------------------------------
-# Project 6.21 -- Microcirculation & Oxygen Transport   (template skeleton)
+# Project 6.21 : Microcirculation & Oxygen Transport
 #
 # WHY THIS EXISTS
-#   Some real datasets cannot be redistributed (license) or require credentials
-#   (MIMIC, UK Biobank). In those cases we still want the demo to RUN, so this
-#   script deterministically generates a clearly-synthetic stand-in that matches
-#   the loader's expected layout. Synthetic data is always LABELED synthetic.
+#   The real microvascular datasets (Vascular Model Repository, Allen Institute
+#   two-photon microscopy, Secomb-group networks) either require registration or
+#   have redistribution terms, so we do NOT commit them. Instead this script
+#   deterministically generates a clearly-SYNTHETIC tissue-block + capillary
+#   layout that matches the loader's expected format, so the demo runs offline.
+#   Synthetic data is always LABELED synthetic (see data/README.md).
 #
-#   Placeholder layout (SAXPY): n, a, then n x-values, then n y-values, such that
-#   out = a*x + y is exact (out[i] = 12*i) so expected_output.txt is stable.
+#   THE SYNTHETIC PROBLEM WE BUILD  (a teaching "known answer")
+#     * A small rectangular tissue block sampled on a regular grid.
+#     * A handful of straight capillaries running along the x-axis, each
+#       discretised into several point SOURCES (segments). We place the
+#       capillaries so they cover most of the block BUT leave one far corner
+#       (max x, max y, max z) distant from every vessel -- an engineered HYPOXIC
+#       POCKET. The demo's "hypoxic fraction" and the "far-corner" sample PO2
+#       recover this on purpose (PATTERNS.md section 6: embed a known answer).
 #
-#   TODO(impl): regenerate this to produce the real project's synthetic input.
+#   FILE FORMAT (whitespace-separated; comments start with '#'):
+#     nx ny nz spacing po2_inflow m0 km p50 hill_n n_src
+#     then n_src lines:  x  y  z  blood_po2
+#   The loader (src/reference_cpu.cpp) derives each source's strength q from its
+#   blood_po2 via the Hill oxyhemoglobin saturation curve.
 #
 # USAGE
-#   python scripts/make_synthetic.py            # writes data/sample/saxpy_sample.txt
-#   python scripts/make_synthetic.py --n 1024   # bigger synthetic problem
+#   python scripts/make_synthetic.py                 # default small sample
+#   python scripts/make_synthetic.py --nx 20 --ny 20 --nz 12   # bigger block
 # ===========================================================================
 import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent          # the project folder
-OUT = ROOT / "data" / "sample" / "saxpy_sample.txt"
+OUT = ROOT / "data" / "sample" / "microvessel_network.txt"
+
+
+def build_sources(nx, ny, nz, spacing):
+    """Return a list of (x, y, z, blood_po2) capillary segment sources (um, mmHg).
+
+    We lay THREE straight capillaries parallel to the x-axis at chosen (y,z),
+    each sampled at several x positions (segments). Blood PO2 decreases along
+    each capillary from arterial (~95) toward venous (~40) as O2 is given up --
+    a realistic longitudinal gradient. We deliberately keep all capillaries at
+    low-to-mid y,z so the high-(y,z) far corner stays poorly perfused.
+    """
+    xlen = (nx - 1) * spacing
+    ylen = (ny - 1) * spacing
+    zlen = (nz - 1) * spacing
+
+    # (y, z) placement of each capillary, kept in the lower-front region so the
+    # far corner (ymax, zmax) is left hypoxic on purpose.
+    capillary_yz = [
+        (0.25 * ylen, 0.25 * zlen),
+        (0.50 * ylen, 0.30 * zlen),
+        (0.30 * ylen, 0.60 * zlen),
+    ]
+    n_seg = 6                       # segments (source points) per capillary
+    art_po2, ven_po2 = 95.0, 45.0   # arterial (inlet) and venous (outlet) blood PO2
+
+    sources = []
+    for (cy, cz) in capillary_yz:
+        for k in range(n_seg):
+            t = k / (n_seg - 1)               # 0 at inlet .. 1 at outlet
+            x = t * xlen                      # march along +x
+            blood = art_po2 + t * (ven_po2 - art_po2)   # linear PO2 drop
+            sources.append((x, cy, cz, blood))
+    return sources
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate the synthetic SAXPY sample.")
-    ap.add_argument("--n", type=int, default=8, help="number of elements")
-    ap.add_argument("--a", type=float, default=2.0, help="scalar multiplier")
+    ap = argparse.ArgumentParser(description="Generate the synthetic microvessel sample.")
+    ap.add_argument("--nx", type=int, default=12, help="grid points along x")
+    ap.add_argument("--ny", type=int, default=12, help="grid points along y")
+    ap.add_argument("--nz", type=int, default=8,  help="grid points along z")
+    ap.add_argument("--spacing", type=float, default=5.0, help="grid spacing (um)")
+    ap.add_argument("--po2_inflow", type=float, default=40.0, help="baseline tissue PO2 (mmHg)")
+    ap.add_argument("--m0", type=float, default=5.0, help="max Michaelis-Menten consumption")
+    ap.add_argument("--km", type=float, default=1.0, help="Michaelis constant (mmHg)")
+    ap.add_argument("--p50", type=float, default=26.0, help="Hill half-saturation PO2 (mmHg)")
+    ap.add_argument("--hill_n", type=float, default=2.7, help="Hill cooperativity coefficient")
     ap.add_argument("--out", default=str(OUT), help="output path")
     args = ap.parse_args()
 
-    n, a = args.n, args.a
-    x = [float(i) for i in range(n)]
-    y = [float(10 * i) for i in range(n)]              # out = a*x + y = 12*i (a=2)
+    sources = build_sources(args.nx, args.ny, args.nz, args.spacing)
 
-    lines = [str(n), repr(a),
-             " ".join(f"{v:g}" for v in x),
-             " ".join(f"{v:g}" for v in y)]
+    lines = []
+    lines.append("# SYNTHETIC microvessel oxygen-transport sample -- Project 6.21")
+    lines.append("# NOT real patient/tissue data. Generated by scripts/make_synthetic.py.")
+    lines.append("# Header: nx ny nz spacing po2_inflow m0 km p50 hill_n n_src")
+    lines.append(f"{args.nx} {args.ny} {args.nz} {args.spacing:g} {args.po2_inflow:g} "
+                 f"{args.m0:g} {args.km:g} {args.p50:g} {args.hill_n:g} {len(sources)}")
+    lines.append("# Capillary segment sources: x y z blood_po2  (um, um, um, mmHg)")
+    for (x, y, z, blood) in sources:
+        lines.append(f"{x:.4f} {y:.4f} {z:.4f} {blood:.4f}")
+
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[make_synthetic] wrote {args.out}  (n={n}, a={a}; SYNTHETIC)")
+    print(f"[make_synthetic] wrote {args.out}  "
+          f"(grid {args.nx}x{args.ny}x{args.nz}, {len(sources)} sources; SYNTHETIC)")
 
 
 if __name__ == "__main__":

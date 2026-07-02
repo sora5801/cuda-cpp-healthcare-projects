@@ -1,7 +1,7 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 6.21 -- Microcirculation & Oxygen Transport   (template skeleton)
+# Project 6.21 : Microcirculation & Oxygen Transport
 #
 # CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
 # expected size + checksum, and NEVER bypasses credentials/registration. If a
@@ -17,15 +17,17 @@ $DataDir = Join-Path $ProjectRoot "data"
 Write-Host "[download_data] Project 6.21 -- Microcirculation & Oxygen Transport"
 Write-Host "[download_data] Target data dir: $DataDir"
 
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    Vascular Model Repository (http://www.vascularmodel.com); two-photon microscopy microvascular datasets from Allen Institute (https://portal.brain-map.org); PhysioNet oxygen saturation waveforms (https://physionet.org); published microvascular network datasets (Secomb group, verify at secomb.org)."
+Write-Host "This project ships a SYNTHETIC sample (data/sample/microvessel_network.txt)"
+Write-Host "and does not require any download to run the demo. Real microvascular data:"
+Write-Host "  - Vascular Model Repository            : http://www.vascularmodel.com"
+Write-Host "  - Allen Institute two-photon microscopy: https://portal.brain-map.org"
+Write-Host "  - PhysioNet O2 saturation waveforms    : https://physionet.org (credentialed)"
+Write-Host "  - Secomb-group microvascular networks  : https://secomb.org (verify terms)"
+Write-Host "Respect each dataset's license/registration; this script never bypasses it."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
 Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "    python scripts/make_synthetic.py --nx 24 --ny 24 --nz 16"
 Write-Host ""
 Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
 Write-Host "    1) skip download if the file already exists with the right checksum"

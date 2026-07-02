@@ -1,0 +1,4 @@
+# SYNTHETIC liver-lobule perfusion config for project 6.25 (NOT clinical).
+# Fields: L C_in Km Vmax_pp Vmax_cl nseg   nsin v_lo v_hi
+#   L[mm] C_in[uM] Km[uM] Vmax_pp[uM/s] Vmax_cl[uM/s] nseg[-]  nsin[-] v_lo[mm/s] v_hi[mm/s]
+0.5 1 50 8 2 200   4096 0.2 1

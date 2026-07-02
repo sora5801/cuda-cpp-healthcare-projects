@@ -1,33 +1,38 @@
 # ===========================================================================
-# scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
+# scripts/download_data.ps1  --  Real T1D data + simulator pointers (Windows)
 # ---------------------------------------------------------------------------
-# Project 6.23 -- Glucose-Insulin Dynamics & Artificial Pancreas   (template skeleton)
+# Project 6.23 : Glucose-Insulin Dynamics & Artificial Pancreas
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# There is NOTHING to download for the demo: the input is a cohort CONFIG that
+# the program expands into virtual patients (data/sample/cohort_params.txt).
+# This script prints where the real CGM/insulin datasets and reference simulators
+# live. Per CLAUDE.md §8 it never bypasses credentials -- the clinical datasets
+# below require registration / a data-use agreement, so we only link them.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 6.23 -- Glucose-Insulin Dynamics & Artificial Pancreas"
-Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    OhioT1DM dataset — 12-week CGM + insulin data for 12 T1D subjects (https://smarthealth.cs.ohio.edu/OhioT1DM-dataset.html); JAEB CGMS datasets (https://public.jaeb.org); simglucose simulator virtual patient population (https://github.com/jxx123/simglucose); DirecNet CGM datasets (https://public.jaeb.org/direcnet)."
+Write-Host "No file to download: the program derives every virtual patient from the"
+Write-Host "sweep in data/sample/cohort_params.txt (regenerate with make_synthetic.py)."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "REAL clinical datasets (require registration / data-use agreement --"
+Write-Host "this script will NOT bypass that; apply at the links):"
+Write-Host "  OhioT1DM   : https://smarthealth.cs.ohio.edu/OhioT1DM-dataset.html"
+Write-Host "               (12-week CGM + insulin for 12 T1D subjects)"
+Write-Host "  JAEB CGMS  : https://public.jaeb.org"
+Write-Host "  DirecNet   : https://public.jaeb.org/direcnet"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "Reference SIMULATORS (study the FDA-accepted UVA/Padova model):"
+Write-Host "  simglucose : https://github.com/jxx123/simglucose   (Python, gym env)"
+Write-Host "  GluCoEnv   : https://github.com/chirathyh/GluCoEnv   (GPU RL env)"
+Write-Host "  G2P2C      : https://github.com/RL4H/G2P2C           (RL artificial pancreas)"
+Write-Host "  OpenAPS    : https://github.com/openaps/oref0        (reference algorithm)"
+Write-Host ""
+Write-Host "Bigger SYNTHETIC cohort (no download):"
+Write-Host "  python scripts/make_synthetic.py --nSI 64 --nSG 64"
+Write-Host ""
+Write-Host "Target data dir: $ProjectRoot\data"

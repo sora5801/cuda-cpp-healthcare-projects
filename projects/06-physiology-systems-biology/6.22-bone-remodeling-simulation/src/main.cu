@@ -1,121 +1,154 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: run remodeling on CPU + GPU, verify, report
 // ---------------------------------------------------------------------------
-// Project 6.22 -- Bone Remodeling Simulation   (template skeleton)
+// Project 6.22 : Bone Remodeling Simulation   (REDUCED-SCOPE teaching version)
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-step shape (the shape EVERY project in this repo follows):
+//   1. Load the remodeling job (data/sample, or a built-in synthetic fallback).
+//   2. CPU reference remodeling (reference_cpu.cpp)          -> trusted answer.
+//   3. GPU remodeling (kernels.cu) -- identical per-voxel physics via the shared
+//      __host__ __device__ bone_remodel.h.
+//   4. VERIFY: the GPU density field matches the CPU field within tolerance.
+//   5. REPORT: a deterministic summary (total bone mass, per-column mass
+//      profile, mechanostat state histogram) to stdout; timing to stderr.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   THE SCIENCE YOU SHOULD SEE: the synthetic job loads the top edge and supports
+//   the base, so remodeling concentrates bone into the columns under the load and
+//   thins the lightly-loaded flanks -- the per-column mass profile makes this
+//   visible, and the state histogram shows most voxels settling into the lazy
+//   (homeostatic) zone once the structure has adapted.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Run-varying numbers (timings) go to STDERR, which
+//   the demo shows but does not diff (PATTERNS.md section 3).
 //
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then bone_remodel.h (the per-voxel physics), kernels.cu
+// (the GPU mapping), reference_cpu.cpp (the baseline). The "why" is in THEORY.md.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // bone_gpu, BoneParams
+#include "reference_cpu.h"    // load_bone, bone_cpu, bone_summary
+#include "bone_remodel.h"     // bone_state (shared classifier for the histogram)
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "6.22";
 static const char* PROJECT_NAME = "Bone Remodeling Simulation";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Verification tolerance. CPU and GPU run the SAME double-precision arithmetic
+// from the shared header, but over many remodeling steps the GPU's fused
+// multiply-add (FMA) contraction and the host compiler's separate mul/add can
+// diverge by a few ULPs, and that tiny difference is amplified a little by the
+// nonlinear (clamped, dead-band) remodeling map. We therefore verify to a small
+// PHYSICAL tolerance rather than pretend bit-identity (PATTERNS.md section 4,
+// the "long iterative solver" case). 1e-9 on a density in [rho_min,1] is
+// physically negligible (nano-fraction of full mineralization).
+static constexpr double TOLERANCE = 1.0e-9;
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
+// ---------------------------------------------------------------------------
+// make_synthetic : the built-in job used when no data file is supplied. Chosen
+//   so the demo tells a clear story AND is stable: a compression specimen loaded
+//   on top, supported at the base. Values match scripts/make_synthetic.py and
+//   data/sample so the committed sample and the fallback agree.
+// ---------------------------------------------------------------------------
+static BoneParams make_synthetic() {
+    BoneParams p;
+    p.nx = 24; p.ny = 16;      // 24 columns x 16 rows voxel grid
+    p.remodel_steps = 60;      // ~60 "months" of remodeling
+    p.relax_iters   = 80;      // Jacobi sweeps to settle the stimulus each step
+    p.load     = 4.0;          // localized mechanical load pushed in on the top edge
+    p.load_x0  = 10;           // loaded footprint spans the CENTER columns [10,13]:
+    p.load_x1  = 13;           //   a joint/implant contact patch, not a uniform press
+    p.setpoint = 0.55;         // homeostatic SED-per-mass target k
+    p.lazy     = 0.20;         // lazy-zone half-width w (dead band around k)
+    p.rate     = 0.05;         // remodeling gain
+    p.rho_min  = 0.05;         // density floor (bone never fully vanishes)
+    p.rho_init = 0.50;         // uniform starting density (unremodeled blank)
+    return p;
 }
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
+    // ---- 1. Load -----------------------------------------------------------
+    BoneParams p;
     const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
+    if (argc > 1) {
+        try {
+            p = load_bone(argv[1]);
+            source = argv[1];
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[error] %s\n", e.what());
+            return 2;
+        }
     } else {
-        make_synthetic(n, a, x, y);
+        p = make_synthetic();
     }
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    std::vector<double> rho_cpu, S_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    bone_cpu(p, rho_cpu, S_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU remodeling (all kernels timed) ----------------------------
+    std::vector<double> rho_gpu, S_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    bone_gpu(p, rho_gpu, S_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (density fields agree) ---------------------------------
+    double err = 0.0;
+    for (std::size_t k = 0; k < rho_cpu.size(); ++k) {
+        const double d = std::fabs(rho_cpu[k] - rho_gpu[k]);
+        if (d > err) err = d;
+    }
+    const bool pass = err <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) ----------
+    // Use the GPU density for the report (verified equal to the CPU within tol).
+    double total_mass = 0.0;
+    std::vector<double> col_mass;
+    bone_summary(p, rho_gpu, total_mass, col_mass);
+
+    // Mechanostat state histogram over all voxels, using the shared classifier
+    // and the GPU's settled stimulus field. Integer counts -> fully deterministic.
+    int n_resorb = 0, n_home = 0, n_form = 0;
+    for (int y = 0; y < p.ny; ++y)
+        for (int x = 0; x < p.nx; ++x) {
+            const int s = bone_state(x, y, p.nx, p.setpoint, p.lazy,
+                                     S_gpu.data(), rho_gpu.data());
+            if      (s == 0) ++n_resorb;
+            else if (s == 2) ++n_form;
+            else             ++n_home;
+        }
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("[reduced-scope teaching model: mechanostat remodeling on a 2-D voxel grid]\n");
+    std::printf("grid %dx%d, %d remodel steps, %d Jacobi sweeps/step\n",
+                p.nx, p.ny, p.remodel_steps, p.relax_iters);
+    std::printf("localized load %.2f on top-edge columns [%d,%d]\n",
+                p.load, p.load_x0, p.load_x1);
+    std::printf("mechanostat: setpoint k=%.3f, lazy zone +/-%.3f, rate=%.3f, rho in [%.3f,1]\n",
+                p.setpoint, p.lazy, p.rate, p.rho_min);
+    std::printf("total bone mass (sum rho) = %.6f\n", total_mass);
+    std::printf("mechanostat state: resorbing=%d homeostatic=%d forming=%d (of %d voxels)\n",
+                n_resorb, n_home, n_form, p.nx * p.ny);
+    std::printf("per-column bone mass profile (x=0..%d):\n", p.nx - 1);
+    for (int x = 0; x < p.nx; ++x) std::printf(" %.4f", col_mass[static_cast<std::size_t>(x)]);
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("RESULT: %s (GPU density matches CPU within tol=%.1e)\n",
+                pass ? "PASS" : "FAIL", TOLERANCE);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
+    // ---- 5b. Varying detail -> STDERR (shown, not diffed) -----------------
+    std::fprintf(stderr, "[data]   source: %s  (%d x %d grid, %d steps)\n",
+                 source, p.nx, p.ny, p.remodel_steps);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU (all kernels): %.3f ms\n",
                  cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    std::fprintf(stderr, "[timing] teaching artifact only -- on this tiny grid the many small "
+                         "kernel launches are launch-bound; the GPU's edge grows with grid size.\n");
+    std::fprintf(stderr, "[verify] max density diff = %.3e  (tolerance %.1e)\n", err, TOLERANCE);
 
     // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;

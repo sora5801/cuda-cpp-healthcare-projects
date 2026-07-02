@@ -1,33 +1,39 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
+# scripts/download_data.sh  --  Real T1D data + simulator pointers (Linux/macOS)
 # ---------------------------------------------------------------------------
-# Project 6.23 -- Glucose-Insulin Dynamics & Artificial Pancreas   (template skeleton)
+# Project 6.23 : Glucose-Insulin Dynamics & Artificial Pancreas
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# There is NOTHING to download for the demo: the input is a cohort CONFIG that
+# the program expands into virtual patients (data/sample/cohort_params.txt).
+# This script prints where the real CGM/insulin datasets and reference simulators
+# live. Per CLAUDE.md §8 it never bypasses credentials -- the clinical datasets
+# below require registration / a data-use agreement, so we only link them.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="$PROJECT_ROOT/data"
 
 echo "[download_data] Project 6.23 -- Glucose-Insulin Dynamics & Artificial Pancreas"
-echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    OhioT1DM dataset — 12-week CGM + insulin data for 12 T1D subjects (https://smarthealth.cs.ohio.edu/OhioT1DM-dataset.html); JAEB CGMS datasets (https://public.jaeb.org); simglucose simulator virtual patient population (https://github.com/jxx123/simglucose); DirecNet CGM datasets (https://public.jaeb.org/direcnet)."
+echo "No file to download: the program derives every virtual patient from the"
+echo "sweep in data/sample/cohort_params.txt (regenerate with make_synthetic.py)."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "REAL clinical datasets (require registration / data-use agreement --"
+echo "this script will NOT bypass that; apply at the links):"
+echo "  OhioT1DM   : https://smarthealth.cs.ohio.edu/OhioT1DM-dataset.html"
+echo "               (12-week CGM + insulin for 12 T1D subjects)"
+echo "  JAEB CGMS  : https://public.jaeb.org"
+echo "  DirecNet   : https://public.jaeb.org/direcnet"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Reference SIMULATORS (study the FDA-accepted UVA/Padova model):"
+echo "  simglucose : https://github.com/jxx123/simglucose   (Python, gym env)"
+echo "  GluCoEnv   : https://github.com/chirathyh/GluCoEnv   (GPU RL env)"
+echo "  G2P2C      : https://github.com/RL4H/G2P2C           (RL artificial pancreas)"
+echo "  OpenAPS    : https://github.com/openaps/oref0        (reference algorithm)"
+echo
+echo "Bigger SYNTHETIC cohort (no download):"
+echo "  python scripts/make_synthetic.py --nSI 64 --nSG 64"
+echo
+echo "Target data dir: $PROJECT_ROOT/data"

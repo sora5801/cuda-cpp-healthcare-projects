@@ -1,5 +1,17 @@
 6.19 -- Defibrillation & High-Voltage Shock Simulation
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+1-D monodomain cable (FitzHugh-Nagumo), monophasic shock
+cable: 100 cells, 2000 steps, dt=0.1000 dx=1.000 D=0.600
+shock window: steps [800,810), success if residual < 0.0100
+shock amplitude sweep (residual activity after shock):
+  amp=0.000  residual=0.051915  failed
+  amp=0.050  residual=0.052210  failed
+  amp=0.100  residual=0.051709  failed
+  amp=0.150  residual=0.000000  DEFIBRILLATED
+  amp=0.200  residual=0.000000  DEFIBRILLATED
+  amp=0.250  residual=0.000000  DEFIBRILLATED
+  amp=0.300  residual=0.000000  DEFIBRILLATED
+  amp=0.400  residual=0.000000  DEFIBRILLATED
+  amp=0.600  residual=0.000000  DEFIBRILLATED
+  amp=1.000  residual=0.000000  DEFIBRILLATED
+DFT: amplitude 0.150 (index 3) -- weakest shock that terminated activity
+RESULT: PASS (GPU matches CPU within tol=1.0e-06)

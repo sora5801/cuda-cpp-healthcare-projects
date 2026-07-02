@@ -1,122 +1,142 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: solve coronary perfusion on CPU + GPU, verify
 // ---------------------------------------------------------------------------
-// Project 6.20 -- Coronary Autoregulation & Microvascular Perfusion   (template skeleton)
+// Project 6.20 : Coronary Autoregulation & Microvascular Perfusion
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// 5-STEP SHAPE (the standard teaching flow)
+//   1. Load the synthetic coronary microvascular network (data/sample).
+//   2. CPU reference: autoregulation loop of sparse-SPD CG solves (reference_cpu).
+//   3. GPU: the SAME loop, each solve done with CSR-SpMV Conjugate Gradient
+//      (kernels.cu). Both call the identical per-vessel physics in coronary.h.
+//   4. VERIFY: the GPU nodal pressures match the CPU pressures within a
+//      documented tolerance (see TOLERANCE below).
+//   5. REPORT: a deterministic summary to stdout -- pressures at each node,
+//      total perfusion, the modeled stenosis's FFR, and PASS/FAIL. Timings and
+//      run-varying detail go to stderr (so stdout is byte-stable for the demo).
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+// THE PHENOMENON: because arteriolar radius feeds conductance as r^4, a small
+// autoregulatory dilation dramatically raises flow. The demo shows perfusion
+// being driven toward the metabolic set-point across the outer iterations, and
+// computes a virtual Fractional Flow Reserve (FFR = distal/proximal pressure)
+// across a modeled stenosis -- the clinical read-out this class of model targets.
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then coronary.h (the physics), reference_cpu.cpp (the
+// serial solve), kernels.cu (the GPU solve). Depth is in ../THEORY.md.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // solve_gpu
+#include "reference_cpu.h"    // Network, Solution, load_network, solve_cpu
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "6.20";
 static const char* PROJECT_NAME = "Coronary Autoregulation & Microvascular Perfusion";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
+// Solve parameters. n_autoreg outer feedback steps; CG tolerance is a RELATIVE
+// residual. These are fixed so stdout is deterministic.
+static constexpr int    N_AUTOREG    = 8;        // autoregulation iterations
+static constexpr double CG_TOL       = 1.0e-10;  // CG relative-residual stop
+static constexpr int    CG_MAX_ITER  = 2000;     // safety cap (never hit here)
 
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Verification tolerance on nodal pressures (mmHg). CPU and GPU run the SAME
+// double-precision CG, but the CSR SpMV sums a node's incident edges in a
+// different order than the CPU's edge loop, so FMA/rounding diverges by ~1e-11
+// per operation and can accumulate over the CG iterations. A few 1e-8 mmHg is
+// physically negligible (pressures are ~10-100 mmHg). See PATTERNS.md §4 and
+// THEORY §numerics -- we verify to a small physical tolerance and say so.
+static constexpr double TOLERANCE = 1.0e-6;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load ----------------------------------------------------------
+    const std::string path = (argc > 1) ? argv[1]
+                                        : "data/sample/coronary_network.txt";
+    Network net_cpu;
+    try {
+        net_cpu = load_network(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    // The autoregulation loop MUTATES radii, so give CPU and GPU independent
+    // copies of the network -- otherwise the second solver would start from the
+    // first solver's regulated geometry.
+    Network net_gpu = net_cpu;
 
-    // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    // ---- 2. CPU reference (timed) -----------------------------------------
+    Solution sol_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    solve_cpu(net_cpu, N_AUTOREG, CG_TOL, CG_MAX_ITER, sol_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
-    float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    // ---- 3. GPU solve (device-timed) --------------------------------------
+    Solution sol_gpu;
+    float gpu_ms = 0.0f;
+    solve_gpu(net_gpu, N_AUTOREG, CG_TOL, CG_MAX_ITER, sol_gpu, &gpu_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify (nodal pressures agree) --------------------------------
+    double perr = 0.0;
+    for (int i = 0; i < net_cpu.n_nodes; ++i) {
+        const double d = std::fabs(sol_cpu.p[i] - sol_gpu.p[i]);
+        if (d > perr) perr = d;
+    }
+    const bool pass = perr <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT -------------------------------
+    // We print the GPU solution's numbers (verified to match the CPU).
+    //
+    // Virtual FFR across the tagged stenosis. Clinically FFR is defined relative
+    // to venous pressure Pv:  FFR = (Pd - Pv) / (Pa - Pv), where Pa is aortic
+    // (inlet) and Pd is distal-to-lesion. A value < 0.80 is the guideline
+    // cut-point for a flow-limiting lesion. This is a synthetic teaching read-out.
+    const double p_dist = sol_gpu.p[net_gpu.ffr_dist];
+    double pv = 1e300;
+    for (int i = 0; i < net_gpu.n_nodes; ++i)
+        if (net_gpu.is_fixed[i] && net_gpu.fixed_p[i] < pv) pv = net_gpu.fixed_p[i];
+    const double pa  = net_gpu.aortic_p;
+    const double ffr = (pa - pv) != 0.0 ? (p_dist - pv) / (pa - pv) : 0.0;
+
+    // Total inlet perfusion = net flow leaving the inlet node (shared helper).
+    const double perfusion = inlet_perfusion(net_gpu, sol_gpu.q);
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
+    std::printf("network: %d nodes, %d segments, hematocrit=%.2f, aortic P=%.1f mmHg\n",
+                net_gpu.n_nodes, net_gpu.n_segs, net_gpu.hct, net_gpu.aortic_p);
+    std::printf("autoregulation steps: %d   CG tol: %.1e\n", N_AUTOREG, CG_TOL);
+    std::printf("nodal pressures (mmHg):\n");
+    for (int i = 0; i < net_gpu.n_nodes; ++i)
+        std::printf(" P[%d]=%.4f", i, sol_gpu.p[i]);
     std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    // Show autoregulation at work: perfusion right after the first solve vs the
+    // regulated steady state. The pre-autoreg value is LARGE (the un-regulated
+    // network is grossly over-perfused), and its low-order digits are sensitive
+    // to compiler FMA choices, so we print it in scientific notation at modest
+    // precision -- stable across Debug/Release and honest about its significance.
+    // The regulated value is small and prints exactly; it is the headline result.
+    std::printf("inlet perfusion (pre-autoreg)  = %.4e (um^3/s)\n", sol_gpu.perfusion_first);
+    std::printf("inlet perfusion (regulated)    = %.4f (um^3/s)\n", perfusion);
+    std::printf("stenosis segment       = %d (nodes %d->%d)\n",
+                net_gpu.ffr_seg, net_gpu.ffr_prox, net_gpu.ffr_dist);
+    std::printf("virtual FFR (Pd/Pa)    = %.4f  [%s]\n",
+                ffr, ffr < 0.80 ? "flow-limiting (<0.80)" : "non-significant");
+    std::printf("RESULT: %s (GPU pressures match CPU within tol=%.1e mmHg)\n",
+                pass ? "PASS" : "FAIL", TOLERANCE);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR -------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d nodes, %d segments)\n",
+                 path.c_str(), net_gpu.n_nodes, net_gpu.n_segs);
+    std::fprintf(stderr, "[solve]  cold-start CG iters -- CPU: %d   GPU: %d   "
+                         "(later autoregulation solves warm-start -> ~0 iters)\n",
+                 sol_cpu.cg_iters_first, sol_gpu.cg_iters_first);
+    std::fprintf(stderr, "[solve]  final CG residual -- CPU: %.2e   GPU: %.2e\n",
+                 sol_cpu.cg_resid, sol_gpu.cg_resid);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU(all solves): %.3f ms\n", cpu_ms, gpu_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- on this tiny network the GPU is launch-bound; "
+                         "its edge grows with 10^4-10^6 segment networks (see THEORY).\n");
+    std::fprintf(stderr, "[verify] max |P_cpu - P_gpu| = %.3e mmHg  (tolerance %.1e)\n", perr, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

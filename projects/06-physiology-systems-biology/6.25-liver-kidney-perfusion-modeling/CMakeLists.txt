@@ -1,11 +1,12 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 6.25 -- Liver & Kidney Perfusion Modeling   (template skeleton)
+# Project 6.25 : Liver & Kidney Perfusion Modeling
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/liver-kidney-perfusion-modeling.sln (CLAUDE.md §5). Both
-# compile the SAME src/ files, so they stay in lockstep.
+# compile the SAME src/ files, so they stay in lockstep. No extra CUDA library is
+# linked -- the kernel is hand-written and needs only the CUDA runtime.
 #
 #   cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build/cmake

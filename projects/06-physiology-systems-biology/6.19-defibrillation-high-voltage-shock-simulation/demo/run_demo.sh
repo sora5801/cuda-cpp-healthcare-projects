@@ -14,7 +14,7 @@ set -euo pipefail
 DEMO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$DEMO")"
 SLUG="defibrillation-high-voltage-shock-simulation"
-SAMPLE="$ROOT/data/sample/saxpy_sample.txt"
+SAMPLE="$ROOT/data/sample/defib_sweep.txt"
 EXPECTED="$DEMO/expected_output.txt"
 BUILD="$ROOT/build/cmake"
 EXE="$BUILD/$SLUG"

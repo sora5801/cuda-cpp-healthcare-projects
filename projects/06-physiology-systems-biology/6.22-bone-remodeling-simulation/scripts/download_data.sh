@@ -2,11 +2,12 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 6.22 -- Bone Remodeling Simulation   (template skeleton)
+# Project 6.22 : Bone Remodeling Simulation   (REDUCED-SCOPE teaching version)
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URLs, and
+# NEVER bypasses credentials/registration. This teaching model runs entirely on
+# the committed SYNTHETIC parameter file (data/sample/bone_params.txt) plus
+# scripts/make_synthetic.py, so there is nothing to download to run the demo.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +18,18 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 6.22 -- Bone Remodeling Simulation"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    PhysioNet bone-related datasets (https://physionet.org); OsteoArthritis Initiative (OAI) µCT and radiograph dataset (https://nda.nih.gov/oai/); BoneJ plugin morphometric datasets (https://bonej.org); MICCAI bone segmentation challenge datasets (grand-challenge.org)."
+echo "This project needs NO download: the committed synthetic sample at"
+echo "  data/sample/bone_params.txt"
+echo "is sufficient to build and run the demo offline. For a larger SYNTHETIC"
+echo "problem, run:"
+echo "    python scripts/make_synthetic.py --nx 64 --ny 48 --load-x0 28 --load-x1 35"
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Real bone-imaging datasets you could adapt a voxel-FEM pipeline to"
+echo "(segment a microCT stack into a bone/marrow voxel mask, then remodel):"
+echo "  * OsteoArthritis Initiative (OAI): https://nda.nih.gov/oai/  (registration required)"
+echo "  * PhysioNet bone datasets:         https://physionet.org     (credentialed use for some)"
+echo "  * BoneJ morphometric examples:     https://bonej.org"
+echo "  * MICCAI bone segmentation:        https://grand-challenge.org"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "Respect every license; NEVER bypass registration. If redistribution is"
+echo "forbidden, keep using the synthetic sample (see data/README.md)."

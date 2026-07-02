@@ -1,0 +1,24 @@
+# SYNTHETIC coronary microvascular network -- project 6.20
+# NOT patient data, NOT clinically valid. See data/README.md.
+# header: n_nodes n_segs hct aortic_p
+8 8 0.45 100.0
+# nodes: is_fixed  fixed_pressure_mmHg   (one per node, id 0..N-1)
+1 100.0
+0 0.0
+0 0.0
+0 0.0
+0 0.0
+0 0.0
+1 20.0
+1 20.0
+# segments: a b radius_um length_um target_flow
+0 1 30.0 2000.0 1000000.0
+1 2 20.0 1500.0 500000.0
+1 3 8.0 1500.0 500000.0
+2 4 15.0 1000.0 300000.0
+3 5 11.0 1600.0 300000.0
+4 6 10.0 800.0 200000.0
+5 7 10.0 800.0 200000.0
+2 3 6.0 1800.0 50000.0
+# FFR readout: ffr_seg ffr_prox ffr_dist
+2 1 3

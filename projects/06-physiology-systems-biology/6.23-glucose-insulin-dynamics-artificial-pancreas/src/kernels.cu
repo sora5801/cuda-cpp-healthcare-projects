@@ -1,16 +1,18 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Cohort simulation kernel (one thread per virtual patient)
 // ---------------------------------------------------------------------------
-// Project 6.23 -- Glucose-Insulin Dynamics & Artificial Pancreas   (template skeleton)
+// Project 6.23 : Glucose-Insulin Dynamics & Artificial Pancreas
 //
 // WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
+//   Implements the device kernel (cohort_kernel) and the host-side glue
+//   (simulate_cohort_gpu) that allocates a device result buffer, launches one
+//   thread per patient, times the kernel, and brings the results back. This is
+//   the GPU twin of simulate_cohort_cpu() in reference_cpu.cpp; main.cu runs
+//   both and compares them per patient.
 //
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
+//   Because the per-patient work (simulate_patient) lives in bergman.h as a
+//   shared __host__ __device__ function, this file is thin: the kernel just maps
+//   thread -> patient and calls the same routine the CPU uses. See ../THEORY.md.
 //
 // READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
 // ===========================================================================
@@ -18,77 +20,69 @@
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+// Threads per block. 128 is a solid default for a REGISTER-HEAVY per-thread
+// integrator like this: each thread runs a long RK4 loop holding the full state
+// + controller memory + RK4 temporaries in registers, so we keep the block small
+// to leave enough registers per thread for good occupancy. (Multiple of the
+// 32-lane warp; tune per GPU.)
+static constexpr int THREADS_PER_BLOCK = 128;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
+// cohort_kernel: one thread simulates one virtual patient, start to finish.
+//   Launch config (set in simulate_cohort_gpu):
+//     grid  = ceil(M / THREADS_PER_BLOCK) blocks, M = cohort_size(c)
 //     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+//   Thread-to-data map: idx = blockIdx.x * blockDim.x + threadIdx.x owns patient
+//   idx. The thread builds that patient's parameters (patient_params) and runs
+//   the entire closed-loop simulation (simulate_patient) in local registers,
+//   then writes ONE PatientResult to global memory. No shared memory, no
+//   atomics, no inter-thread communication -- pure embarrassing parallelism over
+//   patients. Divergence is mild: all patients run the same step count; only the
+//   min/max/in-range branches differ per step, which is cheap.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void cohort_kernel(CohortConfig c, PatientResult* __restrict__ out) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= cohort_size(c)) return;    // guard the ragged last block
 
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+    // Build this patient's full parameter set from the cohort grid, then run the
+    // SAME simulation function the CPU reference uses -> identical math.
+    const PatientParams p = patient_params(c, idx);
+    out[idx] = simulate_patient(p);
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// simulate_cohort_gpu: host wrapper. The canonical steps of a CUDA computation,
+//   minus H2D input copies (the only "input" is the small CohortConfig, which we
+//   pass BY VALUE as a kernel argument -- it fits in the constant argument bank):
+//     (1) allocate the device result buffer
+//     (2) launch one thread per patient
+//     (3) copy the results device->host
+//     (4) free device memory
+//   We time ONLY step (2) with CUDA events so the reported figure is the kernel
+//   compute cost, not the (tiny) result copy.
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+void simulate_cohort_gpu(const CohortConfig& c, std::vector<PatientResult>& results,
+                         float* kernel_ms) {
+    const int M = cohort_size(c);
+    results.assign(static_cast<std::size_t>(M), PatientResult{});
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    // (1) Device buffer for the M per-patient summaries. d_ = DEVICE pointer.
+    PatientResult* d_out = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_out, static_cast<std::size_t>(M) * sizeof(PatientResult)));
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
-
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // (2) Launch. Blocks must cover all M patients: ceiling division "round up".
+    const int blocks = (M + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
+    cohort_kernel<<<blocks, THREADS_PER_BLOCK>>>(c, d_out);
+    *kernel_ms = timer.stop_ms();            // GPU-measured kernel time
+    CUDA_CHECK_LAST("cohort_kernel");        // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    // (3) Bring the per-patient results back to the host vector.
+    CUDA_CHECK(cudaMemcpy(results.data(), d_out,
+                          static_cast<std::size_t>(M) * sizeof(PatientResult),
+                          cudaMemcpyDeviceToHost));
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
+    // (4) Always free what we allocated (no GPU garbage collector exists).
     CUDA_CHECK(cudaFree(d_out));
 }

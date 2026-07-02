@@ -1,94 +1,139 @@
 // ===========================================================================
-// src/kernels.cu  --  The GPU kernel and its host wrapper (placeholder: SAXPY)
+// src/kernels.cu  --  Bone-remodeling stencil kernels + host drive loop
 // ---------------------------------------------------------------------------
-// Project 6.22 -- Bone Remodeling Simulation   (template skeleton)
+// Project 6.22 : Bone Remodeling Simulation   (REDUCED-SCOPE teaching version)
 //
-// WHAT THIS FILE DOES
-//   Implements the device kernel (saxpy_kernel) and the host-side glue
-//   (saxpy_gpu) that allocates GPU memory, moves data, launches the kernel,
-//   times it, and brings the result back. This is the GPU twin of the CPU
-//   reference in reference_cpu.cpp; main.cu runs both and compares them.
-//
-//   TODO(impl): replace the SAXPY math with this project's real kernel. Keep
-//   the comment density high (CLAUDE.md section 6.2 targets >= 1:1 in kernels).
-//
-// READ THIS AFTER: kernels.cuh (declarations + the thread-mapping idea).
+// GPU twin of bone_cpu(): identical per-voxel physics (shared bone_remodel.h),
+// one thread per voxel, host-driven nested loops with ping-pong buffers. main.cu
+// runs both CPU and GPU and compares the final density fields. The kernels are
+// pure thread-to-voxel mapping wrappers around the shared physics functions --
+// all the biology lives in bone_remodel.h. See ../THEORY.md "GPU mapping".
 // ===========================================================================
 #include "kernels.cuh"
+#include "bone_remodel.h"        // BR_HD physics: bone_relax_point / bone_apply_stimulus
 #include "util/cuda_check.cuh"   // CUDA_CHECK, CUDA_CHECK_LAST
 #include "util/timer.cuh"        // GpuTimer (CUDA-event timing)
 
-// Threads per block. 256 is a solid default on sm_75..sm_89: it is a multiple
-// of the 32-lane warp, gives the scheduler 8 warps to hide memory latency, and
-// leaves plenty of blocks resident for occupancy. (Tune per project/GPU.)
-static constexpr int THREADS_PER_BLOCK = 256;
+#include <algorithm>             // std::swap
+#include <vector>
+
+// 16x16 = 256 threads/block over the 2-D voxel grid: a multiple of the 32-lane
+// warp, good occupancy on sm_75..sm_89, and a natural 2-D tiling of the domain.
+static constexpr int TILE = 16;
 
 // ---------------------------------------------------------------------------
-// saxpy_kernel: one thread computes one output element.
-//   Launch config (set in saxpy_gpu):
-//     grid  = ceil(n / THREADS_PER_BLOCK) blocks
-//     block = THREADS_PER_BLOCK threads
-//   Thread-to-data map: i = blockIdx.x * blockDim.x + threadIdx.x.
-//   Memory: reads x[i], y[i] from global memory, writes out[i]; no shared
-//   memory or atomics needed because elements are fully independent.
+// relax_kernel: one Jacobi sweep of the stimulus field. Thread (x,y) owns one
+//   voxel. Nodes are independent within a sweep (each writes only its own
+//   S_new, reading neighbours from the separate read-only S_old buffer), so
+//   there are no data races and no atomics -- the reason ping-pong works.
 // ---------------------------------------------------------------------------
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out) {
-    // Global index this thread is responsible for.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // GUARD THE RAGGED LAST BLOCK: n is rarely an exact multiple of the block
-    // size, so the final block has threads with i >= n. They must do nothing,
-    // or they would read/write out of bounds (an illegal-address crash).
-    if (i < n) {
-        // The actual work. On the GPU this single fused multiply-add runs in
-        // parallel across all n threads at once -- that parallelism is the
-        // entire point of the exercise.
-        out[i] = a * x[i] + y[i];
-    }
+__global__ void relax_kernel(int nx, int ny, double load, int load_x0, int load_x1,
+                             const double* __restrict__ S_old,
+                             const double* __restrict__ rho,
+                             double* __restrict__ S_new) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;   // this thread's column
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;   // this thread's row
+    if (x >= nx || y >= ny) return;                        // guard ragged edge tiles
+    // The entire stencil is the shared function -> the kernel body is just the map.
+    S_new[bone_idx(x, y, nx)] =
+        bone_relax_point(x, y, nx, ny, load, load_x0, load_x1, S_old, rho);
 }
 
 // ---------------------------------------------------------------------------
-// saxpy_gpu: host wrapper. The five canonical steps of a CUDA computation:
-//   (1) allocate device memory  (2) copy inputs host->device
-//   (3) launch the kernel        (4) copy result device->host
-//   (5) free device memory
-// We time ONLY step (3) with CUDA events so the reported figure is the kernel
-// cost, not the PCIe transfer cost (those are discussed separately in THEORY).
+// remodel_kernel: one mechanostat density update. Thread (x,y) reads the
+//   settled stimulus S and the current density rho_old, writes rho_new. Again
+//   fully independent per voxel.
 // ---------------------------------------------------------------------------
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms) {
-    out.assign(static_cast<std::size_t>(n), 0.0f);
-    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
+__global__ void remodel_kernel(int nx, int ny, double setpoint, double lazy,
+                               double rate, double rho_min,
+                               const double* __restrict__ S,
+                               const double* __restrict__ rho_old,
+                               double* __restrict__ rho_new) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= nx || y >= ny) return;
+    rho_new[bone_idx(x, y, nx)] =
+        bone_apply_stimulus(x, y, nx, setpoint, lazy, rate, rho_min, S, rho_old);
+}
 
-    // (1) Device buffers. The d_ prefix marks DEVICE pointers (CLAUDE.md 12):
-    //     dereferencing one on the host would crash, so the naming matters.
-    float *d_x = nullptr, *d_y = nullptr, *d_out = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_x, bytes));     // can fail: out of device memory
-    CUDA_CHECK(cudaMalloc(&d_y, bytes));
-    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+// ---------------------------------------------------------------------------
+// bone_gpu: host wrapper running the whole simulation on the device.
+//   IMPORTANT: the buffer-swap bookkeeping MUST mirror bone_cpu() exactly so the
+//   two paths perform the identical sequence of arithmetic. In particular, after
+//   the inner Jacobi loop we make the FRESHEST stimulus field live in the "Sa"
+//   buffer (d_Sa), just as the CPU copies Sb into Sa when the sweep count is odd.
+// ---------------------------------------------------------------------------
+void bone_gpu(const BoneParams& p,
+              std::vector<double>& rho_final,
+              std::vector<double>& S_final,
+              float* kernel_ms) {
+    const std::size_t N     = static_cast<std::size_t>(p.nx) * p.ny;  // voxel count
+    const std::size_t bytes = N * sizeof(double);
 
-    // (2) Copy inputs H2D. .data() is the contiguous backing array of vector.
-    CUDA_CHECK(cudaMemcpy(d_x, x.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_y, y.data(), bytes, cudaMemcpyHostToDevice));
+    // --- Device buffers -----------------------------------------------------
+    //   d_rho / d_rho_next : density ping-pong (updated once per remodeling step)
+    //   d_Sa   / d_Sb      : stimulus ping-pong (updated once per Jacobi sweep)
+    // The d_ prefix marks DEVICE pointers (CLAUDE.md section 12): dereferencing
+    // one on the host would crash, so the naming is load-bearing.
+    double *d_rho = nullptr, *d_rho_next = nullptr, *d_Sa = nullptr, *d_Sb = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_rho,      bytes));   // can fail: out of device memory
+    CUDA_CHECK(cudaMalloc(&d_rho_next, bytes));
+    CUDA_CHECK(cudaMalloc(&d_Sa,       bytes));
+    CUDA_CHECK(cudaMalloc(&d_Sb,       bytes));
 
-    // (3) Launch. Blocks must cover all n elements, hence the ceiling division
-    //     (n + B - 1) / B -- integer-arithmetic "round up".
-    const int blocks = (n + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    // Initialize on the host, then upload: rho = uniform rho_init, S = 0.
+    std::vector<double> rho_init(N, p.rho_init);
+    std::vector<double> S_zero(N, 0.0);
+    CUDA_CHECK(cudaMemcpy(d_rho, rho_init.data(), bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_Sa,  S_zero.data(),   bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_Sb,  S_zero.data(),   bytes, cudaMemcpyHostToDevice));
+
+    // 2-D launch config covering the whole grid.
+    dim3 block(TILE, TILE);
+    dim3 grid((p.nx + TILE - 1) / TILE, (p.ny + TILE - 1) / TILE);
+
+    // Time ALL kernel launches together with CUDA events (the honest way to time
+    // GPU work; a host clock would mostly measure launch overhead -- see timer.cuh).
     GpuTimer timer;
     timer.start();
-    saxpy_kernel<<<blocks, THREADS_PER_BLOCK>>>(n, a, d_x, d_y, d_out);
-    *kernel_ms = timer.stop_ms();          // GPU-measured kernel time
-    CUDA_CHECK_LAST("saxpy_kernel");       // catch launch + execution errors
 
-    // (4) Bring the result back to the host vector.
-    CUDA_CHECK(cudaMemcpy(out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
+    for (int step = 0; step < p.remodel_steps; ++step) {
+        // (1) Relax the stimulus field with `relax_iters` Jacobi sweeps,
+        //     ping-ponging d_Sin <-> d_Sout. Warm-started from d_Sa each step.
+        double* d_Sin  = d_Sa;
+        double* d_Sout = d_Sb;
+        for (int it = 0; it < p.relax_iters; ++it) {
+            relax_kernel<<<grid, block>>>(p.nx, p.ny, p.load, p.load_x0, p.load_x1,
+                                          d_Sin, d_rho, d_Sout);
+            std::swap(d_Sin, d_Sout);      // last-written becomes next input
+        }
+        // Make the freshest field live in d_Sa (mirror of the CPU's `Sa = Sb`
+        // when the sweep count is odd). If d_Sin already points at d_Sa, nothing
+        // to do; otherwise copy the fresh d_Sb into d_Sa on the device.
+        if (d_Sin != d_Sa) {
+            CUDA_CHECK(cudaMemcpy(d_Sa, d_Sin, bytes, cudaMemcpyDeviceToDevice));
+        }
 
-    // (5) Always free what we allocated (no GPU garbage collector exists).
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(d_y));
-    CUDA_CHECK(cudaFree(d_out));
+        // (2) Apply the mechanostat: rho_next(x,y) from the settled field d_Sa.
+        remodel_kernel<<<grid, block>>>(p.nx, p.ny, p.setpoint, p.lazy,
+                                        p.rate, p.rho_min, d_Sa, d_rho, d_rho_next);
+        std::swap(d_rho, d_rho_next);      // adopt the remodeled density
+    }
+
+    *kernel_ms = timer.stop_ms();          // GPU-measured total kernel time
+    CUDA_CHECK_LAST("bone remodeling kernels");   // catch launch + execution errors
+
+    // --- Download results ---------------------------------------------------
+    // `d_rho` holds the final density after the last swap; `d_Sa` holds the last
+    // settled stimulus field (matching what bone_cpu() returns in S_final).
+    rho_final.assign(N, 0.0);
+    S_final.assign(N, 0.0);
+    CUDA_CHECK(cudaMemcpy(rho_final.data(), d_rho, bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(S_final.data(),   d_Sa,  bytes, cudaMemcpyDeviceToHost));
+
+    // --- Free (no GPU garbage collector exists) -----------------------------
+    CUDA_CHECK(cudaFree(d_rho));
+    CUDA_CHECK(cudaFree(d_rho_next));
+    CUDA_CHECK(cudaFree(d_Sa));
+    CUDA_CHECK(cudaFree(d_Sb));
 }

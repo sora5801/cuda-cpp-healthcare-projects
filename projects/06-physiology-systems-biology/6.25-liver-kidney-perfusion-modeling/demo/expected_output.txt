@@ -1,5 +1,12 @@
 6.25 -- Liver & Kidney Perfusion Modeling
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+SYNTHETIC liver lobule: 4096 parallel sinusoids, L=0.500 mm, C_in=1.000 uM, Km=50.000 uM
+zonation Vmax: periportal=8.000 -> centrilobular=2.000 uM/s; velocity sweep 0.2000..1.0000 mm/s over 200 RK4 steps
+sample sinusoids (v[mm/s] -> C_out[uM] extraction[%]):
+  s0    :   0.2000 ->   0.7822  21.780
+  s1024 :   0.4000 ->   0.8846  11.545
+  s2048 :   0.6001 ->   0.9215   7.850
+  s3072 :   0.8001 ->   0.9405   5.946
+  s4095 :   1.0000 ->   0.9521   4.786
+lobule extraction ratio: mean=0.0930  min=0.0479  max=0.2178
+analytic first-order limit: mean extraction=0.0946
+RESULT: PASS (GPU==CPU within 1e-09; mean extraction within 1e-02 of analytic)

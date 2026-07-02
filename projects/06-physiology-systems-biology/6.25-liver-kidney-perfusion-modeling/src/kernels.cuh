@@ -1,52 +1,46 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU ensemble-perfusion interface (declarations + idea)
 // ---------------------------------------------------------------------------
-// Project 6.25 -- Liver & Kidney Perfusion Modeling   (template skeleton)
+// Project 6.25 : Liver & Kidney Perfusion Modeling
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (ensemble ODE pattern -- PATTERNS.md section 1)
+//   A lobule is thousands of parallel SINUSOIDS. Each sinusoid is an independent
+//   1-D convection-reaction ODE (drug carried by blood, cleared by zonal
+//   Michaelis-Menten enzymes) whose only per-member difference is the inlet blood
+//   VELOCITY. Because the members do not interact, we give EACH SINUSOID ITS OWN
+//   GPU THREAD: the thread runs the full RK4 spatial march (perfusion.h) in
+//   registers and writes one SinusoidResult. This is the natural GPU mapping for
+//   organ-on-chip / virtual-pharmacology sweeps -- it scales to millions of
+//   segments simply by launching more threads.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   The RK4 integrator + Michaelis-Menten physics are SHARED with the CPU
+//   (perfusion.h), so the GPU results match the reference to round-off.
+//   kernels.cu defines the kernel and the host wrapper.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Included only by .cu translation units (it contains a __global__ decl, so the
+//   plain C++ compiler must never see it -- that is why LobuleConfig lives in the
+//   pure-C++ reference_cpu.h).
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, perfusion.h,
+//   reference_cpu.h. Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // LobuleConfig, SinusoidResult (pure C++, safe in .cu)
 
 // ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// perfusion_kernel: thread `idx` integrates sinusoid idx and writes its result.
+//   It reads its inlet velocity from the sweep (sinusoid_velocity) then calls the
+//   shared integrate_sinusoid(). Pure embarrassing parallelism -- no inter-thread
+//   communication, no shared memory, no atomics.
+//     out : device array of `lobule_size(c)` SinusoidResult, one per sinusoid.
+__global__ void perfusion_kernel(LobuleConfig c, SinusoidResult* __restrict__ out);
 
 // ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// integrate_gpu: launch one thread per sinusoid, copy the results back, and
+//   report the measured KERNEL time (CUDA events) via *kernel_ms. main.cu calls
+//   exactly this; all CUDA bookkeeping is hidden here.
+//     results   : host output, resized to lobule_size(c) (output parameter)
+//     kernel_ms : out-param, milliseconds spent in the kernel (not the D2H copy)
+void integrate_gpu(const LobuleConfig& c, std::vector<SinusoidResult>& results, float* kernel_ms);

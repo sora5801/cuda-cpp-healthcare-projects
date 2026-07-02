@@ -1,7 +1,7 @@
 # ===========================================================================
 # CMakeLists.txt  --  OPTIONAL cross-platform build (the VS .sln is required)
 # ---------------------------------------------------------------------------
-# Project 6.23 -- Glucose-Insulin Dynamics & Artificial Pancreas   (template skeleton)
+# Project 6.23 -- Glucose-Insulin Dynamics & Artificial Pancreas
 #
 # This is a convenience build for Linux/macOS learners and CI. On Windows the
 # canonical deliverable is build/glucose-insulin-dynamics-artificial-pancreas.sln (CLAUDE.md §5). Both

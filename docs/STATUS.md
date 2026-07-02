@@ -2,12 +2,12 @@
 
 > **Generated file** -- do not hand-edit. Regenerate with `python tools/status.py`. A project's status lives in its own `projects/.../.project_status.json` marker (see the tool header for why), and is changed with `python tools/status.py --set <id> <status>`.
 
-**Progress:** 175/301 projects done (58.1%) | todo 126 | in-progress 0 | missing 0
+**Progress:** 181/301 projects done (60.1%) | todo 120 | in-progress 0 | missing 0
 
 | Difficulty | Total | done | in-progress | todo |
 |---|---:|---:|---:|---:|
 | 🟢 Beginner | 67 | 54 | 0 | 13 |
-| 🟡 Intermediate | 206 | 110 | 0 | 96 |
+| 🟡 Intermediate | 206 | 116 | 0 | 90 |
 | 🔴 Advanced | 28 | 11 | 0 | 17 |
 
 ## 1. Drug Discovery & Molecular Design  (35/35 done)
@@ -183,7 +183,7 @@
 | 5.14 | GPU-Accelerated Adaptive MR-Linac Workflow | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 5.15 | Proton CT & Ion Imaging Reconstruction | 🔴 Advanced | Frontier/Theoretical | [x] done | - | - |
 
-## 6. Computational Physiology & Systems Biology  (19/27 done)
+## 6. Computational Physiology & Systems Biology  (25/27 done)
 
 | ID | Project | Difficulty | Maturity | Status | Owner | Branch |
 |---|---|---|---|---|---|---|
@@ -205,13 +205,13 @@
 | 6.16 | Cardiac Mechanics & Electromechanical Coupling | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 6.17 | Purkinje System & Conduction System Modeling | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 6.18 | ECG Forward Problem & Body-Surface Potential Mapping | 🟢 Beginner | Established | [x] done | - | - |
-| 6.19 | Defibrillation & High-Voltage Shock Simulation | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 6.20 | Coronary Autoregulation & Microvascular Perfusion | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 6.21 | Microcirculation & Oxygen Transport | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 6.22 | Bone Remodeling Simulation | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
-| 6.23 | Glucose-Insulin Dynamics & Artificial Pancreas | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 6.19 | Defibrillation & High-Voltage Shock Simulation | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 6.20 | Coronary Autoregulation & Microvascular Perfusion | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 6.21 | Microcirculation & Oxygen Transport | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 6.22 | Bone Remodeling Simulation | 🟡 Intermediate | Active R&D | [x] done | - | - |
+| 6.23 | Glucose-Insulin Dynamics & Artificial Pancreas | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 6.24 | Reaction-Diffusion Morphogenesis (Turing Patterns) | 🟢 Beginner | Established | [x] done | - | - |
-| 6.25 | Liver & Kidney Perfusion Modeling | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
+| 6.25 | Liver & Kidney Perfusion Modeling | 🟡 Intermediate | Active R&D | [x] done | - | - |
 | 6.26 | Virtual Population Generation & Sensitivity Analysis | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 | 6.27 | Parameter Estimation & Data Assimilation for Physiological Models | 🟡 Intermediate | Active R&D | [ ] todo | - | - |
 

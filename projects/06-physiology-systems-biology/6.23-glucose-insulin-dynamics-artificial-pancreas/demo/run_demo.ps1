@@ -18,7 +18,7 @@ $ProjectRoot = Split-Path -Parent $Demo
 $Slug        = "glucose-insulin-dynamics-artificial-pancreas"
 $Sln         = Join-Path $ProjectRoot "build\$Slug.sln"
 $Exe         = Join-Path $ProjectRoot "build\x64\Release\$Slug.exe"
-$Sample      = Join-Path $ProjectRoot "data\sample\saxpy_sample.txt"
+$Sample      = Join-Path $ProjectRoot "data\sample\cohort_params.txt"
 $Expected    = Join-Path $Demo "expected_output.txt"
 
 function Find-MSBuild {

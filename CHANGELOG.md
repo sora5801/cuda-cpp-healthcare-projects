@@ -1,5 +1,6 @@
 # Changelog — newest first; each entry links to its push-note in `push-notes/`.
 
+- 2026-07-01 #07 -- [phase2 batch6d physiology intermediate](push-notes/2026-07-01-07-phase2-batch6d-physiology-intermediate.md)
 - 2026-07-01 #06 -- [phase2 batch6c physiology intermediate](push-notes/2026-07-01-06-phase2-batch6c-physiology-intermediate.md)
 - 2026-07-01 #05 -- [phase2 batch6b physiology intermediate](push-notes/2026-07-01-05-phase2-batch6b-physiology-intermediate.md)
 - 2026-07-01 #04 -- [phase2 batch6a physiology](push-notes/2026-07-01-04-phase2-batch6a-physiology.md)

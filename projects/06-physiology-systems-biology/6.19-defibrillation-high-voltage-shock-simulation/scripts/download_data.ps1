@@ -1,12 +1,14 @@
 # ===========================================================================
 # scripts/download_data.ps1  --  Fetch the FULL dataset (Windows / PowerShell)
 # ---------------------------------------------------------------------------
-# Project 6.19 -- Defibrillation & High-Voltage Shock Simulation   (template skeleton)
+# Project 6.19 : Defibrillation & High-Voltage Shock Simulation
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL +
-# expected size + checksum, and NEVER bypasses credentials/registration. If a
-# dataset needs an account, this script only prints instructions + links and
-# defers to scripts/make_synthetic.py for an offline stand-in.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints the source URL(s), and
+# NEVER bypasses credentials/registration. This project is a REDUCED-SCOPE
+# teaching model (a 1-D FitzHugh-Nagumo cable) that runs entirely on the tiny
+# SYNTHETIC sample in data/sample/, so there is no dataset to download for the
+# demo. This script exists to point you at the real research data + tools and to
+# regenerate a synthetic problem on demand.
 #
 # Usage:  ./scripts/download_data.ps1
 # ===========================================================================
@@ -16,18 +18,21 @@ $DataDir = Join-Path $ProjectRoot "data"
 
 Write-Host "[download_data] Project 6.19 -- Defibrillation & High-Voltage Shock Simulation"
 Write-Host "[download_data] Target data dir: $DataDir"
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
 Write-Host ""
-Write-Host "TODO(impl): no full dataset wired up yet for this template skeleton."
-Write-Host "  Catalog dataset notes:"
-Write-Host "    PhysioNet fibrillation/defibrillation recordings (https://physionet.org); openCARP defibrillation tutorial cases (https://opencarp.org); Cardioid (https://github.com/llnl/cardioid) — bidomain shock examples; patient-specific ICD placement datasets (verify institutional access)."
+Write-Host "This project needs NO download: the committed synthetic sample"
+Write-Host "  data/sample/defib_sweep.txt  is sufficient to build and run the demo."
 Write-Host ""
-Write-Host "  The committed tiny sample in data/sample/ is enough to run the demo."
-Write-Host "  For a larger SYNTHETIC problem, run:"
-Write-Host "    python scripts/make_synthetic.py --n 1048576"
+Write-Host "Real defibrillation research data + solvers (respect each license/registration):"
+Write-Host "  - PhysioNet fibrillation/defibrillation recordings : https://physionet.org"
+Write-Host "  - openCARP defibrillation tutorial cases           : https://opencarp.org"
+Write-Host "  - Cardioid (LLNL) bidomain shock examples          : https://github.com/llnl/cardioid"
+Write-Host "  - Chaste (bidomain + electrode BCs)                : https://github.com/Chaste/Chaste"
+Write-Host "  - MonoAlg3D_C (GPU bidomain-capable)               : https://github.com/rsachetto/MonoAlg3D_C"
 Write-Host ""
-Write-Host "  When wiring a real dataset, follow this idempotent pattern:"
-Write-Host "    1) skip download if the file already exists with the right checksum"
-Write-Host "    2) print source URL + expected size + SHA256"
-Write-Host "    3) for credentialed sets, print registration instructions ONLY"
+Write-Host "  PhysioNet requires accepting a data-use agreement; patient-specific ICD"
+Write-Host "  datasets require institutional/IRB access. This script does NOT bypass"
+Write-Host "  either -- register at the source and download manually."
+Write-Host ""
+Write-Host "To (re)generate the synthetic sample or a variant, run:"
+Write-Host "    python scripts/make_synthetic.py"
+Write-Host "    python scripts/make_synthetic.py --biphasic 1 --shock-len 20"

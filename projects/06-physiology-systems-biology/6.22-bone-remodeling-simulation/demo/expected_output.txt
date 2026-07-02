@@ -1,5 +1,10 @@
 6.22 -- Bone Remodeling Simulation
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+[reduced-scope teaching model: mechanostat remodeling on a 2-D voxel grid]
+grid 24x16, 60 remodel steps, 80 Jacobi sweeps/step
+localized load 4.00 on top-edge columns [10,13]
+mechanostat: setpoint k=0.550, lazy zone +/-0.200, rate=0.050, rho in [0.050,1]
+total bone mass (sum rho) = 33.614792
+mechanostat state: resorbing=366 homeostatic=8 forming=10 (of 384 voxels)
+per-column bone mass profile (x=0..23):
+ 0.8000 0.8000 0.8000 0.8000 0.8000 0.8000 0.8000 0.8787 1.5097 2.3313 3.1786 3.3091 3.3091 3.1786 2.3313 1.5097 0.8787 0.8000 0.8000 0.8000 0.8000 0.8000 0.8000 0.8000
+RESULT: PASS (GPU density matches CPU within tol=1.0e-09)

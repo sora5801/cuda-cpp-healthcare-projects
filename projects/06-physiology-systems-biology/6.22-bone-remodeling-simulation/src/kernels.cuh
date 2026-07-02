@@ -1,52 +1,63 @@
 // ===========================================================================
-// src/kernels.cuh  --  GPU compute interface (declarations + the teaching idea)
+// src/kernels.cuh  --  GPU bone-remodeling interface (declarations + big idea)
 // ---------------------------------------------------------------------------
-// Project 6.22 -- Bone Remodeling Simulation   (template skeleton)
+// Project 6.22 : Bone Remodeling Simulation   (REDUCED-SCOPE teaching version)
 //
-// ROLE IN THE PROJECT
-//   The "what the GPU offers" header. main.cu calls saxpy_gpu(); kernels.cu
-//   implements both the host wrapper and the device kernel. Included only by
-//   .cu translation units (it contains a __global__ declaration, so the plain
-//   C++ compiler must never see it -- that is why the CPU reference lives in a
-//   separate pure-C++ header).
+// THE BIG IDEA (the GPU pattern here: a 2-D STENCIL + ping-pong buffers)
+//   The whole simulation is a grid of voxels updated from their nearest
+//   neighbours only -- the textbook GPU pattern (PATTERNS.md section 1: "grid
+//   PDE / nearest-neighbour update -> stencil + ping-pong", the same shape as
+//   flagships 6.04 lattice-Boltzmann and 14.02 reaction-diffusion). We give each
+//   voxel its own thread on a 2-D grid of blocks. The host runs the two nested
+//   loops (remodeling steps, and Jacobi relaxation sweeps within each step),
+//   launching a kernel per sweep/step and PING-PONGING device buffers so a
+//   thread never reads a value another thread is mid-writing (no races, no
+//   atomics). The per-voxel math is the shared __host__ __device__ code in
+//   bone_remodel.h, so the GPU reproduces the CPU reference exactly.
 //
-// THE BIG IDEA (placeholder = SAXPY, out[i] = a*x[i] + y[i])
-//   Every output element is independent, so we assign ONE GPU THREAD PER
-//   ELEMENT. With n elements and a block of B threads, we launch
-//   ceil(n / B) blocks; thread (blockIdx.x, threadIdx.x) owns element
-//   i = blockIdx.x * blockDim.x + threadIdx.x. This "grid-of-1D-threads over a
-//   1D array" is the most fundamental CUDA mapping and recurs everywhere.
+//   Two kernels, mirroring the two physics functions:
+//     * relax_kernel   : one Jacobi sweep of the mechanical-stimulus field S.
+//     * remodel_kernel : one mechanostat density update from a settled S.
 //
-//   TODO(impl): replace saxpy_kernel / saxpy_gpu with this project's real
-//   kernel(s). Keep the launch-config reasoning in the comments (CLAUDE.md 6.1).
+//   Production voxel-FEM bone codes replace the stimulus relaxation with a real
+//   K u = f solve (cuSPARSE assembly + cuSOLVER/PCG); THEORY.md "real world"
+//   spells out that difference. This file only declares the two custom kernels
+//   and the host wrapper; kernels.cu implements them.
 //
-// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh. Then read kernels.cu.
+// READ THIS AFTER: util/cuda_check.cuh, util/timer.cuh, bone_remodel.h,
+//                  reference_cpu.h. Then read kernels.cu.
 // ===========================================================================
 #pragma once
 
 #include <vector>
+#include "reference_cpu.h"   // BoneParams (pure C++, safe to include in a .cu)
 
-// ---- Device kernel -------------------------------------------------------
-// __global__ marks an entry point launched from host, run on device.
-//   n   : number of elements (guards the ragged last block)
-//   a   : scalar multiplier (passed by value -> lives in each thread's register)
-//   x,y : device pointers to n input floats each (__restrict__ promises they do
-//         not alias, letting the compiler keep loads in registers)
-//   out : device pointer to n output floats
-__global__ void saxpy_kernel(int n, float a,
-                             const float* __restrict__ x,
-                             const float* __restrict__ y,
-                             float* __restrict__ out);
+// ---- Device kernels --------------------------------------------------------
+// relax_kernel: thread (x,y) writes S_new(x,y) = one Jacobi sweep of the
+//   stimulus field (bone_relax_point). Reads the read-only S_old + rho buffers.
+//     grid  : ceil(nx/TILE) x ceil(ny/TILE) blocks
+//     block : TILE x TILE threads
+//     map   : x = blockIdx.x*blockDim.x+threadIdx.x, y = blockIdx.y*...+...
+__global__ void relax_kernel(int nx, int ny, double load, int load_x0, int load_x1,
+                             const double* __restrict__ S_old,
+                             const double* __restrict__ rho,
+                             double* __restrict__ S_new);
 
-// ---- Host wrapper --------------------------------------------------------
-// saxpy_gpu: the host-callable "do the whole GPU computation" function.
-//   Allocates device buffers, copies inputs H2D, launches saxpy_kernel, copies
-//   the result D2H, and reports the measured KERNEL time (CUDA events) via
-//   *kernel_ms. main.cu calls exactly this; all CUDA bookkeeping is hidden here.
-//
-//   x, y : host inputs (length n)
-//   out  : host output, resized to n (output parameter)
-//   kernel_ms : out-param, milliseconds spent in the kernel itself (not copies)
-void saxpy_gpu(int n, float a, const std::vector<float>& x,
-               const std::vector<float>& y, std::vector<float>& out,
-               float* kernel_ms);
+// remodel_kernel: thread (x,y) writes rho_new(x,y) = one mechanostat update
+//   (bone_apply_stimulus) from the settled stimulus field S. Same 2-D mapping.
+__global__ void remodel_kernel(int nx, int ny, double setpoint, double lazy,
+                               double rate, double rho_min,
+                               const double* __restrict__ S,
+                               const double* __restrict__ rho_old,
+                               double* __restrict__ rho_new);
+
+// ---- Host wrapper ----------------------------------------------------------
+// bone_gpu: run the full remodeling simulation on the GPU and return the final
+//   density field `rho_final` (size nx*ny), the last settled stimulus field
+//   `S_final` (size nx*ny, for the report's state histogram), and the total GPU
+//   time of all kernel launches via *kernel_ms (CUDA-event measured). main.cu
+//   calls exactly this; all device bookkeeping is hidden inside.
+void bone_gpu(const BoneParams& p,
+              std::vector<double>& rho_final,
+              std::vector<double>& S_final,
+              float* kernel_ms);

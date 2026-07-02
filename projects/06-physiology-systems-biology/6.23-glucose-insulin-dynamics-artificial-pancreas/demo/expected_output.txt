@@ -1,5 +1,11 @@
 6.23 -- Glucose-Insulin Dynamics & Artificial Pancreas
-[template placeholder kernel: SAXPY  out = a*x + y]
-n = 8  a = 2
-out[0:8] = 0.000000 12.000000 24.000000 36.000000 48.000000 60.000000 72.000000 84.000000
-RESULT: PASS (GPU matches CPU within tol=1.0e-05)
+Closed-loop cohort: 1024 virtual patients (32 SI x 32 SG), 480 min run @ dt=0.50 min, control every 5 min
+meal: 50 g carbs at t=30 min; target glucose 110 mg/dL (PID)
+sample patients (SI=p3/p2  SG=p1 -> minG maxG meanG TIR% hypo% ins):
+  p0   : SI=0.0004 SG=0.0180 ->   97.0  248.9  128.9  84.4   0.0 12177.8
+  p256 : SI=0.0007 SG=0.0180 ->   92.6  232.8  122.5  87.9   0.0 8749.8
+  p512 : SI=0.0010 SG=0.0180 ->   89.5  220.4  117.8  90.3   0.0 7337.3
+  p768 : SI=0.0013 SG=0.0180 ->   86.4  210.7  114.3  92.1   0.0 6463.6
+  p1023: SI=0.0016 SG=0.0280 ->   91.1  193.7  113.1  95.0   0.0 5613.2
+cohort: 1024/1024 patients avoided hypoglycemia; mean TIR = 90.88%; worst TIR = 84.38%
+RESULT: PASS (GPU cohort matches CPU within tol=1e-04 mg/dL)

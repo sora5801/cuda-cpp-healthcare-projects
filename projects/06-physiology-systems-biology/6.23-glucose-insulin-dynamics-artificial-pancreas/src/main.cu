@@ -1,122 +1,121 @@
 // ===========================================================================
-// src/main.cu  --  Entry point: load data, run CPU + GPU, verify, report
+// src/main.cu  --  Entry point: simulate a virtual-patient cohort, verify, report
 // ---------------------------------------------------------------------------
-// Project 6.23 -- Glucose-Insulin Dynamics & Artificial Pancreas   (template skeleton)
+// Project 6.23 : Glucose-Insulin Dynamics & Artificial Pancreas
 //
-// WHAT THIS FILE DOES  (the shape EVERY project in this repo follows)
-//   1. Load the problem (from data/sample, or a built-in synthetic fallback).
-//   2. Compute the CPU reference (reference_cpu.cpp)         -> trusted answer.
-//   3. Compute the GPU result    (kernels.cu)                -> the thing taught.
-//   4. VERIFY: assert GPU agrees with CPU within a tolerance -> correctness.
-//   5. REPORT: deterministic result to stdout; timing to stderr.
+// WHAT THIS FILE DOES  (the 5-step shape EVERY project in this repo follows)
+//   1. Load the cohort configuration (data/sample, else a built-in fallback).
+//   2. CPU reference: simulate every patient serially (reference_cpu.cpp).
+//   3. GPU: one thread per patient, full closed-loop RK4+PID loop (kernels.cu).
+//   4. VERIFY: per-patient metrics match (same math -> same numbers).
+//   5. REPORT: deterministic sample patients + cohort summary to STDOUT;
+//              timing / run-varying detail to STDERR.
 //
-//   STDOUT is kept byte-for-byte deterministic so demo/run_demo can diff it
-//   against demo/expected_output.txt. Anything that varies run-to-run (timings)
-//   goes to STDERR, which the demo shows but does not diff.
+//   STDOUT is byte-for-byte deterministic so demo/run_demo can diff it against
+//   demo/expected_output.txt. Timings go to STDERR (shown, not diffed).
 //
-//   TODO(impl): swap the SAXPY placeholder for this project's real problem,
-//   data loading, and verification. Keep the 5-step shape and the stdout/stderr
-//   split so the demo harness keeps working.
-//
-// READ THIS FIRST in the code tour, then kernels.cuh -> kernels.cu, and
-// reference_cpu.cpp for the baseline. See ../THEORY.md for the "why".
+// Code tour: start here, then bergman.h (the model + RK4 + PID), kernels.cuh ->
+// kernels.cu, and reference_cpu.cpp for the baseline. See ../THEORY.md.
 // ===========================================================================
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "kernels.cuh"        // saxpy_gpu (GPU path)
-#include "reference_cpu.h"    // saxpy_cpu (CPU baseline)
-#include "util/io.hpp"        // util::CpuTimer, util::max_abs_err, read_floats
+#include "kernels.cuh"        // simulate_cohort_gpu, CohortConfig, PatientResult
+#include "reference_cpu.h"    // load_cohort, simulate_cohort_cpu, patient_params
+#include "util/io.hpp"        // util::CpuTimer
 
-// These two tokens are filled in by tools/scaffold.py so the program identifies
-// itself. They MUST stay in sync with demo/expected_output.txt (also stamped).
 static const char* PROJECT_ID   = "6.23";
 static const char* PROJECT_NAME = "Glucose-Insulin Dynamics & Artificial Pancreas";
 
-// Correctness tolerance: the GPU result must match the CPU within this.
-static constexpr double TOLERANCE = 1.0e-5;
-
-// Build the built-in synthetic problem used when no data file is supplied.
-//   n=8, a=2, x[i]=i, y[i]=10*i  =>  out[i] = 2*i + 10*i = 12*i (exact ints).
-// These EXACT values are what demo/expected_output.txt encodes.
-static void make_synthetic(int& n, float& a, std::vector<float>& x, std::vector<float>& y) {
-    n = 8;
-    a = 2.0f;
-    x.resize(n);
-    y.resize(n);
-    for (int i = 0; i < n; ++i) {
-        x[i] = static_cast<float>(i);
-        y[i] = static_cast<float>(10 * i);
-    }
-}
-
-// Parse a sample file laid out as:  n  a  x0 x1 ... x{n-1}  y0 y1 ... y{n-1}
-// Returns false if the file is missing/short so the caller can fall back.
-static bool load_sample(const std::string& path, int& n, float& a,
-                        std::vector<float>& x, std::vector<float>& y) {
-    std::vector<float> v;
-    try {
-        v = util::read_floats(path);
-    } catch (const std::exception&) {
-        return false;  // file not found -> caller uses synthetic data
-    }
-    if (v.size() < 2) return false;
-    n = static_cast<int>(v[0]);
-    a = v[1];
-    if (n <= 0 || v.size() < static_cast<std::size_t>(2 + 2 * n)) return false;
-    x.assign(v.begin() + 2, v.begin() + 2 + n);
-    y.assign(v.begin() + 2 + n, v.begin() + 2 + 2 * n);
-    return true;
-}
+// Correctness tolerance. CPU and GPU run the SAME double-precision RK4 + PID
+// (bergman.h), so they agree to ~machine precision. Over ~thousands of steps the
+// GPU's fused multiply-add (FMA) can diverge from the host compiler by ~1e-9 in
+// double precision (PATTERNS.md §4), so we verify to a physically-negligible
+// 1e-4 mg/dL on glucose metrics -- far below any clinical meaning.
+static constexpr double TOLERANCE = 1.0e-4;
 
 int main(int argc, char** argv) {
-    // ---- 1. Load the problem ------------------------------------------------
-    int n = 0;
-    float a = 0.0f;
-    std::vector<float> x, y;
-    const char* source = "synthetic (built-in)";
-    if (argc > 1 && load_sample(argv[1], n, a, x, y)) {
-        source = argv[1];
-    } else {
-        make_synthetic(n, a, x, y);
+    // ---- 1. Load -----------------------------------------------------------
+    const std::string path =
+        (argc > 1) ? argv[1] : "data/sample/cohort_params.txt";
+    CohortConfig c;
+    try {
+        c = load_cohort(path);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[error] %s\n", e.what());
+        return 2;
     }
+    const int M = cohort_size(c);
 
     // ---- 2. CPU reference (timed) ------------------------------------------
-    std::vector<float> out_cpu;
+    std::vector<PatientResult> res_cpu;
     util::CpuTimer cpu_timer;
     cpu_timer.start();
-    saxpy_cpu(n, a, x, y, out_cpu);
-    double cpu_ms = cpu_timer.stop_ms();
+    simulate_cohort_cpu(c, res_cpu);
+    const double cpu_ms = cpu_timer.stop_ms();
 
-    // ---- 3. GPU result (kernel timed inside the wrapper) -------------------
-    std::vector<float> out_gpu;
+    // ---- 3. GPU cohort (kernel timed inside the wrapper) -------------------
+    std::vector<PatientResult> res_gpu;
     float gpu_kernel_ms = 0.0f;
-    saxpy_gpu(n, a, x, y, out_gpu, &gpu_kernel_ms);
+    simulate_cohort_gpu(c, res_gpu, &gpu_kernel_ms);
 
-    // ---- 4. Verify ----------------------------------------------------------
-    double err = util::max_abs_err(out_cpu, out_gpu);
-    bool pass = err <= TOLERANCE;
+    // ---- 4. Verify ---------------------------------------------------------
+    // Compare the headline glucose metrics (min/max/mean G and TIR) per patient.
+    double worst = 0.0;
+    for (int i = 0; i < M; ++i) {
+        worst = std::fmax(worst, std::fabs(res_cpu[i].min_G   - res_gpu[i].min_G));
+        worst = std::fmax(worst, std::fabs(res_cpu[i].max_G   - res_gpu[i].max_G));
+        worst = std::fmax(worst, std::fabs(res_cpu[i].mean_G  - res_gpu[i].mean_G));
+        worst = std::fmax(worst, std::fabs(res_cpu[i].tir_frac - res_gpu[i].tir_frac));
+    }
+    const bool pass = worst <= TOLERANCE;
 
-    // ---- 5a. Deterministic report -> STDOUT (diffed by the demo) -----------
+    // ---- 5a. Deterministic report -> STDOUT --------------------------------
+    // Cohort summary: how many patients stay safe (no hypoglycemia) and their
+    // average time-in-range -- the primary outcomes of an artificial-pancreas
+    // in-silico trial.
+    int safe = 0;              // patients with zero time below 70 mg/dL
+    double sum_tir = 0.0, min_tir = 1.0;
+    for (int i = 0; i < M; ++i) {
+        if (res_gpu[i].hypo_frac <= 0.0) ++safe;
+        sum_tir += res_gpu[i].tir_frac;
+        min_tir = std::fmin(min_tir, res_gpu[i].tir_frac);
+    }
+
     std::printf("%s -- %s\n", PROJECT_ID, PROJECT_NAME);
-    std::printf("[template placeholder kernel: SAXPY  out = a*x + y]\n");
-    std::printf("n = %d  a = %g\n", n, a);
-    int show = n < 16 ? n : 8;                 // print all if small, else first 8
-    std::printf("out[0:%d] =", show);
-    for (int i = 0; i < show; ++i) std::printf(" %.6f", out_gpu[i]);
-    std::printf("\n");
-    std::printf("RESULT: %s (GPU matches CPU within tol=1.0e-05)\n",
-                pass ? "PASS" : "FAIL");
+    std::printf("Closed-loop cohort: %d virtual patients (%d SI x %d SG), "
+                "%.0f min run @ dt=%.2f min, control every %.0f min\n",
+                M, c.nSI, c.nSG, c.steps * c.dt, c.dt, c.control_dt);
+    std::printf("meal: %.0f g carbs at t=%.0f min; target glucose %.0f mg/dL (PID)\n",
+                c.meal_D / 1000.0, c.meal_t, c.G_target);
+    std::printf("sample patients (SI=p3/p2  SG=p1 -> minG maxG meanG TIR%% hypo%% ins):\n");
+    // Deterministic picks spanning the cohort (corners + centre).
+    const int picks[5] = {0, M / 4, M / 2, (3 * M) / 4, M - 1};
+    for (int s = 0; s < 5; ++s) {
+        const int i = picks[s];
+        const PatientParams pp = patient_params(c, i);
+        const double SI = pp.p3 / pp.p2;   // insulin sensitivity
+        std::printf("  p%-4d: SI=%.4f SG=%.4f -> %6.1f %6.1f %6.1f %5.1f %5.1f %6.1f\n",
+                    i, SI, pp.p1,
+                    res_gpu[i].min_G, res_gpu[i].max_G, res_gpu[i].mean_G,
+                    100.0 * res_gpu[i].tir_frac, 100.0 * res_gpu[i].hypo_frac,
+                    res_gpu[i].insulin_total);
+    }
+    std::printf("cohort: %d/%d patients avoided hypoglycemia; "
+                "mean TIR = %.2f%%; worst TIR = %.2f%%\n",
+                safe, M, 100.0 * sum_tir / M, 100.0 * min_tir);
+    std::printf("RESULT: %s (GPU cohort matches CPU within tol=%.0e mg/dL)\n",
+                pass ? "PASS" : "FAIL", TOLERANCE);
 
-    // ---- 5b. Varying detail -> STDERR (shown, not diffed) ------------------
-    std::fprintf(stderr, "[data]   source: %s\n", source);
-    std::fprintf(stderr, "[timing] CPU reference: %.3f ms   GPU kernel: %.3f ms\n",
-                 cpu_ms, gpu_kernel_ms);
-    std::fprintf(stderr, "[timing] teaching artifact only -- tiny n is dominated "
-                         "by launch/copy overhead, not compute.\n");
-    std::fprintf(stderr, "[verify] max_abs_err = %.6e  (tolerance %.1e)\n", err, TOLERANCE);
+    // ---- 5b. Varying detail -> STDERR --------------------------------------
+    std::fprintf(stderr, "[data]   source: %s  (%d patients)\n", path.c_str(), M);
+    std::fprintf(stderr, "[timing] CPU: %.3f ms   GPU: %.3f ms\n", cpu_ms, gpu_kernel_ms);
+    std::fprintf(stderr, "[timing] teaching artifact -- speed-up grows with cohort size; "
+                         "RL / UQ trials run 10^3-10^6 patients x many episodes.\n");
+    std::fprintf(stderr, "[verify] worst per-patient metric diff = %.3e  (tolerance %.1e)\n",
+                 worst, TOLERANCE);
 
-    // Exit code feeds the demo's pass/fail gate.
     return pass ? 0 : 1;
 }

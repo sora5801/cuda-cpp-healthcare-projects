@@ -2,11 +2,14 @@
 # ===========================================================================
 # scripts/download_data.sh  --  Fetch the FULL dataset (Linux / macOS)
 # ---------------------------------------------------------------------------
-# Project 6.19 -- Defibrillation & High-Voltage Shock Simulation   (template skeleton)
+# Project 6.19 : Defibrillation & High-Voltage Shock Simulation
 #
-# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL + expected
-# size + checksum, and NEVER bypasses credentials/registration. Defers to
-# scripts/make_synthetic.py for an offline stand-in when needed.
+# CONTRACT (CLAUDE.md §8): idempotent, documented, prints source URL(s), and
+# NEVER bypasses credentials/registration. This project is a REDUCED-SCOPE
+# teaching model (a 1-D FitzHugh-Nagumo cable) that runs entirely on the tiny
+# SYNTHETIC sample in data/sample/, so there is nothing to download for the demo.
+# This script points at the real research data + tools and can regenerate a
+# synthetic problem.
 #
 # Usage:  ./scripts/download_data.sh
 # ===========================================================================
@@ -17,17 +20,20 @@ DATA_DIR="$PROJECT_ROOT/data"
 echo "[download_data] Project 6.19 -- Defibrillation & High-Voltage Shock Simulation"
 echo "[download_data] Target data dir: $DATA_DIR"
 echo
-
-# TODO(impl): fill in the real dataset fetch. Template only prints guidance.
-echo "TODO(impl): no full dataset wired up yet for this template skeleton."
-echo "  Catalog dataset notes:"
-echo "    PhysioNet fibrillation/defibrillation recordings (https://physionet.org); openCARP defibrillation tutorial cases (https://opencarp.org); Cardioid (https://github.com/llnl/cardioid) — bidomain shock examples; patient-specific ICD placement datasets (verify institutional access)."
+echo "This project needs NO download: the committed synthetic sample"
+echo "  data/sample/defib_sweep.txt  is sufficient to build and run the demo."
 echo
-echo "  The committed tiny sample in data/sample/ is enough to run the demo."
-echo "  For a larger SYNTHETIC problem, run:"
-echo "    python scripts/make_synthetic.py --n 1048576"
+echo "Real defibrillation research data + solvers (respect each license/registration):"
+echo "  - PhysioNet fibrillation/defibrillation recordings : https://physionet.org"
+echo "  - openCARP defibrillation tutorial cases           : https://opencarp.org"
+echo "  - Cardioid (LLNL) bidomain shock examples          : https://github.com/llnl/cardioid"
+echo "  - Chaste (bidomain + electrode BCs)                : https://github.com/Chaste/Chaste"
+echo "  - MonoAlg3D_C (GPU bidomain-capable)               : https://github.com/rsachetto/MonoAlg3D_C"
 echo
-echo "  When wiring a real dataset, follow this idempotent pattern:"
-echo "    1) skip download if the file already exists with the right checksum"
-echo "    2) print source URL + expected size + SHA256"
-echo "    3) for credentialed sets, print registration instructions ONLY"
+echo "  PhysioNet requires accepting a data-use agreement; patient-specific ICD"
+echo "  datasets require institutional/IRB access. This script does NOT bypass"
+echo "  either -- register at the source and download manually."
+echo
+echo "To (re)generate the synthetic sample or a variant, run:"
+echo "    python scripts/make_synthetic.py"
+echo "    python scripts/make_synthetic.py --biphasic 1 --shock-len 20"
